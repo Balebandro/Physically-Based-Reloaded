@@ -112,7 +112,6 @@ public:
 		VolumetricFogEffect*	VolumetricFog;
 		WaterLensEffect*		WaterLens;
 		WaterReflectionsEffect*	WaterReflections;
-		VolumetricCloudsEffect*	VolumetricClouds;
 		WetWorldEffect*			WetWorld;
 		DitherBusterEffect*		DitherBuster;
 		SMAAEffect*				SMAA;
