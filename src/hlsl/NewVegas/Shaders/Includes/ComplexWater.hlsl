@@ -903,16 +903,40 @@ float2 getFoamTexture(float2 worldPos, float2 dx, float2 dy, float time){
     return 0.5f * (a + b);
 }
 
+// The shoreline's lap (ShoreMovement): x from -1 drawn back to 1 pushed up, y how fast it is drawing
+// back (0 while it comes in). One cycle for the fade at the edge and the foam on it, so they move
+// together.
+float2 getShoreLap(float shoreMovement){
+    float phase = WATER_SCROLL_TIME * shoreMovement * 0.1f;
+    return float2(sin(phase), saturate(-cos(phase)));
+}
+
 // Foam where the view passes through the least water -- along the shore and around anything
 // standing in the water. By the path through the water, not the depth under the point: in front of a
 // post that depth is small all the way down the post. Solid right at the edge; further out only the
 // thickest of the dense foam holds together, and beyond it, out to twice FoamWidth, only streaks.
-float getFoamMask(float pathLength, float2 foamTexture){
-    float band = 1.0f - saturate(pathLength / TESR_WaterLighting3.y);
-    float outer = 1.0f - saturate(pathLength / (TESR_WaterLighting3.y * 2.0f));
-    float dense = max(smoothstep(0.9f - band, 1.1f - band, foamTexture.x), band * band * band * band);
-    float streaks = smoothstep(0.9f - outer, 1.1f - outer, foamTexture.y) * outer;
-    return max(dense, streaks) * saturate(TESR_WaterLighting3.x);
+// And it moves, as shore foam does:
+//   swash  the band pushes out as the water laps up the shore, and breaks up into holes as the water
+//          drains back, the dense edge thinning (lap: getShoreLap)
+//   churn  the cells slowly form and burst in place, each on its own beat, rather than the whole
+//          pattern only sliding by
+//   lines  thin, broken lines of foam form a little way out and travel in toward the shore, where
+//          they join the edge foam -- the small waves arriving. Along the depth (depthBelow), so they
+//          lie parallel to the shore and stay put as the view moves, as breaking waves follow the
+//          depth; spaced 0.4 FoamWidth of depth apart, one arriving every few seconds.
+float getFoamMask(float pathLength, float depthBelow, float2 foamTexture, float2 lap){
+    float width = TESR_WaterLighting3.y;
+    float time = WATER_SECONDS;
+    float path = max(pathLength - lap.x * width * 0.5f, 0.0f);
+    float band = 1.0f - saturate(path / width);
+    float outer = 1.0f - saturate(path / (width * 2.0f));
+    float churn = sin(time * 0.8f + foamTexture.y * 12.0f) * 0.08f + lap.y * 0.15f;
+    float dense = max(smoothstep(0.9f - band + churn, 1.1f - band + churn, foamTexture.x), band * band * band * band * (1.0f - lap.y * 0.5f));
+    float streaks = smoothstep(0.9f - outer + churn, 1.1f - outer + churn, foamTexture.y) * outer;
+    float lineZone = saturate(depthBelow / (width * 0.25f)) * (1.0f - saturate(depthBelow / (width * 1.5f)));
+    float lineShape = 1.0f - smoothstep(0.0f, 0.12f, abs(frac(depthBelow / (width * 0.4f) + time * 0.3f) - 0.5f));
+    float lineFoam = lineShape * lineZone * smoothstep(0.35f, 0.65f, foamTexture.y);
+    return max(max(dense, streaks), lineFoam) * saturate(TESR_WaterLighting3.x);
 }
 
 // Whitecaps (Whitecaps): where the wave crests fold over, they break into streaky foam: the more a
@@ -932,19 +956,22 @@ float3 getFoamColor(float3 sunLight, float3 sunDirection, float3 skyLight, float
     return 0.9f * (skyLight * 0.8f + sunLight * shadow * saturate(sunDirection.z * 0.6f + 0.4f));
 }
 
-// All the foam at a point: the edge's (pathLength: the path through the water there; a negative one
-// for none, the distant water) and the whitecaps'. The foam texture is only read where one of them
-// can show -- near an edge, or on a crest folding past the whitecaps' threshold -- which leaves most
-// of the open water without it. dx, dy: ddx and ddy of worldPos at the top level.
-float getFoam(float2 worldPos, float2 dx, float2 dy, float time, float pathLength, float fold){
+// All the foam at a point: the edge's (pathLength: the path through the water there, depthBelow the
+// depth under it; a negative path for none, the distant water) and the whitecaps'. The foam texture
+// is only read where one of them can show -- near an edge (the band as far as the swash pushes it,
+// and the incoming lines' depths), or on a crest folding past the whitecaps' threshold -- which
+// leaves most of the open water without it. dx, dy: ddx and ddy of worldPos at the top level.
+// shoreMovement: the water type's, for the lap.
+float getFoam(float2 worldPos, float2 dx, float2 dy, float time, float pathLength, float depthBelow, float shoreMovement, float fold){
     float amount = saturate(TESR_WaterWaves2.x);
-    bool edge = pathLength >= 0.0f && pathLength < TESR_WaterLighting3.y * 2.0f && TESR_WaterLighting3.x > 0.0f;
+    float width = TESR_WaterLighting3.y;
+    bool edge = pathLength >= 0.0f && (pathLength < width * 2.5f || depthBelow < width * 1.5f) && TESR_WaterLighting3.x > 0.0f;
     bool caps = amount > 0.0f && fold > (1.0f - amount) * 0.9f;
     float foam = 0.0f;
     [branch] if (edge || caps) {
         float2 foamTexture = getFoamTexture(worldPos, dx, dy, time);
         foam = getWhitecaps(fold, foamTexture);
-        if (pathLength >= 0.0f) foam = max(foam, getFoamMask(pathLength, foamTexture));
+        if (pathLength >= 0.0f) foam = max(foam, getFoamMask(pathLength, depthBelow, foamTexture, getShoreLap(shoreMovement)));
     }
     return foam;
 }
@@ -954,7 +981,7 @@ float getFoam(float2 worldPos, float2 dx, float2 dy, float time, float pathLengt
 float getShoreAlpha(float depthBelow, float shoreMovement, float foam){
     float width = TESR_WaterLighting3.z;
     if (width <= 0.0f) return 1.0f;
-    float lap = sin(WATER_SCROLL_TIME * shoreMovement * 0.1f) * 0.25f;
+    float lap = getShoreLap(shoreMovement).x * 0.25f;
     return max(smoothstep(0.0f, width, depthBelow + lap * width), foam * 0.9f);
 }
 

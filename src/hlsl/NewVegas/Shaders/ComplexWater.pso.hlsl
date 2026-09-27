@@ -223,7 +223,7 @@ PS_OUTPUT main(PS_INPUT IN) {
     color = lerp(color, reflection, fresnel);
     color += glint;
     // Whitecaps, as on the near water, so the foam does not stop where the two meet.
-    float foam = getFoam(wavePos, waveDX, waveDY, time, -1.0f, waveFold);
+    float foam = getFoam(wavePos, waveDX, waveDY, time, -1.0f, -1.0f, 0.0f, waveFold);
     WATER_DEBUG(9, foam);
     color = lerp(color, getFoamColor(sunLight, sunDirection, skyLight, 1.0f), foam);
     float alpha = 1.0f;
@@ -270,7 +270,7 @@ PS_OUTPUT main(PS_INPUT IN) {
 #endif
     WATER_DEBUG(1, shadow);
     // Foam: along the edge, and whitecaps where the crests fold.
-    float foam = getFoam(wavePos, waveDX, waveDY, time, straightPath.x, waveFold);
+    float foam = getFoam(wavePos, waveDX, waveDY, time, straightPath.x, straightPath.y, SHORELINE_PARAMS.x, waveFold);
     WATER_DEBUG(9, foam);
 
     // The water body. The bed, with caustics on it where the sun reaches it, loses its colours one
