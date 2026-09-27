@@ -276,17 +276,23 @@ float getViewZFromDepth(WaterScreenMap map, float rawDepth){
 }
 
 // Whether something at sceneZ along the view axis is the water surface itself, seen through a water
-// point waterViewZ along it (the same point of the same plane).
-bool isWaterSurface(float sceneZ, float waterViewZ){
-    return abs(sceneZ - waterViewZ) < 1.0f + waterViewZ * 1e-3f;
+// point waterViewZ along it: the same plane, or another piece of the water at (near enough) the same
+// height -- the game draws the water a piece per cell, and a bent view often lands on a piece drawn
+// earlier. waterHeight: the water point's height, camera-relative. Judged by height, within 2 units
+// of the water's: by distance alone, looking across the water at a low angle, the half-unit a
+// neighbouring piece sits off (or the depth buffer's rounding) grows to tens of units, and the bed
+// was read as the surface -- a path through the water of nothing, in specks across open water.
+bool isWaterSurface(float sceneZ, float waterViewZ, float waterHeight){
+    float heightOff = abs(waterHeight * (sceneZ / waterViewZ - 1.0f));
+    return heightOff < 2.0f || abs(sceneZ - waterViewZ) < 1.0f + waterViewZ * 1e-3f;
 }
 
 // Distance along the view axis of the scene behind the water at uv, seen through a water point
-// waterViewZ along the view axis.
-float getSceneViewZ(WaterScreenMap map, float2 uv, float waterViewZ){
+// waterViewZ along the view axis, waterHeight high (camera-relative).
+float getSceneViewZ(WaterScreenMap map, float2 uv, float waterViewZ, float waterHeight){
     float sceneZ = getViewZFromDepth(map, tex2Dlod(TESR_DepthBufferWorld, float4(uv, 0.0f, 0.0f)).x);
     float beforeWaterZ = getViewZFromDepth(map, tex2Dlod(TESR_DepthBufferBeforeWater, float4(uv, 0.0f, 0.0f)).x);
-    return isWaterSurface(sceneZ, waterViewZ) ? beforeWaterZ : sceneZ;
+    return isWaterSurface(sceneZ, waterViewZ, waterHeight) ? beforeWaterZ : sceneZ;
 }
 
 // What lies behind the water, camera-relative, seen through the water surface point waterPoint
@@ -294,7 +300,7 @@ float getSceneViewZ(WaterScreenMap map, float2 uv, float waterViewZ){
 // camera through that point, as far as the depth buffer says. Distance along the view axis grows in
 // step with distance along any line from the camera, so no view matrix or projection is needed.
 float3 getBedBehind(WaterScreenMap map, float3 waterPoint, float waterViewZ, float2 uv){
-    return waterPoint * (getSceneViewZ(map, uv, waterViewZ) / waterViewZ);
+    return waterPoint * (getSceneViewZ(map, uv, waterViewZ, waterPoint.z) / waterViewZ);
 }
 
 // x: how far the view travels through the water to what is behind it, y: how far that lies below
@@ -306,7 +312,7 @@ float2 getWaterPathTo(float3 bed, float3 waterPoint){
 
 // ---------------------------------------------------------------------------------------------
 // DebugView: one term on its own, in place of the water. Compiled in (WATER_DEBUG_VIEW, set by the
-// DLL from DebugView when the shaders load: restart the game to change it), so it costs the water
+// DLL from DebugView; changing it recompiles the water shaders on the spot), so it costs the water
 // nothing when off; when on, the shader stops at that term and shows it.
 //   1 sun shadow on the surface (black in shadow)   2 what still shows through the water, per colour
 //   3 reflection amount                              4 wave scattering
@@ -337,7 +343,7 @@ float3 getDepthCopies(WaterScreenMap map, float3 surfaceFromCamera, float2 uv){
     float beforeWaterZ = getViewZFromDepth(map, tex2Dlod(TESR_DepthBufferBeforeWater, float4(uv, 0.0f, 0.0f)).x);
     float depth = max(surfaceFromCamera.z * (1.0f - sceneZ / map.viewZ), 0.0f);
     float beforeWaterDepth = max(surfaceFromCamera.z * (1.0f - beforeWaterZ / map.viewZ), 0.0f);
-    return float3(depth, beforeWaterDepth, isWaterSurface(sceneZ, map.viewZ) ? 1.0f : 0.0f);
+    return float3(depth, beforeWaterDepth, isWaterSurface(sceneZ, map.viewZ, surfaceFromCamera.z) ? 1.0f : 0.0f);
 }
 
 // For DebugView 14: 1 where the depth buffer holds nothing at uv (still as cleared: the far end of its range).
@@ -386,7 +392,7 @@ float2 getRefraction(float3 surfaceFromCamera, float3 N, float2 straightUV, Wate
         float2 offset = waterPoint.xy - surfaceFromCamera.xy;
         uv = straightUV + getScreenOffset(map, offset);
         waterViewZ = getWaterViewZ(map, offset);
-        sceneZ = getSceneViewZ(map, uv, waterViewZ);
+        sceneZ = getSceneViewZ(map, uv, waterViewZ, waterPoint.z);
         depth = max(surfaceFromCamera.z - waterPoint.z * (sceneZ / waterViewZ), 0.0f);   // getBedBehind's
     }
 
