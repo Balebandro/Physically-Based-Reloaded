@@ -22,6 +22,7 @@ public:
 
 	bool					SwitchShader();
 	void					DisposeShaders();
+	void					ReloadPixelShaders();
 	bool 					IsLoaded();
 	bool					Enabled;
 

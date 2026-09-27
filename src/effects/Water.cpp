@@ -190,6 +190,12 @@ void WaterShaders::UpdateSettings() {
 	ReadComplexWater(InteriorSection, &Constants.InteriorWater);
 	ReadComplexWater(PlacedSection, &Constants.PlacedWater);
 
+	// DebugView is compiled into the water shaders: when it changes, recompile them now rather than
+	// at the next start (a moment's hitch). The first read only notes what they were loaded with.
+	int debugView = std::clamp(TheSettingManager->GetSettingI(OutdoorSection, "DebugView"), 0, 16);
+	if (loadedDebugView >= 0 && debugView != loadedDebugView && !PixelShaderList.empty()) ReloadPixelShaders();
+	loadedDebugView = debugView;
+
 	// The wave direction, for every kind of water (UpdateWaveDirection).
 	waveDirectionSetting = Read(OutdoorSection, "WaveDirection", 0.0f, 360.0f) * 0.0174532925f;
 	waveDirectionFromWind = TheSettingManager->GetSettingI(OutdoorSection, "WaveDirectionFromWind") != 0;

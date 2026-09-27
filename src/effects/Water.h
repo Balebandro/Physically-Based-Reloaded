@@ -7,8 +7,8 @@ public:
 
 	// Complex Water: every water surface pixel shader is compiled from one source,
 	// ComplexWater.pso.hlsl, with the defines that pick the kind of water it draws. DebugView is
-	// compiled in too (WATER_DEBUG_VIEW), so it costs the water nothing when off: the shaders are
-	// compiled when the game loads them, so changing it takes a restart.
+	// compiled in too (WATER_DEBUG_VIEW), so it costs the water nothing when off; changing it
+	// recompiles the water pixel shaders on the spot (UpdateSettings, ReloadPixelShaders).
 	std::map<std::string_view, ShaderTemplate> Templates() {
 		static char DebugView[8];
 		int View = TheSettingManager->GetSettingI("Shaders.Water.ComplexWater", "DebugView");
@@ -87,6 +87,7 @@ public:
 	void	UpdateWaveDirection();
 
 	float	causticsStrength;
+	int		loadedDebugView = -1;	// the DebugView the water shaders were last compiled with (-1: not yet)
 
 	void	RegisterComplexWater(const char* Prefix, ComplexWaterStruct* Water);
 	void	ReadComplexWater(const char* Section, ComplexWaterStruct* Water);
