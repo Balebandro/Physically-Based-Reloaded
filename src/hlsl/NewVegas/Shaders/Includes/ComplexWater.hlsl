@@ -358,54 +358,34 @@ float getDepthCalibration(WaterScreenMap map){
 }
 
 // ---------------------------------------------------------------------------------------------
-// Refraction, as real water bends light. The view ray is refracted through the wave normal at
-// water's index of refraction (Snell's law, 1.33) and followed down to the bed: first to the depth
-// of the bed under the pixel, then once more to the depth of whatever the bent ray actually lands
-// on, so the offset comes out of the real geometry -- small over a shallow bed, large over a deep
-// one, the bed raised and squeezed at low angles as it is through real water. The pixel that shows
-// that point of the bed is where the line from the camera to it crosses the water surface; its
-// screen position comes from the water's own screen map. strength: the water type's
-// refractionPower, 1 real water. Where the bent ray lands on something in front of the water (a
-// post, legs, the shore), the straight view is used, so nothing above the water smears into it; as
-// it nears the edge of the screen the bend fades out into the straight view, rather than snapping to
-// it where it leaves the screen (a hard edge that followed the ripples, close to the camera). Returns
-// the screen position of the bed seen; path and bed: for that bed.
-// straightBed: the bed under the pixel (getBedBehind at straightUV), which the caller has already
-// read. Each depth read is made once: the second pass's is also the leak test's and the bed's.
+// Refraction: the view of the bed nudged by the waves. The lookup into the refraction map is moved
+// sideways on the water plane by the wave slope, by about as far as real water shifts the bed seen
+// through it (a quarter of the depth per unit of slope), with the depth capped so deep water cannot
+// throw the lookup far; the water plane's own screen map turns that into a screen offset, so it
+// shrinks with distance as it should. Where the nudged lookup lands on something in front of the
+// water (a post, the pier, the shore rising out of it), the straight view is used, so nothing above
+// the water smears into it; as it nears the edge of the screen the nudge fades out.
+// Only which pixel of the bed image is shown moves: the path through the water, the depth and the
+// bed itself (the water's colour, its fade at the shore, caustics) stay those under the pixel. An
+// earlier version followed the bent ray down to the bed it lands on, from the depth buffer; where
+// the depth jumps (a post in front of a deep bed, another piece of the water surface) its two steps
+// disagreed, dragging posts down through the water and leaving specks of no depth on open water.
+// depthBelow: how far the bed under the pixel lies below the surface. strength: Refraction.
 // ---------------------------------------------------------------------------------------------
-float2 getRefraction(float3 surfaceFromCamera, float3 N, float2 straightUV, WaterScreenMap map, float3 straightBed, float strength, out float2 path, out float3 bed){
-    float3 incident = normalize(surfaceFromCamera);
-    float3 bent = refract(incident, N, 1.0f / 1.33f);
-    bent = normalize(lerp(incident, dot(bent, bent) > 0.0f ? bent : incident, strength));
-    // The water plane, seen from the camera: only meaningful with the camera above it.
-    float planeZ = min(surfaceFromCamera.z, -1e-3f);
+#define WATER_REFRACTION_DEPTH_CAP (4.0f * WATER_UNITS_PER_METRE)
 
-    float depth = max(surfaceFromCamera.z - straightBed.z, 0.0f);
-    float2 uv = straightUV;
-    float3 waterPoint = surfaceFromCamera;
-    float waterViewZ = map.viewZ;
-    float sceneZ = map.viewZ;
-    [unroll]
-    for (int i = 0; i < 2; i++) {
-        float3 target = surfaceFromCamera + bent * (depth / max(-bent.z, 0.1f));
-        waterPoint = float3(target.xy * (planeZ / min(target.z, planeZ)), surfaceFromCamera.z);
-        float2 offset = waterPoint.xy - surfaceFromCamera.xy;
-        uv = straightUV + getScreenOffset(map, offset);
-        waterViewZ = getWaterViewZ(map, offset);
-        sceneZ = getSceneViewZ(map, uv, waterViewZ, waterPoint.z);
-        depth = max(surfaceFromCamera.z - waterPoint.z * (sceneZ / waterViewZ), 0.0f);   // getBedBehind's
-    }
+float2 getRefraction(float3 surfaceFromCamera, float3 N, float2 straightUV, WaterScreenMap map, float depthBelow, float strength){
+    // Light entering a facet tilted toward +x bends toward -x on its way down.
+    float2 offset = -N.xy * (min(depthBelow, WATER_REFRACTION_DEPTH_CAP) * 0.25f * strength);
+    float2 uv = straightUV + getScreenOffset(map, offset);
 
-    // How much of the bend is kept: none onto something in front of the water, and fading out over
-    // the last 3% of the screen to its edge (none past it).
+    // Keep the nudge only where it lands behind the water, and fade it out over the last 3% of the
+    // screen to its edge (none past it).
+    float waterViewZ = getWaterViewZ(map, offset);
+    float sceneZ = getSceneViewZ(map, uv, waterViewZ, surfaceFromCamera.z);
     float2 edge = min(uv, 1.0f - uv);
     float keep = sceneZ < waterViewZ ? 0.0f : saturate(min(edge.x, edge.y) / 0.03f);
-    float3 refractedBed = waterPoint * (sceneZ / waterViewZ);
-    uv = lerp(straightUV, uv, keep);
-    waterPoint = lerp(surfaceFromCamera, waterPoint, keep);
-    bed = lerp(straightBed, refractedBed, keep);
-    path = getWaterPathTo(bed, waterPoint);
-    return uv;
+    return lerp(straightUV, uv, keep);
 }
 
 // The bed as seen through the water. Blurred the more water it is seen through (RefractionBlur),

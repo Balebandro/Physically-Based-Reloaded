@@ -239,11 +239,10 @@ PS_OUTPUT main(PS_INPUT IN) {
     WATER_DEBUG(14, getSceneEmpty(screenMap, straightUV) > 0.5f ? float3(1.0f, 0.0f, 0.0f) : saturate(straightPath.y / (100.0f * WATER_UNITS_PER_METRE)).xxx);
     WATER_DEBUG(15, float3(saturate(getDepthCopies(screenMap, surface, straightUV).xy / (20.0f * WATER_UNITS_PER_METRE)), getDepthCopies(screenMap, surface, straightUV).z));
 
-    // Refraction (getRefraction): the view bent through the waves as real water bends it, followed
-    // down to the bed it lands on. path: through the water to that bed, and its depth.
-    float2 path;
-    float3 refractedBed;
-    float2 refractionUV = getRefraction(surface, refractionN, straightUV, screenMap, straightBed, WATER_SETTINGS.w, path, refractedBed);
+    // Refraction (getRefraction): the view of the bed nudged by the waves. The path through the water
+    // and its depth stay those under the pixel.
+    float2 path = straightPath;
+    float2 refractionUV = getRefraction(surface, refractionN, straightUV, screenMap, straightPath.y, WATER_SETTINGS.w);
     WATER_DEBUG(7, saturate(path.x / (20.0f * WATER_UNITS_PER_METRE)));
     WATER_DEBUG(8, saturate(path.y / (20.0f * WATER_UNITS_PER_METRE)));
 
@@ -281,7 +280,7 @@ PS_OUTPUT main(PS_INPUT IN) {
     // around each grain. Over the first few units down, so the waterline shows no edge.
     bed *= lerp(1.0f, 0.7f, saturate(path.y / 10.0f));
 #if WATER_SUNLIT
-    float caustics = getCaustics(refractedBed, path.y, shadow * luma(sunLight));
+    float caustics = getCaustics(straightBed, path.y, shadow * luma(sunLight));
     bed *= 1.0f + caustics;
 #else
     float caustics = 0.0f;
