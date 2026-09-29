@@ -1,6 +1,7 @@
 #pragma once
 
 // CREDIT: VolumetricLight effect / shader by mcstfuerson. Used with permission.
+//         Ported to New Vegas Reloaded by Conor.
 // See the credit header in src/hlsl/NewVegas/Effects/VolumetricLight.fx.hlsl.
 
 // Ray-marched sun light shaft: camera to visible surface, testing the sun's VSM/EVSM cascade

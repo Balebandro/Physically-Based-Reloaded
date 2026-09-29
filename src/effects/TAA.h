@@ -1,5 +1,7 @@
 #pragma once
 
+// CREDIT: TAA for New Vegas Reloaded by Conor. See TAA.fx.hlsl for upstream credits.
+
 // Temporal anti-aliasing: temporal accumulation with camera reprojection, plus sub-pixel jitter of
 // the world render so a still image gets anti-aliased too. Ported from Oblivion Reloaded E3's TAA;
 // see TAA.fx.hlsl for what changed and why, and BeginJitter below for how the jitter is applied.

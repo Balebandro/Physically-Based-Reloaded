@@ -100,6 +100,8 @@ float3 Uncharted2Tonemap(float3 v, float exposure_bias, float whitepoint)
 //AGX
 //https://iolite-engine.com/blog_posts/minimal_agx_implementation
 //
+// CREDIT: matrix orientation fix (below) by Conor.
+//
 // The two matrices below are copied verbatim from that post, which is GLSL. GLSL's mat3(...)
 // constructor fills COLUMNS; HLSL's {{...},{...},{...}} initialiser fills ROWS. So each row here
 // is one of the source's columns, and these are the transpose of the intended transforms.

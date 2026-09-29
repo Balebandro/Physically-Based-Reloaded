@@ -1,3 +1,5 @@
+// CREDIT: TAA for New Vegas Reloaded by Conor. See TAA.fx.hlsl for upstream credits.
+
 #include <algorithm>
 
 #include "TAA.h"

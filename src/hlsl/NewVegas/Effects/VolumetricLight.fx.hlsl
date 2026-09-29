@@ -1,6 +1,6 @@
 // =================================================================================================
-//  CREDIT: Volumetric light shader by mcstfuerson.
-//  Used with permission.
+//  CREDIT: Volumetric light shader by mcstfuerson. Used with permission.
+//          Ported to New Vegas Reloaded by Conor.
 //
 //  Keep this credit intact in this file and in any copy, port or derivative of it.
 // =================================================================================================
