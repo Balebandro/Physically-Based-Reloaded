@@ -162,6 +162,7 @@
     <ClCompile Include="..\src\effects\POM.cpp" />
     <ClCompile Include="..\src\effects\Rain.cpp" />
     <ClCompile Include="..\src\effects\SMAA.cpp" />
+    <ClCompile Include="..\src\effects\TAA.cpp" />
     <ClCompile Include="..\src\effects\ShadowsExterior.cpp" />
     <ClCompile Include="..\src\effects\ShadowsInteriors.cpp" />
     <ClCompile Include="..\src\effects\Sharpening.cpp" />
@@ -174,6 +175,7 @@
     <ClCompile Include="..\src\effects\Terrain.cpp" />
     <ClCompile Include="..\src\effects\Tonemapping.cpp" />
     <ClCompile Include="..\src\effects\Underwater.cpp" />
+    <ClCompile Include="..\src\effects\VolumetricLight.cpp" />
     <ClCompile Include="..\src\effects\VolumetricFog.cpp" />
     <ClCompile Include="..\src\effects\Water.cpp" />
     <ClCompile Include="..\src\effects\WaterLens.cpp" />
@@ -269,6 +271,7 @@
     <ClInclude Include="..\src\effects\POM.h" />
     <ClInclude Include="..\src\effects\Rain.h" />
     <ClInclude Include="..\src\effects\SMAA.h" />
+    <ClInclude Include="..\src\effects\TAA.h" />
     <ClInclude Include="..\src\effects\ShadowsExterior.h" />
     <ClInclude Include="..\src\effects\ShadowsInteriors.h" />
     <ClInclude Include="..\src\effects\Sharpening.h" />
@@ -281,6 +284,7 @@
     <ClInclude Include="..\src\effects\Terrain.h" />
     <ClInclude Include="..\src\effects\Tonemapping.h" />
     <ClInclude Include="..\src\effects\Underwater.h" />
+    <ClInclude Include="..\src\effects\VolumetricLight.h" />
     <ClInclude Include="..\src\effects\VolumetricFog.h" />
     <ClInclude Include="..\src\effects\Water.h" />
     <ClInclude Include="..\src\effects\WaterLens.h" />

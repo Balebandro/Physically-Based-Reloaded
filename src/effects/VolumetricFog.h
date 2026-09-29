@@ -18,7 +18,7 @@ public:
 		D3DXVECTOR4		Scatter;         // x: PhaseAsymmetry, y: ShadowStrength, z: NoiseStrength, w: HeightInfluence
 		D3DXVECTOR4		Weather;         // x: WeatherFilterBlend (animated 0-1, 1=sky mask active), y: isExterior, z: SkyAmbientAvailable, w: FogSaturation
 		D3DXVECTOR4		Aerial;          // x: AerialStrength, y: AerialRangeStart, z: AerialTintBlend, w: AerialDayFadeStart
-		D3DXVECTOR4		AerialTintColor; // xyz: manual aerial tint override
+		D3DXVECTOR4		AerialTintColor; // xyz: manual aerial tint override, w: SunScatteringStrength
 		D3DXVECTOR4		Distant;         // x: DistantFogRange, y: DistantFogBlend, z: DistantFogHeight, w: EdgeAA
 		D3DXVECTOR4		Global;          // x: Amount, y: NightDisableSkyMask (Night-scoped, packed here for the spare slot), z: MoonVisibility, w: MinDensityFloor
 		// Its own section/settings-UI tab (Shaders.VolumetricFog.Night), separate from Main, so

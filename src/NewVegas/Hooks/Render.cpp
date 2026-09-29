@@ -76,6 +76,10 @@ HRESULT __fastcall SetSamplerStateHook(NiDX9RenderState* This, UInt32 edx, UInt3
 
 void (__thiscall* RenderWorldSceneGraph)(Main*, Sun*, UInt8, UInt8, UInt8) = (void (__thiscall*)(Main*, Sun*, UInt8, UInt8, UInt8))Hooks::RenderWorldSceneGraph;
 void __fastcall RenderWorldSceneGraphHook(Main* This, UInt32 edx, Sun* SkySun, UInt8 IsFirstPerson, UInt8 WireFrame, UInt8 Arg4) {
+	// TAA sub-pixel jitter covers the world scene and nothing else -- see TAAEffect::BeginJitter.
+	TAAEffect* TAA = TheShaderManager->Effects.TAA;
+	if (TAA) TAA->BeginJitter();
+
 	(*RenderWorldSceneGraph)(This, SkySun, IsFirstPerson, WireFrame, Arg4);
 
 	// Re-light nearby statics inside the flashlight cone. This has to happen here, before
@@ -84,6 +88,10 @@ void __fastcall RenderWorldSceneGraphHook(Main* This, UInt32 edx, Sun* SkySun, U
 	// through world geometry.
 	MaterialPass::CaptureScene(WorldSceneGraph);
 	MaterialPass::RenderWorld();
+
+	// After the material pass, not before: it redraws world geometry over the scene, and must
+	// land on exactly the same jittered pixels the world did.
+	if (TAA) TAA->EndJitter();
 
 	const bool bPipBoyOpen = InterfaceManager->IsPipBoyOpen();
 	const bool bPipBoyLive = (TheGameMenuManager->IsLiveMenu && TheGameMenuManager->IsLiveMenu(Menu::kMenuType_BigFour, false, false) == GameMenuManager::MenuPauseState::MENU_LIVE);

@@ -1,6 +1,15 @@
 #pragma once
 
 void __fastcall RenderShadowMapHook(void* apThis) {
+	// TAA jitters the world scene only, on the understanding that shadow maps are rendered before
+	// it. If that ever stops being true, the cascades get fitted to a jittered frustum and shadow
+	// edges shimmer -- say so in the log rather than leave it to be found by eye.
+	static bool reportedJitteredShadows = false;
+	if (!reportedJitteredShadows && TheShaderManager->Effects.TAA->IsJitterActive()) {
+		Logger::Log("[WARNING] TAA : shadow maps rendered while the world camera was jittered; cascades will shimmer");
+		reportedJitteredShadows = true;
+	}
+
 	TheShadowManager->RenderShadowMaps();
 	CdeclCall(0x871A50);
 }

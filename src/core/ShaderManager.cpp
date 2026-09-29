@@ -74,11 +74,13 @@ void ShaderManager::Initialize() {
 	TheShaderManager->RegisterEffect<SnowEffect>(&TheShaderManager->Effects.Snow);
 	TheShaderManager->RegisterEffect<SnowAccumulationEffect>(&TheShaderManager->Effects.SnowAccumulation);
 	TheShaderManager->RegisterEffect<UnderwaterEffect>(&TheShaderManager->Effects.Underwater);
+	TheShaderManager->RegisterEffect<VolumetricLightEffect>(&TheShaderManager->Effects.VolumetricLight);
 	TheShaderManager->RegisterEffect<VolumetricFogEffect>(&TheShaderManager->Effects.VolumetricFog);
 	TheShaderManager->RegisterEffect<WaterLensEffect>(&TheShaderManager->Effects.WaterLens);
 	TheShaderManager->RegisterEffect<WetWorldEffect>(&TheShaderManager->Effects.WetWorld);
 	TheShaderManager->RegisterEffect<DitherBusterEffect>(&TheShaderManager->Effects.DitherBuster);
 	TheShaderManager->RegisterEffect<SMAAEffect>(&TheShaderManager->Effects.SMAA);
+	TheShaderManager->RegisterEffect<TAAEffect>(&TheShaderManager->Effects.TAA);
 
 	TheShaderManager->RegisterShaderCollection<TonemappingShaders>(&TheShaderManager->Shaders.Tonemapping);
 	TheShaderManager->RegisterShaderCollection<POMShaders>(&TheShaderManager->Shaders.POM);
@@ -191,6 +193,19 @@ template <typename T> void ShaderManager::RegisterShaderCollection(T** Pointer)
  */
 void ShaderManager::ClearShaderSamplers(const char* TextureName, size_t Length)
 {
+	// Effects as well as game shaders. This used to walk ShaderNames alone, so effects had to be
+	// cleared individually by name at each call site -- and only SunShadows ever was. Any other
+	// effect sampling a recreated texture kept its dangling pointer, which the device still
+	// references, so it silently went on reading whatever was last rendered into the dead one.
+	// VolumetricLight samples TESR_ShadowAtlas and hit exactly that: after any shadow setting
+	// change its shafts were carved by a frozen copy of the atlas and no longer matched the
+	// scene. Covering every effect here fixes it for all of them rather than adding one more
+	// name to a list that has to be maintained by hand.
+	for (const auto& Entry : EffectsNames) {
+		EffectRecord* Effect = Entry.second ? *Entry.second : nullptr;
+		if (Effect) Effect->ClearSampler(TextureName, Length);
+	}
+
 	for (const auto& Entry : ShaderNames) {
 		ShaderCollection* Collection = Entry.second ? *Entry.second : nullptr;
 		if (!Collection) continue;
@@ -817,6 +832,23 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 	Effects.SnowAccumulation->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 	Effects.AmbientOcclusion->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 	Effects.WetWorld->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+
+	// March into VolumetricLight's own half res buffer first (technique 0); the Composite pass
+	// below (technique 1) reads it back at full res. Same two-step pattern as FlashlightBeam,
+	// including the guard, which is not optional: RenderEffectToRT switches the render target
+	// BEFORE EffectRecord::Render can test Enabled/ShouldRender, so an unguarded call rebinds
+	// every frame even in interiors where this effect never draws. Worse, if the surface is null
+	// -- texture creation failed, or a device reset released it before RegisterTextures ran again
+	// -- it becomes SetRenderTarget(0, NULL), which D3D9 forbids for target 0 and leaves the
+	// device with no colour target for whatever draws next.
+	if (Effects.VolumetricLight->Textures.VolumetricSurface &&
+		Effects.VolumetricLight->Enabled &&
+		Effects.VolumetricLight->ShouldRender()) {
+		RenderEffectToRT(Effects.VolumetricLight->Textures.VolumetricSurface, Effects.VolumetricLight, true);
+		Effects.VolumetricLight->RenderTemporal(Device);
+		Device->SetRenderTarget(0, RenderTarget);
+	}
+
 	// Beam march first, into its own half res buffer, so the Flashlight Combine pass can
 	// read it. Control.x already folds the effect toggle, the per view toggle and the
 	// strength together, so this one test gates the whole thing.
@@ -827,6 +859,7 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 	Effects.Flashlight->Render(Device, RenderTarget, RenderedSurface, Effects.Flashlight->selectedPass, true, SourceSurface);
 	Effects.Specular->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 	Effects.Underwater->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	Effects.VolumetricLight->Render(Device, RenderTarget, RenderedSurface, 1, false, SourceSurface);
 	Effects.VolumetricFog->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 	Effects.GodRays->Render(Device, RenderTarget, RenderedSurface, 0, true, SourceSurface);
 
@@ -874,6 +907,13 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 	// copy the source render target to both the rendered and source textures (rendered gets updated after every pass, source once per effect)
 	Device->StretchRect(RenderTarget, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
 	Device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
+
+	// TAA first: after tonemapping, so it resolves LDR values that cannot ghost as HDR highlights
+	// do, and ahead of everything below. Rain and snow are particles with no depth of their own
+	// to reproject by, DoF and motion blur want the stable image as input, and the lens effects
+	// and cinema overlay are fixed to the screen -- any of them run through a reprojection that
+	// assumes a static world would smear across the frame as the camera turns.
+	Effects.TAA->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 
 	Effects.Rain->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 	Effects.Snow->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);

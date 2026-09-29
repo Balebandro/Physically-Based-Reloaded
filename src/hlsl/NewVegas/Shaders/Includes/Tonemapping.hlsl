@@ -99,6 +99,30 @@ float3 Uncharted2Tonemap(float3 v, float exposure_bias, float whitepoint)
 
 //AGX
 //https://iolite-engine.com/blog_posts/minimal_agx_implementation
+//
+// CREDIT: matrix orientation fix (below) by Conor.
+//
+// The two matrices below are copied verbatim from that post, which is GLSL. GLSL's mat3(...)
+// constructor fills COLUMNS; HLSL's {{...},{...},{...}} initialiser fills ROWS. So each row here
+// is one of the source's columns, and these are the transpose of the intended transforms.
+//
+// They are used with mul(val, M) rather than mul(M, val) for that reason. mul(v, M) computes
+// result[j] = dot(v, column j), and since the declared rows are the source's columns, that
+// reproduces the GLSL exactly -- leaving the literals matching the reference so they can still be
+// diffed against it.
+//
+// Do not "tidy" these to mul(M, val). That applies the transpose, and the symptom is a pink cast
+// rather than anything obviously broken: AgX's matrices are built to preserve neutral, and
+// transposed they do not. As declared, the outset maps white to (1.091, 0.956, 0.953) -- red up
+// 9%, green and blue down 4.5% -- and a neutral grey comes out with red 15-24% above green and
+// blue, worsening as the image brightens. Compare ACESInputMat/ACESOutputMat above, which ARE
+// used with mul(M, val): their rows each sum to exactly 1.0, which is what a white-preserving
+// matrix looks like in this orientation. AgX's rows sum to 0.927 / 1.035 / 1.038.
+//
+// The pair still round-trips perfectly when transposed -- (M^T)^-1 == (M^-1)^T -- so nothing
+// catches this except looking at a neutral. The casts only appear because the per-channel sigmoid
+// sits between the inset and the outset: the inset exists to compress the gamut around that
+// nonlinearity, and the wrong orientation compresses along the wrong axes.
 static const float3x3 agx_mat =
 {
     { 0.842479062253094, 0.0423282422610123, 0.0423756549057051 },
@@ -130,8 +154,8 @@ float3 agxDefaultContrastApprox(float3 x)
 float3 agxEotf(float3 val)
 {
     
-  // Inverse input transform (outset)
-    val = mul(agx_mat_inv, val);
+  // Inverse input transform (outset). mul(val, M), not mul(M, val) -- see the matrix declarations.
+    val = mul(val, agx_mat_inv);
   
   // sRGB IEC 61966-2-1 2.2 Exponent Reference EOTF Display
   // NOTE: We're linearizing the output here. Comment/adjust when
@@ -177,8 +201,8 @@ float3 agx(float3 val)
     float min_ev = -12.47393f;
     float max_ev = 4.026069f;
 
-  // Input transform (inset)
-    val = mul(agx_mat, val);
+  // Input transform (inset). mul(val, M), not mul(M, val) -- see the matrix declarations.
+    val = mul(val, agx_mat);
   
   // Log2 space encoding
     val = clamp(log2(val), min_ev, max_ev);

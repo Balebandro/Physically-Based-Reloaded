@@ -88,6 +88,7 @@ void VolumetricFogEffect::UpdateSettings(){
 		Constants.AerialTintColor.x = TheSettingManager->GetSettingF(SettingCategory, "AerialTintR");
 		Constants.AerialTintColor.y = TheSettingManager->GetSettingF(SettingCategory, "AerialTintG");
 		Constants.AerialTintColor.z = TheSettingManager->GetSettingF(SettingCategory, "AerialTintB");
+		Constants.AerialTintColor.w = TheSettingManager->GetSettingF(SettingCategory, "SunScatteringStrength");
 
 		Constants.Distant.x = TheSettingManager->GetSettingF(SettingCategory, "DistantFogRange");
 		Constants.Distant.y = TheSettingManager->GetSettingF(SettingCategory, "DistantFogBlend");

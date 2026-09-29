@@ -31,11 +31,13 @@
 #include "SnowAccumulation.h"
 #include "Snow.h"
 #include "Underwater.h"
+#include "VolumetricLight.h"
 #include "VolumetricFog.h"
 #include "WaterLens.h"
 #include "WetWorld.h"
 #include "DitherBuster.h"
 #include "SMAA.h"
+#include "TAA.h"
 
 #include "Water.h"
 #include "Tonemapping.h"

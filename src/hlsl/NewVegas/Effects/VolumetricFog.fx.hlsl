@@ -45,7 +45,7 @@ float4 TESR_VolumetricFogWind;       // x: WindDirX, y: WindDirY, z: WindSpeed, 
 float4 TESR_VolumetricFogScatter;    // x: PhaseAsymmetry, y: ShadowStrength, z: NoiseStrength, w: HeightInfluence
 float4 TESR_VolumetricFogWeather;    // x: WeatherFilterBlend (animated 0-1), y: isExterior, z: SkyAmbientAvailable, w: FogSaturation
 float4 TESR_VolumetricFogAerial;     // x: AerialStrength, y: AerialRangeStart, z: AerialTintBlend, w: AerialDayFadeStart
-float4 TESR_VolumetricFogAerialTint; // xyz: manual aerial tint override
+float4 TESR_VolumetricFogAerialTint; // xyz: manual aerial tint override, w: SunScatteringStrength
 float4 TESR_VolumetricFogDistant;    // x: DistantFogRange, y: DistantFogBlend, z: DistantFogHeight, w: EdgeAA
 float4 TESR_VolumetricFogGlobal;     // x: Amount, y: NightDisableSkyMask, z: MoonVisibility, w: MinDensityFloor
 // Own settings-UI section/tab (Shaders.VolumetricFog.Night), not Main/Interiors-switched, so these
@@ -133,6 +133,11 @@ static const float AerialTintBlend = saturate(TESR_VolumetricFogAerial.z);
 // more of the sunrise/sunset transition, not just full night -- that's specifically when direct
 // low-angle sun on distant terrain was reading as too bright/glowy.
 static const float AerialDayFadeStart = saturate(TESR_VolumetricFogAerial.w);
+// Gain on the sun-facing forward-scattering glow (see its use near `sun` below). Was a hardcoded
+// 100 -- exposed as a setting since that flat gain could make fog facing the sun read as much
+// brighter/thicker than the exact same density facing away from it, by pure contrast rather than
+// any actual difference in extinction (which has no sun-direction dependence anywhere).
+static const float SunScatteringStrength = max(0, TESR_VolumetricFogAerialTint.w);
 
 static const float DistantFogRange = exp(-4 * clamp(TESR_VolumetricFogDistant.x, 0.00000001, 1.0));
 static const float DistantFogBlend = TESR_VolumetricFogDistant.y;
@@ -149,6 +154,7 @@ static const float FogSkyColorCoeff = 6.0;
 #include "Includes/Shadows.hlsl"
 #include "Includes/Sky.hlsl"
 #include "Includes/Normals.hlsl"
+#include "Includes/FogDensity.hlsl"
 
 struct VSOUT
 {
@@ -406,7 +412,7 @@ float4 VolumetricFog(VSOUT IN) : COLOR0
 	// 0 for interiors (no consistent day/night concept) or full daylight; ramps toward 1 through
 	// dusk for exteriors. Shared by every Night* setting so they all fade in together, in step,
 	// rather than each re-deriving its own slightly-different version of the same curve.
-	float nightFactor = isExterior * (1 - isDayTime);
+	float nightFactor = GetFogNightFactor(isExterior);
 
 	float3 eyeVector = toWorld(IN.UVCoord);
 	float3 eyeDirection = normalize(eyeVector);
@@ -433,19 +439,14 @@ float4 VolumetricFog(VSOUT IN) : COLOR0
 	// gate regardless of sky brightness. Reuses `depth`, already sampled above via readDepth().
 	float isSkyDome = depth / farZ >= 0.9961;
 
-	// ---- vanilla-anchored density, derived from the active weather's own authored fog shape ----
-	float vanillaStrength = pows((saturate(1 - farFog / farZ) + saturate(1 - nearFog / farZ)) / 2, 2) / (FogPower + 1);
-
-	// ---- NVR-driven density: time-of-day curve, sunrise/sunset boost, animated 3D noise ----
-	float sunsetBump = sin(saturate(TESR_SunAmount.x) * PI) * isExterior;
-	float noonTrough = 1 - saturate(abs(TESR_GameTime.y - 12) / 6); // 0 at 6am/6pm, 1 at solar noon
-	float timeOfDayScale = lerp(1.0, lerp(1.0, 1.0 - MorningFogDip, noonTrough), isExterior);
-	float nightDensityScale = lerp(1.0, NightDensityScale, nightFactor);
-
+	// ---- density: vanilla weather fog + NVR time-of-day curve, sunrise/sunset boost, animated 3D noise ----
+	// The formula itself lives in Includes/FogDensity.hlsl (GetFogStrength), shared with
+	// VolumetricLight so the light shafts scatter through the same air this fog paints. Only the
+	// per-pixel noise is computed here and passed in.
 	float nightWindSpeed = WindSpeed * lerp(1.0, NightWindSpeedScale, nightFactor);
 	float3 windOffset = float3(WindDirection * nightWindSpeed * TESR_GameTime.x * 0.002, 0);
 	float noiseVal = fbm3((worldPos + windOffset) / (1500 * NoiseScale));
-	float nightNoiseStrength = NoiseStrength * lerp(1.0, NightNoiseStrengthScale, nightFactor);
+	float nightNoiseStrength = GetFogNoiseStrength(nightFactor);
 
 	// Zero the noise's contribution to density on true sky pixels via isSkyDome (a hard depth
 	// test, not brightness-based) -- strength still feeds the exterior sun-scattering term even
@@ -455,10 +456,10 @@ float4 VolumetricFog(VSOUT IN) : COLOR0
 	// non-sky surfaces (sunlit terrain, snow), crushing the noise's animated look almost everywhere
 	// in daylight instead of just on the sky. isSkyDome has no such false positives.
 	float noiseSkyMask = 1 - isSkyDome;
-	float nvrDensity = BaseDensity * timeOfDayScale * nightDensityScale * lerp(1.0, noiseVal, nightNoiseStrength * noiseSkyMask);
-	// Not gated by WeatherFilterBlend (unlike skyMaskFactor above): that gate exists so the
-	// composited fog can blend into an overcast sky instead of excluding the sky dome, which is a
-	// property of the final composite, not of density. nvrDensity itself -- including the wind/
+	float noiseModulation = lerp(1.0, noiseVal, nightNoiseStrength * noiseSkyMask);
+	// Density (GetFogStrength) is not gated by WeatherFilterBlend (unlike skyMaskFactor above):
+	// that gate exists so the composited fog can blend into an overcast sky instead of excluding
+	// the sky dome, which is a property of the final composite, not of density. nvrDensity itself -- including the wind/
 	// noise animation -- used to be multiplied by WeatherFilterBlend too, which meant Rainy/Cloudy
 	// weather (RainyDisablesSkyFilter/CloudyDisablesSkyFilter, both default on) zeroed it entirely.
 	// Since FNV has no distinct "Foggy" weather type, an actual fog weather is almost always
@@ -467,9 +468,7 @@ float4 VolumetricFog(VSOUT IN) : COLOR0
 	// tying density to weather is already independently covered above by noiseSkyMask/isSkyDome,
 	// so nvrDensity no longer needs WeatherFilterBlend's gate at all -- SunriseSunsetBoost included,
 	// for the same reason.
-	nvrDensity += SunriseSunsetBoost * sunsetBump;
-
-	float strength = max(0, nvrDensity + WeatherImpact * vanillaStrength);
+	float strength = GetFogStrength(noiseModulation, isExterior, nightFactor);
 
 	// ---- shadow-coupled sun in-scattering, sampled once per pixel at the fog's terminating point ----
 	float3 worldNormal = GetWorldNormal(IN.UVCoord);
@@ -501,7 +500,7 @@ float4 VolumetricFog(VSOUT IN) : COLOR0
 
 		float sunScattering = pows(compress(sunDir), lerp(8.0, 1.0, PhaseAsymmetry) + sunStrength);
 		sunScattering *= pow(1 - sunHeight, 2) * isDayTimeFog * TESR_FogData.z;
-		sun = sunColorV * sunScattering * shadowVisibility * TESR_PBRData.z * 100;
+		sun = sunColorV * sunScattering * shadowVisibility * TESR_PBRData.z * SunScatteringStrength;
 
 		distantFog = pows(smoothstep(DistantFogRange, 1.0, normalizedDepth), 0.5);
 		distantHeightFade = (DistantFogHeight == 0) ? (1.0 - isSky) : exp(-worldPos.z / (80000 * DistantFogHeight));
