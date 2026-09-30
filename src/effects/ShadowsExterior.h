@@ -207,6 +207,11 @@ public:
 
 	D3DXVECTOR3	CalculateSmoothedSunDir();
 
+	// Set by ShadowManager::RenderShadowMaps when it skipped the sun/moon cascades because the light
+	// is below the horizon. The atlas and the camera-relative ShadowCameraToLight transforms are then
+	// stale -- see UpdateConstants for why they must not be sampled.
+	bool		SunMapsStale = false;
+
 	void		GetCascadeDepths();
 	D3DXMATRIX	GetCascadeViewProj(ShadowMapSettings* ShadowMap, D3DXVECTOR3* SunDir);
 

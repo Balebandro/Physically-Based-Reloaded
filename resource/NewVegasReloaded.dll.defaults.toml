@@ -997,49 +997,102 @@ Enabled = true                      # Replaces shaders used by terrain, adding P
 [_Shaders.Underwater.Status]
 Enabled = true                      # Post Process underwater fog/godrays/caustics effect.
 
+# Works on either shadow atlas format. At Shaders.ShadowsExteriors.ShadowMaps.Format = 0 (16-bit)
+# GetEVSMExponents clamps the EVSM positive exponent from 40 to 5.54, which loosens the Chebyshev
+# bound and biases occluded points toward lit; the shader compensates by strengthening its light
+# bleed reduction on that format (see BleedReduction in VolumetricLight.fx.hlsl). Format = 1 gives
+# a tighter bound and slightly cleaner shadow edges, at double the atlas bandwidth, but is not
+# required. An earlier note here claimed it was; that was written while a camera-space bug was
+# suppressing the shadow lookup entirely, and the format was never the cause.
+[_Shaders.VolumetricLight.Main]
+Strength = 55.0                     # Overall intensity multiplier for the light shaft. Responds on a 2.1 power curve, not linearly: the composite raises the shaft to that power, so doubling this gives 2^2.1 = 4.3x, and the slider has a soft bottom end that ramps hard. That curve is the point rather than a side effect -- it crushes dim scattering harder than bright, which pulls the general haze down relative to the bright shaft cores. It also saturates the shaft per-channel, so the ScatterR/G/B tint spreads and warm tints get warmer; retune the tint if that goes too far, not this. The usable range sits around 55 rather than around 1 because accumLightStrength in the shader is left at 0.04 -- see the comment there; the two can only move together, and rescaling them silently makes every saved config 55x too bright. Values well above this are safe: in-scattered light is additive over the scene and the whole chain runs in FP16 before tonemapping, so a bright shaft is an HDR highlight for the tonemapper to roll off, not a washed-out frame.
+Anisotropy = 0.452                  # [0.0-0.9] Forward scattering bias (Henyey-Greenstein g). Controls how sharply light gathers toward the sun, and nothing else -- the phase function is normalised to peak at 1.0, so this sets the SHAPE of the lobe while Strength sets how much there is. Raw HG ties the two together (its peak climbs 7.4x from g=0.1 to g=0.6), which is why changing this used to change overall brightness. Shafts come from shadow occlusion, not from a tight lobe: too high and the effect collapses to a small bright patch around the sun, too low and it reads as flat haze across the whole frame.
+AccumDistance = 6000.0              # How far the ray march looks, in world units, and nothing else. It used to also be the reference path the coefficients were normalised against, which made one setting do two unrelated jobs -- see ScatterReference below for why that faded the shafts out near the camera whenever this was raised. Now it only sets reach: raising it lets rays find occluders further out and costs near-field rays nothing. Steps grow geometrically (1.05 per step over 64 steps, summing to exactly one ray length), so raising this spends resolution in the far field rather than the near, and the near-field sampling of a ray that stops at a wall is unchanged whatever this is set to.
+ScatterReference = 6000.0           # The path length the scattering and extinction coefficients are expressed against: a ray this long through undiminished medium accumulates unit scattering, and Extinction of 1.0 attenuates the scene behind it to 1/e over this distance. In effect it sets how dense the air is, and it is the knob to move if the shafts are too weak or too strong overall -- LOWER is denser, since the coefficients are divided by it. It was split off from AccumDistance because sharing one value made them fight: shaft brightness goes as rayLength/reference, and rayLength is pinned by the depth buffer for any ray that hits something, so raising the march range used to divide the brightness of every near-field ray while sky rays -- whose rayLength IS the range -- kept theirs. Raising the range from 6000 to 12000 halved a ray that stopped at a wall 800 units away. Keep this equal to AccumDistance for the pre-split behaviour; that is why both default to 6000.
+NightDistance = 1500.0              # How far the ray march looks at night, in place of AccumDistance, fading in through dusk. After dark the light is the moon, and a full-length march through open moonlit air makes the distance glow in the moon's direction. Night shafts come from occluders near the camera, so a shorter reach removes that glow and keeps them. The glow scales with this: at 1500 against an AccumDistance of 6000, about a quarter of it remains. Raise it if night shafts from farther occluders go missing; set it equal to AccumDistance to turn it off.
+FogInfluence = 0.236                # [0.0-1.0] How much VolumetricFog's density drives the scattering medium's density. Scattered light is proportional to how much medium a ray crosses, so at 0 the shafts are identical in clear desert air and in thick fog -- too strong where there is nothing to scatter off, too weak where the air is full of it. At 1 they track the fog the player can see: the same density VolumetricFog paints with (BaseDensity, WeatherImpact, MorningFogDip, SunriseSunsetBoost, Night DensityScale, and the noise's average), read from the VolumetricFog settings even when that effect is off. Low by default so clear weather keeps most of its shafts while fog still strengthens them.
+Extinction = 1.0                    # [0.0-3.0] How much the medium attenuates the scene behind it, as optical depth over one AccumDistance of full-density medium: 1.0 dims a full-length path to 1/e. Tracked separately from how bright the shaft is, which is the point -- tying the two together is what made the old composite veil the scene in proportion to shaft brightness. A high value here is what gives the dense, hazy, light-filled air that reads as atmosphere rather than as decals of light laid over the frame; it does overlap what VolumetricFog does, and that overlap turns out to be worth having. Lower it toward 0 for shafts that add light without touching what is behind them.
+HeightFalloff = 600.0               # World units over which the medium thins by 1/e going up, measured from the camera. A uniform medium glows as brightly 300 feet up as at ground level, which reads as an even wash; real haze is dense low and thin above, and that gradient is what makes a shaft read as a beam punching through a layer. 0 disables it and restores a uniform medium. Referenced to the camera rather than to an absolute world height because FNV has no single ground level -- every worldspace sits at its own Z.
+Dither = true                       # Dither the ray march start offset to hide banding between steps.
+DitherMotion = false                # Force the dither pattern to move every frame even with Temporal and TAA both off. Not needed otherwise: while Temporal or TAA is on the dither moves by itself (a golden-ratio step per frame) and the frames average into smooth shafts, which a fixed pattern cannot give because every frame repeats it. With both off nothing averages the frames, so this only swaps a still grain for shimmer; leave it off unless comparing.
+Temporal = true                     # Average the light shafts over recent frames, reprojected for camera movement, at the march's half resolution before it is upsampled. The march's dither then moves every frame and the frames average into smooth shafts instead of fixed grain. Works with or without TAA (with both, the shafts are smoothed twice, which is fine). Turn off to see the raw single-frame march.
+TemporalWeight = 0.9                # [0.5-0.97] How much of each frame is the history. 0.9 averages roughly the last ten frames: smoother the higher it goes, but shafts respond more slowly when the sun or a shadow moves.
+TemporalClipGamma = 1.25            # [0.5-3.0] How far the history may stray from the current frame's neighbourhood before it is pulled back, in standard deviations. Higher keeps more history (smoother, more trailing when turning); lower rejects more (less trailing, more grain).
+
+[_Shaders.VolumetricLight.Coloring]
+ScatterR = 1.0                      # Red channel tint on the scattered sun color.
+ScatterG = 0.9                      # Green channel tint on the scattered sun color.
+ScatterB = 0.78                     # Blue channel tint on the scattered sun color.
+
+[_Shaders.VolumetricLight.Status]
+Enabled = true                       # Ray-marched sun light shafts, occluded by the sun shadow atlas.
+
 [_Shaders.VolumetricFog.Main]
-Amount = 0.4                        # Global multiplier for fog strength in exteriors
-SunPower = 0.2                      # Controls the influence of Sun Color when shining through fog
-FogSaturation = 1.7                 # Tune the saturation of the fog
-MinimumBaseFog = 0.2                # How much fog will be present as a base line when weather has no fog
-WeatherImpact = 0.5                 # How much the fog will scale with weather fog strength
-DistantFogRange = 0.9               # Range of the distance fog that blends moutains into the sky.
-DistantFogBlend = 0.3               # Blending power of the distant fog
-DistantFogHeight = 0.3              # Height limit for the distant fog. If set to 0, will use the sky as a mask.
-HeightFogDensity = 0.6              # Density multiplier for the general height fog
-HeightFogFalloff = 50.0             # Vertical falloff of atmospheric height fog,
-HeightFogDist = 0.4                 # Distance multiplier for Height fog. Pushes back the fog.
-HeightFogSkyColor = 4.0             # Strong fogs will use the weather fog color instead of the sky. This setting changes how strong the fog should be for that.
-HeightFogHeight = 3.0               # "Sea level" from which the Height fog starts to decrease.
-HeightFogBlend = 1.0                # General strength of the impact of Height fog on the final look.
-HeightFogRolloff = 1.3              # Pushes back the Height fog without changing the far distance. Changes the curve of progression
-HeightFogSaturation = 1.7           # Saturation of the height fog color independently of the simple/distant fog saturation.
-HeightFogInscattering = 1.6         # Light scattering through height fog independently of simple fog inscattering.
-Extinction = 3.0                    # Light lost due to absorption of particles when seen throught the fog.
-Inscattering = 1.6                  # Light gained from light scattering when seen through the fog.
-FogNight = 2.0                      # Scales the fog distances at night.
-SimpleFogSkyColor = 20.0            # Strong fogs will use the weather fog color instead of the sky. This setting changes how strong the fog should be for that.
-SimpleFogHeight = 0.2               # Limit the sky influence/height rate of dissipation for simple fog.
-SimpleFogBlend = 0.5                # General strength of the impact of simple fog on the final look.
+Amount = 0.4                        # Global multiplier for the final fog strength in exteriors.
+FogSaturation = 1.7                 # Tune the saturation of the fog color.
+BaseDensity = 0.2                   # NVR-authored fog density baseline, independent of vanilla weather fog.
+WeatherImpact = 0.5                 # How much the vanilla weather's own fog near/far/power/color feeds into density and color, on top of BaseDensity. 0 = ignore vanilla weather fog, 1 = fully vanilla-driven.
+MorningFogDip = 0.5                 # How much the NVR-driven density dips around solar noon (0 = no change, 1 = fully cleared at noon). Ramps back to full by evening.
+SunriseSunsetBoost = 0.3            # Extra density/inscattering bump specifically during the sunrise and sunset transitions, on top of vanilla/base density.
+HeightFalloff = 50.0                # Vertical falloff rate of the fog density with altitude.
+MaxHeight = 3.0                     # "Sea level" above which fog density falls off.
+HeightInfluence = 1.0               # 1 = normal height-based falloff. 0 = uniform density regardless of height, falloff purely from distance. Meant to be tuned down for interiors; exteriors want this at 1.
+Extinction = 3.0                    # Light lost to absorption when seen through the fog.
+Inscattering = 1.6                  # Light gained from scattering when seen through the fog.
+WindAngle = 45.0                    # Compass direction (degrees) the fog's density noise drifts toward.
+WindSpeed = 0.3                     # Speed of the fog's density noise animation.
+NoiseScale = 1.0                    # World-space frequency of the procedural 3D density noise.
+NoiseStrength = 0.7                 # How much the procedural noise modulates density (0 = flat, 1 = fully noise-driven).
+PhaseAsymmetry = 0.6                # Henyey-Greenstein scattering asymmetry toward the sun (higher = stronger "silver lining" look facing the sun).
+ShadowStrength = 1.0                # Blend of the shadow-cascade visibility term on the sun's in-scattered light (0 = skip shadow sampling entirely, cheaper).
+SunScatteringStrength = 100.0       # Overall gain on the sun-facing forward-scattering glow (the "silver lining" itself, not its shape -- see PhaseAsymmetry for that). This only brightens fog color facing the sun; it never changes actual density/extinction, which is identical in every direction. Too high relative to your other settings and fog facing the sun can look dramatically thicker than the exact same density facing away from it, purely from the brightness contrast. Lower this (rather than PhaseAsymmetry) if that's happening and the glow itself still looks like the right shape.
+RainyDisablesSkyFilter = true       # In Rainy weather, stop excluding the sky dome from the fog composite, so fog blends fully into the overcast sky instead of masking it out. Does not affect NVR's own density, noise/wind animation, or the sunrise/sunset boost -- those stay active in every weather. Since FNV has no distinct "Foggy" weather type, an actual fog weather is almost always authored as Cloudy, not Rainy -- see CloudyDisablesSkyFilter below for the one that matters for that.
+CloudyDisablesSkyFilter = true      # Same as above, but for Cloudy weather -- which is what most fog weathers are actually authored as. Turn off if you prefer a sharp fog/sky boundary even under overcast/foggy skies.
+AerialStrength = 0.5                # Strength of the mid-to-far distance aerial-perspective tint on terrain/mountains.
+AerialRangeStart = 0.3              # Normalized depth at which the aerial-perspective tint starts building up.
+AerialTintBlend = 0.0               # 0 = aerial tint color comes entirely from the sky model (matches time of day automatically). 1 = fully replaced by the manual AerialTint color below.
+AerialDayFadeStart = 0.85           # TESR_SunAmount.x value at which aerial perspective reaches full strength. Wider than the sun-scattering ramp (which tops out at 0.6) so aerial stays suppressed further into the sunrise/sunset transition, when low sun on distant terrain was reading as too bright. Raise toward 1.0 to suppress it even later into full daylight.
+AerialTintR = 0.6                   # Manual aerial-perspective tint color (red), used when AerialTintBlend > 0.
+AerialTintG = 0.7                   # Manual aerial-perspective tint color (green), used when AerialTintBlend > 0.
+AerialTintB = 1.0                   # Manual aerial-perspective tint color (blue), used when AerialTintBlend > 0.
+DistantFogRange = 0.9               # Range of the distance fog that blends mountains/terrain into the sky near the horizon.
+DistantFogBlend = 0.3               # Blending power of the distant fog.
+DistantFogHeight = 0.3              # Height limit for the distant fog. If set to 0, uses the sky as a mask instead.
+EdgeAA = 0.4                        # Strength of the inverted distant-fog term that specifically feathers the terrain/sky silhouette edge, to hide aliasing there.
+MinDensityFloor = 0.0               # Guarantees at least this fraction of the flat/distance-only density everywhere, regardless of height -- a single height falloff tuned to look right in low-lying terrain (river valleys, lowlands) can crush to unnaturally clear air on terrain well above that reference (hills, mountains, plateaus elsewhere on the map). Raising this adds a height-agnostic baseline haze there without diluting the height-based falloff's own shape near the ground, where it's already denser than the floor. 0 = disabled, matches prior behavior exactly.
+
+[_Shaders.VolumetricFog.Night]
+DensityScale = 1.0                  # Multiplier on the NVR-authored density (BaseDensity and its noise/wind animation) specifically at night, fading in smoothly through dusk the same way NightAmbientStrength does. 1.0 = no change from daytime. Raise for moodier, thicker night fog; lower for clearer nights. Has no effect on the vanilla-weather-anchored portion of density (WeatherImpact) or in interiors.
+AmountScale = 1.0                   # Multiplier on the final fog Amount (Main's) specifically at night, fading in the same way as DensityScale. 1.0 = no change. Use this for an overall night fog opacity push/pull independent of density shape.
+HeightFalloffScale = 1.0            # Multiplier on HeightFalloff specifically at night, fading in the same way as DensityScale. 1.0 = no change. Raise for fog that hugs the ground tighter at night; lower to let it spread higher.
+MaxHeightOffset = 0.0                # Additive offset (same thousands-of-units convenience scale as Main's MaxHeight) applied to the height-fog reference specifically at night, fading in the same way as DensityScale. 0.0 = no change. Raise to have fog appear to pool higher at night ("sea level" rising after dark); lower to sink it.
+NoiseStrengthScale = 1.0            # Multiplier on NoiseStrength specifically at night, fading in the same way as DensityScale. 1.0 = no change. Raise for patchier, more uneven night fog; lower for a flatter, more uniform night layer.
+WindSpeedScale = 1.0                # Multiplier on WindSpeed specifically at night, fading in the same way as DensityScale. 1.0 = no change. Lower for stiller, more settled-looking night fog; raise for faster night drift.
+ExtinctionScale = 1.0               # Multiplier on Extinction specifically at night, fading in the same way as DensityScale. 1.0 = no change. Raise to make night fog obscure more of what's behind it; lower to keep it thinner/more see-through.
+InscatteringScale = 1.0             # Multiplier on Inscattering specifically at night, fading in the same way as DensityScale. 1.0 = no change. Raise for brighter, more self-luminous-looking night fog; lower for darker, more light-absorbing fog.
+TintR = 1.0                         # Red channel of a multiplicative color tint applied to the fog color specifically at night, fading in the same way as DensityScale. 1.0/1.0/1.0 (with TintG/TintB) = no change. Lower to push night fog color away from white, e.g. toward blue/grey.
+TintG = 1.0                         # Green channel of the night fog color tint. See TintR.
+TintB = 1.0                         # Blue channel of the night fog color tint. See TintR.
+NightAmbientStrength = 1.0          # Multiplier on the moon-phase-driven night ambient floor for fog color, so fog doesn't collapse toward black after dark (most weathers author near-black night sky colors with no moon/starlight term). Varies with the same lunar cycle as Shaders.ShadowsExteriors.Main's NightMinDarkness, and fades in the same way as DensityScale. 0 = disable, fog can go fully dark at night like before.
+DisableSkyMask = false              # Fog normally excludes the sky dome from the fog composite (see Main.RainyDisablesSkyFilter/CloudyDisablesSkyFilter for the weather-driven version of this same exclusion). Enabling this stops excluding it specifically at night, fading in through dusk the same way DensityScale does, so the sky itself can pick up fog color/haze after dark -- useful for a hazy, starless night look. false = sky dome stays excluded at night same as during the day.
 
 
 [_Shaders.VolumetricFog.Interiors]
-Amount = 0.25                        # Global multiplier for fog strength in interiors
-FogSaturation = 0.5                 # Tune the saturation of the fog
-MinimumBaseFog = 0.3                # How much fog will be present as a base line when weather has no fog
-WeatherImpact = 0.0                 # How much the fog will scale with weather fog strength
-HeightFogDensity = 0.6              # Density multiplier for the general height fog
-HeightFogFalloff = 50.0             # Vertical falloff of atmospheric height fog,
-HeightFogDist = 0.4                 # Distance multiplier for Height fog. Pushes back the fog.
-HeightFogHeight = 0.0               # "Sea level" from which the Height fog starts to decrease.
-HeightFogBlend = 1.0                # General strength of the impact of Height fog on the final look.
-HeightFogRolloff = 1.3              # Pushes back the Height fog without changing the far distance. Changes the curve of progression
-HeightFogSaturation = 0.5           # Saturation of the height fog color independently of the simple/distant fog saturation.
-HeightFogInscattering = 0.35        # Light scattering through height fog independently of simple fog inscattering.
-Extinction = 0.4                    # Light lost due to absorption of particles when seen throught the fog.
-Inscattering = 0.35                 # Light gained from light scattering when seen through the fog.
-SimpleFogHeight = 0.5               # Limit the sky influence/height rate of dissipation for simple fog.
-SimpleFogBlend = 0.2                # General strength of the impact of simple fog on the final look.
+Amount = 0.25                       # Global multiplier for the final fog strength in interiors.
+FogSaturation = 0.5                 # Tune the saturation of the fog color.
+BaseDensity = 0.3                   # NVR-authored fog density baseline, independent of vanilla weather fog.
+WeatherImpact = 0.0                 # How much the vanilla weather's own fog near/far/power/color feeds into density and color, on top of BaseDensity.
+HeightFalloff = 50.0                # Vertical falloff rate of the fog density with altitude.
+MaxHeight = 0.0                     # "Sea level" above which fog density falls off. Only meaningful when HeightInfluence > 0 -- tune per-cell via the preset manager for spaces where a real gradient makes sense (e.g. a tall Metro shaft), alongside HeightInfluence itself.
+HeightInfluence = 0.0               # 1 = normal height-based falloff. 0 = uniform density regardless of height (the safe default for a generic preset with no per-cell tuning). Raise this only where MaxHeight has also been tuned for that specific space.
+Extinction = 0.4                    # Light lost to absorption when seen through the fog.
+Inscattering = 0.35                 # Light gained from scattering when seen through the fog.
+WindAngle = 0.0                     # Compass direction (degrees) the fog's density noise drifts toward.
+WindSpeed = 0.1                     # Speed of the fog's density noise animation.
+NoiseScale = 1.0                    # World-space frequency of the procedural 3D density noise.
+NoiseStrength = 0.5                 # How much the procedural noise modulates density (0 = flat, 1 = fully noise-driven).
+RainyDisablesSkyFilter = true       # Sky-dome exclusion only, same as Main's own copy -- has no visible effect indoors unless the cell is exterior-lit; kept for consistency.
+CloudyDisablesSkyFilter = true      # Sky-dome exclusion only, same as Main's own copy -- has no visible effect indoors unless the cell is exterior-lit; kept for consistency.
 
 
 [_Shaders.VolumetricFog.Status]

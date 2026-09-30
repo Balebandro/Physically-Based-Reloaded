@@ -31,6 +31,7 @@
 #include "SnowAccumulation.h"
 #include "Snow.h"
 #include "Underwater.h"
+#include "VolumetricLight.h"
 #include "VolumetricFog.h"
 #include "WaterLens.h"
 #include "WetWorld.h"

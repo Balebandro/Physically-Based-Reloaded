@@ -176,6 +176,8 @@
     <ClInclude Include="..\src\effects\Terrain.h" />
     <ClInclude Include="..\src\effects\Tonemapping.h" />
     <ClInclude Include="..\src\effects\Underwater.h" />
+    <ClInclude Include="..\src\effects\TAA.h" />
+    <ClInclude Include="..\src\effects\VolumetricLight.h" />
     <ClInclude Include="..\src\effects\VolumetricFog.h" />
     <ClInclude Include="..\src\effects\Water.h" />
     <ClInclude Include="..\src\effects\WaterLens.h" />
@@ -269,6 +271,8 @@
     <ClCompile Include="..\src\effects\Terrain.cpp" />
     <ClCompile Include="..\src\effects\Tonemapping.cpp" />
     <ClCompile Include="..\src\effects\Underwater.cpp" />
+    <ClCompile Include="..\src\effects\TAA.cpp" />
+    <ClCompile Include="..\src\effects\VolumetricLight.cpp" />
     <ClCompile Include="..\src\effects\VolumetricFog.cpp" />
     <ClCompile Include="..\src\effects\Water.cpp" />
     <ClCompile Include="..\src\effects\WaterLens.cpp" />

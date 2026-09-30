@@ -157,6 +157,9 @@
     <ClInclude Include="..\src\effects\Underwater.h">
       <Filter>Effects</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\effects\VolumetricLight.h">
+      <Filter>Effects</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\effects\VolumetricFog.h">
       <Filter>Effects</Filter>
     </ClInclude>
@@ -427,6 +430,9 @@
       <Filter>Effects</Filter>
     </ClCompile>
     <ClCompile Include="..\src\effects\Tonemapping.cpp">
+      <Filter>Effects</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\effects\VolumetricLight.cpp">
       <Filter>Effects</Filter>
     </ClCompile>
     <ClCompile Include="..\src\effects\VolumetricFog.cpp">

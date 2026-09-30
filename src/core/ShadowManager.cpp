@@ -687,6 +687,16 @@ void ShadowManager::RenderShadowMaps() {
 		terrainLODPass->VertexShader = ShadowMapVertex;
 		terrainLODPass->PixelShader = ShadowMapPixel;
 
+		// Below the horizon the sun/moon cascades are not drawn, which leaves the atlas and its
+		// camera-relative transforms stale -- tell ShadowsExterior so nothing samples them (see
+		// ShadowsExteriorEffect::UpdateConstants). Cleared here as well as there because the game
+		// shaders for this frame draw before UpdateConstants runs again.
+		Shadows->SunMapsStale = ExteriorEnabled && SunDir.z <= 0.0f;
+		if (Shadows->SunMapsStale) {
+			Shadows->Constants.ShadowFade.x = 1.0f;
+			Shadows->Constants.ShadowFade.y = 0.0f;
+		}
+
 		if (ExteriorEnabled && SunDir.z > 0.0f) {
 			// Recalculate billboard vectors for speedtree leaves shader.
 			RecalculateBillboardVectors(&SunDir);

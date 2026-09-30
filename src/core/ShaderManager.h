@@ -109,6 +109,7 @@ public:
 		PointShadows2Effect*	PointShadows2;
 		SunShadowsEffect*		SunShadows;
 		UnderwaterEffect*		Underwater;
+		VolumetricLightEffect*	VolumetricLight;
 		VolumetricFogEffect*	VolumetricFog;
 		WaterLensEffect*		WaterLens;
 		WetWorldEffect*			WetWorld;
@@ -145,6 +146,7 @@ public:
 		bool					OverlayIsOn;
 		bool					isRainy;
 		bool					isSnow;
+		bool					isCloudy;
 	};
 
 	EffectsStruct			Effects;

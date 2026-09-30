@@ -29,6 +29,32 @@ void ShadowsExteriorEffect::UpdateConstants() {
 			Constants.ShadowFade.z = usePointLights;
 		}
 		Constants.ShadowFade.y = Settings.Exteriors.Enabled && Enabled;
+
+		// Fade shadows out as the light nears the horizon, reaching none at all where it sets.
+		// ShadowManager::RenderShadowMaps stops drawing the cascades once the light is below the
+		// horizon (SmoothedSunDir.z <= 0). The day/night fade above cannot cover that on its own: it
+		// runs on dayLight, which trails the climate's sunset by an hour, and the sun mesh position
+		// stays the light direction until dayLight reaches 0.5 -- so the sun sets while shadows are
+		// still partly visible. Without this they would switch off with a pop at that moment (with
+		// the check below) or, before it existed, freeze to the camera. SmoothedSunDir is last
+		// frame's, the same value RenderShadowMaps tests, and 0.1 is about 6 degrees of elevation.
+		// Only while shadows are on: SmoothedSunDir is only refreshed while the maps are rendered.
+		if (Constants.ShadowFade.y) {
+			float horizonFade = smoothStep(0.1f, 0.0f, Constants.SmoothedSunDir.z);
+			Constants.ShadowFade.x = (std::max)(Constants.ShadowFade.x, horizonFade);
+		}
+
+		// Never sample cascades RenderShadowMaps did not draw. ShadowCameraToLight is camera-relative,
+		// so a frozen atlas read through frozen transforms projects every shadow from wherever the
+		// camera is now: the shadows ride along with the player. .y gates the atlas for the game
+		// shaders, VolumetricLight and VolumetricFog; .x = 1 (fully faded) covers the effects that
+		// only read the fade. RenderShadowMaps also clears these itself for the frame it skips, since
+		// the game shaders draw before this runs again. Only while shadows are on: the flag is not
+		// refreshed while they are off, and forcing the fade then would take sun specular with it.
+		if (SunMapsStale && Constants.ShadowFade.y) {
+			Constants.ShadowFade.x = 1.0f;
+			Constants.ShadowFade.y = 0.0f;
+		}
 		Constants.ShadowFade.w = Constants.ShadowMapRadius.w; //furthest distance for point lights shadows
 
 		// Update constants used by shadow shaders: x=quality, y=darkness

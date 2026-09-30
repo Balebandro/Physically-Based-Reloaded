@@ -8,6 +8,14 @@
 #ifndef SKINVPS_INCLUDED
 #define SKINVPS_INCLUDED
 
+// Vanilla pointlight attenuation. Defined in VPS's own Helpers.hlsli, not NVR's Includes/
+// Helpers.hlsl -- every macro SkinVPSTemplate.hlsl needs from that file is shared between the
+// two, but this one is an actual function unique to VPS's copy, so it has to be ported too.
+float VanillaAttenuation(float3 lightDir, float radius) {
+    const float3 att = lightDir / radius;
+    return 1 - saturate(dot(att, att));
+}
+
 // Calculate directional curvature from light direction and curvature tensor.
 // https://www.glowybits.com/talks/samurai_shading_in_ghost_of_tsushima/#/105
 float CurvatureFromLight(

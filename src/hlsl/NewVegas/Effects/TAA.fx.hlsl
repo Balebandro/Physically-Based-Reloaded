@@ -1,3 +1,8 @@
+// =================================================================================================
+//  CREDIT: TAA for New Vegas Reloaded by Conor.
+//  Upstream sources and references are credited below.
+// =================================================================================================
+
 // Temporal anti-aliasing: temporal accumulation with reprojection, over a sub-pixel-jittered world.
 //
 // Ported from Oblivion Reloaded E3 (arafuse/tes-reloaded, OblivionReloaded/Shaders/TAA/TAA.fx.hlsl),
