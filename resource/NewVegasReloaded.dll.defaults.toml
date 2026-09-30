@@ -571,7 +571,6 @@ AmbientScale = 0.5                   # Ambient lighting scale.
 SkylightingScale = 0.5               # Sky-colour ambient boost. 0 disables it.
 SkylightingMode = 0                  # 0 spherical harmonics, 1 directional sample. Recompiles shaders.
 SkylightingDirectionality = 0.6      # Mode 1 only: 0 samples straight up, 1 along the normal.
-SkyReflectionScale = 1.0             # Strength of sky reflections on specular materials. 0 disables.
 LightingScale = 0.725                # Directional and point light scale.
 Saturation = 1.0                     # Color saturation.
 
@@ -581,7 +580,6 @@ Metallicness = 0.0                   # Metalicness scale - unused, no metalic ma
 AmbientScale = 0.5                   # Ambient lighting scale.
 SkylightingScale = 0.5               # Sky-colour ambient boost. 0 disables it.
 SkylightingDirectionality = 0.6      # Mode 1 only: 0 samples straight up, 1 along the normal.
-SkyReflectionScale = 1.5             # Strength of sky reflections on specular materials. 0 disables.
 LightingScale = 1.0                  # Directional and point light scale.
 Saturation = 1.0                     # Color saturation.
 
@@ -591,7 +589,6 @@ Metallicness = 0.0                   # Metalicness scale - unused, no metalic ma
 AmbientScale = 0.5                   # Ambient lighting scale.
 SkylightingScale = 0.5               # Sky-colour ambient boost. 0 disables it.
 SkylightingDirectionality = 0.6      # Mode 1 only: 0 samples straight up, 1 along the normal.
-SkyReflectionScale = 1.0             # Strength of sky reflections on specular materials. 0 disables.
 LightingScale = 1.0                  # Directional and point light scale.
 Saturation = 1.0                     # Color saturation.
 
@@ -601,7 +598,6 @@ Metallicness = 0.0                   # Metalicness scale - unused, no metalic ma
 AmbientScale = 0.5                   # Ambient lighting scale.
 SkylightingScale = 0.5               # Sky-colour ambient boost. 0 disables it.
 SkylightingDirectionality = 0.6      # Mode 1 only: 0 samples straight up, 1 along the normal.
-SkyReflectionScale = 1.5             # Strength of sky reflections on specular materials. 0 disables.
 LightingScale = 1.0                  # Directional and point light scale.
 Saturation = 1.0                     # Color saturation.
 
@@ -611,7 +607,6 @@ Metallicness = 0.0                   # Metalicness scale - unused, no metalic ma
 AmbientScale = 0.5                   # Ambient lighting scale.
 SkylightingScale = 0.0               # Sky-colour ambient boost. Off indoors: the coefficients describe the exterior sky.
 SkylightingDirectionality = 0.6      # Mode 1 only: 0 samples straight up, 1 along the normal.
-SkyReflectionScale = 0.0             # Sky reflections indoors. Left at 0: nothing blocks the sky from reaching interior surfaces.
 LightingScale = 1.0                  # Directional and point light scale.
 Saturation = 1.0                     # Color saturation.
 
@@ -741,11 +736,11 @@ Terrain = true                       # Whether to include Terrain when rendering
 Trees = true                         # Whether to include Trees when rendering ortho map.
 
 [_Shaders.ShadowsExteriors.ScreenSpace]
-BlurRadius = 1.0                     # Blur strength for denoising screenspace shadows. Keep low, otherwise a lot of pixelation will occur.
-Enabled = true                       # Wether to render screen space contact/detail shadows
-RenderDistance = 180000              # Max distance at which to compute screen space shadows
-Intensity = 0.315                    # Rescale the intensity of screenspace shadows, to combat jitter and blur making them very faint even at maximum brightness.
-ContactStrength = 1.0                # Short range contact shadows: a dense, short march toward the sun that catches what the long one above steps over - the shadow under a prop, in a crease, at a character's feet. 0 disables.
+BlurRadius = 1.0                     # Blur strength for denoising the contact shadows. Keep low, otherwise a lot of pixelation will occur.
+Enabled = true                       # Whether to render screen space contact shadows.
+RenderDistance = 180000              # Distance limit for the contact shadow blur. ContactDistance decides how far the shadows themselves reach.
+Intensity = 0.315                    # Rescale the intensity of contact shadows, to combat jitter and blur making them faint.
+ContactStrength = 1.0                # Strength of the contact shadows: a dense, short march toward the sun for the shadow under a prop, in a crease, at a character's feet. 0 disables.
 ContactLength = 40.0                 # Length of the contact ray in game units at the camera. It grows with distance so it stays a usable size on screen.
 ContactThickness = 12.0              # How thick things in the depth buffer are assumed to be. Too low and thin objects cast nothing, too high and they cast shadows from behind.
 ContactDistance = 6000.0             # Contact shadows fade out by this distance.
