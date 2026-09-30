@@ -656,6 +656,11 @@ PS_OUTPUT main(PS_INPUT IN) {
         // here: POINT implies ONLY_SPECULAR, so !ONLY_SPECULAR implies !POINT.
         lighting += getAmbientLighting(AmbientColor.rgb, baseColor.rgb, shadowGeometricNormal,
                                        SHADOW_VS_PRESENT(IN.shadowWorldPos.w) ? 1.0f : 0.0f);
+        #if defined(SPECULAR)
+        // Only materials the game marks as specular: the rest carry no gloss worth reflecting.
+        lighting += getSkyReflection(IN.shadowWorldPos.xyz, shadowGeometricNormal, normal.xyz, IN.viewDir.xyz, baseColor.rgb, roughness,
+                                     SHADOW_VS_PRESENT(IN.shadowWorldPos.w) ? 1.0f : 0.0f);
+        #endif
     #endif
 
     // Other light sources. Same object-space attenuation fix as light0 above.
@@ -859,6 +864,10 @@ PS_OUTPUT main(PS_INPUT IN) {
     float3 ambNormal = GetShadowGeometricNormal(SHADOW_WP_LOAD(IN));
     lighting += getAmbientLighting(AmbientColor.rgb, baseColor.rgb, ambNormal,
                                    SHADOW_WP_VALID(IN) ? 1.0f : 0.0f);
+    #if defined(SPECULAR)
+    lighting += getSkyReflection(SHADOW_WP_LOAD(IN), ambNormal, normal.xyz, viewDir.xyz, baseColor.rgb, roughness,
+                                 SHADOW_WP_VALID(IN) ? 1.0f : 0.0f);
+    #endif
 
     // TODO: Vanilla attenuates the full specular term by IN.lPosition.w for some reason. Is this a problem?
     float3 finalColor = lighting;

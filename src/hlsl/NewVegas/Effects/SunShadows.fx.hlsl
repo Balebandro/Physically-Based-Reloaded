@@ -11,6 +11,7 @@ float4 TESR_ViewSpaceLightDir;
 float4 TESR_ShadowData; // x: quality, y: darkness, z: texel size
 float4 TESR_ShadowFormatData; // x: mode, y: format bits per pixels
 float4 TESR_ShadowScreenSpaceData; // x: Enabled, y: blurRadius, z: renderDistance, w: intensity
+float4 TESR_ShadowContactData; // x: strength, y: ray length, z: thickness, w: max distance
 float4 TESR_SunAmbient;
 float4 TESR_ShadowFade; // x: sunset attenuation, y: shadows maps active, z: point lights shadows active
 // Injected as a D3DXMACRO by EffectRecord from [Shaders.ShadowsExteriors.Main] ForwardShadows,
@@ -34,6 +35,8 @@ sampler2D TESR_PointShadowBuffer : register(s3)  = sampler_state { ADDRESSU = CL
 sampler2D TESR_NoiseSampler : register(s4) < string ResourceName = "Effects\bluenoise256.dds"; > = sampler_state { ADDRESSU = WRAP; ADDRESSV = WRAP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 
 #define SSS_STEPNUM 5
+#define CONTACT_STEPNUM 12
+#define CONTACT_GROWTH (1.0f / 600.0f)   // the ray doubles in length every 600 units of depth
 
 static const float DARKNESS = 1-TESR_ShadowData.y;
 static const float SSS_DIST = 2000;
@@ -228,7 +231,8 @@ float4 ScreenSpaceShadow(VSOUT IN) : COLOR0
     float4 color = tex2D(TESR_PointShadowBuffer, IN.UVCoord);
 	if (!TESR_ShadowScreenSpaceData.x) return float4(1.0, color.g, 0, 1); // skip is screenspace shadows are disabled
 
-	float3 pos = reconstructPosition(uv);// + expand(random3); 
+	const float3 origin = reconstructPosition(uv);   // the long march below walks pos along the ray
+	float3 pos = origin;
 
 	float bias = 0.01;
 	if (pos.z > SSS_MAXDEPTH) return float4(1.0, color.g, 0, 1); // early out for pixels further away than the max render distance
@@ -269,6 +273,30 @@ float4 ScreenSpaceShadow(VSOUT IN) : COLOR0
 	}
 
     occlusion = pows(occlusion / total, 0.3); // get an average shading based on total weights
+
+	// Contact shadows. The march above takes four samples over a ray hundreds of units long,
+	// which finds large occluders and steps straight over small ones. This one is the
+	// opposite: many samples over a short ray, for the shadow a prop leaves where it meets the
+	// ground. tex2Dlod because the loop sits inside a dynamic branch.
+	[branch] if (TESR_ShadowContactData.x > 0.0f && origin.z < TESR_ShadowContactData.w) {
+		float scale = 1.0f + origin.z * CONTACT_GROWTH;
+		float3 contactStep = TESR_ViewSpaceLightDir.xyz * (TESR_ShadowContactData.y * scale / CONTACT_STEPNUM);
+		float contactThickness = TESR_ShadowContactData.z * scale;
+		float contactBias = contactThickness * 0.05f;
+
+		float3 contactPos = origin + contactStep * random3.g;   // jittered start hides the step pattern
+		float contact = 0.0f;
+		[unroll]
+		for (int j = 0; j < CONTACT_STEPNUM; j++) {
+			contactPos += contactStep;
+			float sceneDepth = tex2Dlod(TESR_DepthBuffer, float4(projectPosition(contactPos).xy, 0.0f, 0.0f)).x * farZ;
+			float delta = contactPos.z - sceneDepth;
+			if (delta > contactBias && delta < contactThickness) contact = 1.0f;
+		}
+
+		contact *= TESR_ShadowContactData.x * (1.0f - smoothstep(TESR_ShadowContactData.w * 0.8f, TESR_ShadowContactData.w, origin.z));
+		occlusion = max(occlusion, saturate(contact));
+	}
 	
 
     // save result of SSS in red channel, and fade contribution with distance
