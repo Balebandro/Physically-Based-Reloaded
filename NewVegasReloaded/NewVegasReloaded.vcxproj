@@ -170,7 +170,6 @@
     <ClCompile Include="..\src\effects\Sky.cpp" />
     <ClCompile Include="..\src\effects\Snow.cpp" />
     <ClCompile Include="..\src\effects\SnowAccumulation.cpp" />
-    <ClCompile Include="..\src\effects\Specular.cpp" />
     <ClCompile Include="..\src\effects\SunShadows.cpp" />
     <ClCompile Include="..\src\effects\Terrain.cpp" />
     <ClCompile Include="..\src\effects\Tonemapping.cpp" />
@@ -279,7 +278,6 @@
     <ClInclude Include="..\src\effects\Sky.h" />
     <ClInclude Include="..\src\effects\Snow.h" />
     <ClInclude Include="..\src\effects\SnowAccumulation.h" />
-    <ClInclude Include="..\src\effects\Specular.h" />
     <ClInclude Include="..\src\effects\SunShadows.h" />
     <ClInclude Include="..\src\effects\Terrain.h" />
     <ClInclude Include="..\src\effects\Tonemapping.h" />

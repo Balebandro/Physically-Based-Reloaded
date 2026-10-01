@@ -70,7 +70,6 @@ void ShaderManager::Initialize() {
 	TheShaderManager->RegisterEffect<PointShadowsEffect>(&TheShaderManager->Effects.PointShadows);
 	TheShaderManager->RegisterEffect<PointShadows2Effect>(&TheShaderManager->Effects.PointShadows2);
 	TheShaderManager->RegisterEffect<SunShadowsEffect>(&TheShaderManager->Effects.SunShadows);
-	TheShaderManager->RegisterEffect<SpecularEffect>(&TheShaderManager->Effects.Specular);
 	TheShaderManager->RegisterEffect<SnowEffect>(&TheShaderManager->Effects.Snow);
 	TheShaderManager->RegisterEffect<SnowAccumulationEffect>(&TheShaderManager->Effects.SnowAccumulation);
 	TheShaderManager->RegisterEffect<UnderwaterEffect>(&TheShaderManager->Effects.Underwater);
@@ -812,8 +811,8 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 		// held -- e.g. an exterior sun-shadow composite, walked in from outdoors,
 		// frozen here for as long as this branch keeps being skipped (interior with
 		// Interior point-shadows off is the common case). It's still sampled
-		// unconditionally by other independently-enabled effects (Specular and
-		// others), so reset it to the neutral "no shadow" value rather than leaving
+		// unconditionally by other independently-enabled effects, so reset it to the
+		// neutral "no shadow" value rather than leaving
 		// stale exterior data for them to read.
 		Effects.ShadowsExteriors->clearShadowsBuffer();
 	}
@@ -857,7 +856,6 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 		Device->SetRenderTarget(0, RenderTarget);
 	}
 	Effects.Flashlight->Render(Device, RenderTarget, RenderedSurface, Effects.Flashlight->selectedPass, true, SourceSurface);
-	Effects.Specular->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 	Effects.Underwater->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 	Effects.VolumetricLight->Render(Device, RenderTarget, RenderedSurface, 1, false, SourceSurface);
 	Effects.VolumetricFog->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);

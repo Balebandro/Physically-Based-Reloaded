@@ -23,7 +23,6 @@
 #include "Normals.h"
 #include "Rain.h"
 #include "Sharpening.h"
-#include "Specular.h"
 #include "SunShadows.h"
 #include "PointShadows.h"
 #include "PointShadows2.h"

@@ -142,9 +142,6 @@
     <ClInclude Include="..\src\effects\SnowAccumulation.h">
       <Filter>Effects</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\effects\Specular.h">
-      <Filter>Effects</Filter>
-    </ClInclude>
     <ClInclude Include="..\src\effects\SunShadows.h">
       <Filter>Effects</Filter>
     </ClInclude>
@@ -415,9 +412,6 @@
       <Filter>Effects</Filter>
     </ClCompile>
     <ClCompile Include="..\src\effects\SnowAccumulation.cpp">
-      <Filter>Effects</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\effects\Specular.cpp">
       <Filter>Effects</Filter>
     </ClCompile>
     <ClCompile Include="..\src\effects\Terrain.cpp">
