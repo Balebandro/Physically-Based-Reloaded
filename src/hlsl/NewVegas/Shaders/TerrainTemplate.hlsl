@@ -19,7 +19,7 @@
 
 #include "includes/Helpers.hlsl"
 #include "includes/Terrain.hlsl"
-#include "includes/Parallax.hlsl"
+#include "includes/TerrainParallax.hlsl"
 
 // BaseMap[7] holds s0-s6 and NormalMap[7] holds s7-s13, so the atlas cannot use the s9
 // default. s14/s15 are the only free sampler slots in ps_3_0 here.
@@ -142,15 +142,20 @@ PS_OUTPUT main(PS_INPUT IN) {
     float blends[7] = { IN.blend_0.x, IN.blend_0.y, IN.blend_0.z, IN.blend_0.w, IN.blend_1.x, IN.blend_1.y, IN.blend_1.z };
     float spec[7] = { LandSpec[0].x, LandSpec[0].y, LandSpec[0].z, LandSpec[0].w, LandSpec[1].x, LandSpec[1].y, LandSpec[1].z };
     float heightStatus[7] = { LandHeight[0].x, LandHeight[0].y, LandHeight[0].z, LandHeight[0].w, LandHeight[1].x, LandHeight[1].y, LandHeight[1].z };
-    float2 offsetUV = getParallaxCoords(dist, IN.uv.xy, dx, dy, eyeDir, texCount, BaseMap, blends, heightStatus, weights);
+
+    // See Includes/TerrainParallax.hlsl: the march and the self-shadowing only read the two
+    // strongest layers that have a height map.
+    float heightLayers[7];
+    pickHeightLayers(blends, heightStatus, heightLayers);
+    float2 offsetUV = getTerrainParallaxCoords(dist, IN.uv.xy, dx, dy, eyeDir, BaseMap, heightLayers);
 
     float gloss = 0.0f;
     float specExponent = 0.0f;
-    float3 baseColor = blendDiffuseMaps(IN.vertex_color, offsetUV, texCount, BaseMap, weights);
-    float3 combinedNormal = blendNormalMaps(offsetUV, texCount, NormalMap, weights, spec, gloss, specExponent);
+    float3 baseColor = blendTerrainDiffuse(IN.vertex_color, offsetUV, dx, dy, BaseMap, blends, heightStatus, dist, weights);
+    float3 combinedNormal = blendTerrainNormals(offsetUV, dx, dy, NormalMap, weights, spec, gloss, specExponent);
 
     float3 lightTS = mul(tbn, SunDir.xyz);
-    float parallaxShadowMultiplier = getParallaxShadowMultipler(dist, offsetUV, dx, dy, lightTS, texCount, blends, heightStatus, BaseMap);
+    float parallaxShadowMultiplier = getTerrainParallaxShadow(dist, offsetUV, dx, dy, lightTS, BaseMap, heightLayers);
 
     // Forward sun shadows. Folded into parallaxShadowMultiplier, which getSunLighting
     // applies to the sun colour only -- ambient is added afterwards and stays untouched.
