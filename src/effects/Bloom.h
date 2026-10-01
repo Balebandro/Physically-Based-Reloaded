@@ -11,6 +11,8 @@ public:
 		float Strength;
 		int Passes;
 		float PassBlending;
+		float Radius;      // upsample tent radius, in texels of the level being upsampled
+		float Threshold;   // soft-knee brightness threshold, linear; 0 blooms everything
 	};
 	struct BloomSettingsStruct {
 		D3DXVECTOR4		Resolution[MaxPasses];

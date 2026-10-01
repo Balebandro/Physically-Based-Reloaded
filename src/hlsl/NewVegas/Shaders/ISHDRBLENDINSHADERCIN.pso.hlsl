@@ -15,7 +15,7 @@ float4 TESR_HDRData : register(c27); //
 float4 TESR_LotteData : register(c28); //
 float4 TESR_ToneMapping : register(c29); //
 float4 TESR_ReciprocalResolution : register(c30); //
-float4 TESR_BloomExtraData : register(c31); // .x - NVR bloom on/off.
+float4 TESR_BloomExtraData : register(c31); // .x - NVR bloom on/off, .y - bloom threshold.
 
 sampler2D Src0 : register(s0);
 sampler2D DestBlend : register(s1);    // base non tonemapped image
@@ -77,6 +77,18 @@ float4 sampleBox(sampler2D buffer, float2 uv, float offset){
     return color;
 }
 
+// Soft-knee bloom threshold ([Shaders.Bloom.*] Threshold): keeps the part of a linear colour
+// above the threshold, ramping in quadratically over a knee of half the threshold so the cut has
+// no hard edge. A threshold of 0 returns the colour unchanged. Must match BloomThreshold in
+// Effects/Includes/Sampling.hlsl.
+float3 BloomThreshold(float3 color, float threshold) {
+    float knee = threshold * 0.5f;
+    float brightness = max(color.r, max(color.g, color.b));
+    float soft = clamp(brightness - threshold + knee, 0.0f, 2.0f * knee);
+    soft = soft * soft / (4.0f * knee + 1e-5f);
+    return color * (max(soft, brightness - threshold) / max(brightness, 1e-5f));
+}
+
 VS_OUTPUT main(VS_INPUT IN) {
     VS_OUTPUT OUT;
     // Whether we linearize before applying most post process effects that were already present in the vanilla game.
@@ -101,12 +113,15 @@ VS_OUTPUT main(VS_INPUT IN) {
     
     if (TESR_BloomExtraData.x){
         // NVR bloom
-        float4 NVRbloom = linearize(tex2D(TESR_BloomBuffer, IN.texcoord_1.xy)); // already linear
+        float4 NVRbloom = tex2D(TESR_BloomBuffer, IN.texcoord_1.xy); // linear HDR: Bloom.fx linearizes on its first downsample
 
         if (gammaSpacePostProcess){ // Always do the new bloom in linear space as it's designed for that
             final.rgb = linearize(final.rgb);
         }
-        final.rgb = lerp(final.rgb, NVRbloom.rgb * TESR_HDRBloomData.y, saturate(TESR_HDRBloomData.x));
+        // lerp(final, bloom, blend), except that only the part of the pixel above the threshold is
+        // swapped for bloom: that is the energy the bloom took and spread around. Without a
+        // threshold this is exactly the lerp; with one, a lerp would dim everything below it.
+        final.rgb += saturate(TESR_HDRBloomData.x) * (NVRbloom.rgb * TESR_HDRBloomData.y - BloomThreshold(final.rgb, TESR_BloomExtraData.y));
     }else{
         // vanilla bloom
         // scale bloom while maintaining color

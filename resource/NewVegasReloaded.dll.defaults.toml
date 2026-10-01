@@ -167,18 +167,24 @@ Blending = 0.04                         # Blending between the base and bloom. L
 Strength = 1.0                          # Scales the bloom. Works for NVR and vanilla.
 Passes = 8                              # Passes to apply, 2-8.
 PassBlending = 0.0                      # 0: Use additive blending, 0-1: Linear blending coefficient.
+Radius = 1.0                            # Blur radius of each upsample, in texels of that level. Higher is softer and wider. 0.5-3.
+Threshold = 0.0                         # Brightness above which things bloom, with a soft ramp. 0 blooms everything (natural lens glow); around 1 only lights, sky and bright highlights.
 
 [_Shaders.Bloom.Night]
 Blending = 0.04                         # Blending between the base and bloom. Low values are preferable. Works for NVR and vanilla.
 Strength = 1.0                          # Scales the bloom. Works for NVR and vanilla.
 Passes = 8                              # Passes to apply, 2-8.
 PassBlending = 0.0                      # 0: Use additive blending, 0-1: Linear blending coefficient.
+Radius = 1.0                            # Blur radius of each upsample, in texels of that level. Higher is softer and wider. 0.5-3.
+Threshold = 0.0                         # Brightness above which things bloom, with a soft ramp. 0 blooms everything (natural lens glow); around 1 only lights, sky and bright highlights.
 
 [_Shaders.Bloom.Interiors]
 Blending = 0.04                         # Blending between the base and bloom. Low values are preferable. Works for NVR and vanilla.
 Strength = 1.0                          # Scales the bloom. Works for NVR and vanilla.
 Passes = 8                              # Passes to apply, 2-8.
 PassBlending = 0.0                      # 0: Use additive blending, 0-1: Linear blending coefficient.
+Radius = 1.0                            # Blur radius of each upsample, in texels of that level. Higher is softer and wider. 0.5-3.
+Threshold = 0.0                         # Brightness above which things bloom, with a soft ramp. 0 blooms everything (natural lens glow); around 1 only lights, sky and bright highlights.
 
 [_Shaders.Bloom.Status]
 Enabled = true                          # Replace the vanilla bloom. Requires tonemapping shader to be applied. Also impacts Dirt Lens and Rain shaders

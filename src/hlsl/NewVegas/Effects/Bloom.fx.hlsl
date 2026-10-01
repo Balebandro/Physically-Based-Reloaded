@@ -5,9 +5,14 @@
 //
 // Designed to work without thresholding, for HDR rendering.
 // Should minimize potential bloom issues of filtering artifacts and fireflies.
+//
+// The whole chain is in LINEAR light: the first downsample linearizes the gamma-encoded scene
+// (and Karis-weights it against fireflies), so TESR_BloomBuffer holds linear HDR, which is what
+// the tonemapping composite, Lens and Precipitations all expect.
 
 float4 TESR_BloomResolution;
-float4 TESR_BloomData; // .x filterRadius x axis, .y filterRadius y axis, .z blendingCoefficient, .w inverse of number of passes for upscale
+float4 TESR_BloomExtraData; // .x NVR bloom on, .y threshold (linear, 0 = none)
+float4 TESR_BloomData; // .x filterRadius x axis, .y filterRadius y axis (UV: Radius source texels), .z blendingCoefficient, .w inverse of number of passes for upscale
 
 sampler2D TESR_BloomBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_BloomBuffer2 : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
@@ -41,11 +46,22 @@ VSOUT FrameVS(VSIN IN)
 
 #include "Includes/Sampling.hlsl"
 
+// First downsample, from the scene: linearize and suppress fireflies.
+float4 DownsampleFirst(VSOUT IN, uniform sampler2D buffer) : COLOR0 {
+    // The source is the full resolution scene: its texel is half of this target's.
+    float2 sceneTexel = TESR_BloomResolution.zw * 0.5f;
+    float4 color = DownsampleBox13KarisLinear(buffer, IN.UVCoord, sceneTexel);
+    return float4(BloomThreshold(color.rgb, TESR_BloomExtraData.y), 1.0f);
+}
+
 // Downsample with the 13 tap box.
 float4 Downsample(VSOUT IN, uniform sampler2D buffer) : COLOR0 {
     float2 uv = IN.UVCoord;
     
-    float2 texelSize = { TESR_BloomResolution.z, TESR_BloomResolution.w };
+    // TESR_BloomResolution is this TARGET's size; the 13 taps are spaced in SOURCE texels, which
+    // are half as big. Spacing them by target texels skipped every other source texel, which
+    // aliased and made the bloom shimmer as the camera moved.
+    float2 texelSize = TESR_BloomResolution.zw * 0.5f;
 
     float4 downsample = DownsampleBox13(buffer, uv, texelSize);
     
@@ -89,7 +105,7 @@ technique // 0
 	pass
 	{
 		VertexShader = compile vs_3_0 FrameVS();
-        PixelShader = compile ps_3_0 Downsample(TESR_RenderedBuffer); // output to BloomBuffer
+        PixelShader = compile ps_3_0 DownsampleFirst(TESR_RenderedBuffer); // output to BloomBuffer
     }	
 }
 

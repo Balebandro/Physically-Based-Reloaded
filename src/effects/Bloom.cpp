@@ -36,24 +36,29 @@ void BloomEffect::RegisterTextures() {
 void BloomEffect::UpdateSettings() {
 	Settings.Main.Passes = TheSettingManager->GetSettingF("Shaders.Bloom.Main", "Passes");
 	Settings.Main.PassBlending = TheSettingManager->GetSettingF("Shaders.Bloom.Main", "PassBlending");
+	Settings.Main.Radius = TheSettingManager->GetSettingF("Shaders.Bloom.Main", "Radius");
+	Settings.Main.Threshold = TheSettingManager->GetSettingF("Shaders.Bloom.Main", "Threshold");
 
 	Settings.Night.Passes = TheSettingManager->GetSettingF("Shaders.Bloom.Night", "Passes");
 	Settings.Night.PassBlending = TheSettingManager->GetSettingF("Shaders.Bloom.Night", "PassBlending");
+	Settings.Night.Radius = TheSettingManager->GetSettingF("Shaders.Bloom.Night", "Radius");
+	Settings.Night.Threshold = TheSettingManager->GetSettingF("Shaders.Bloom.Night", "Threshold");
 
 	Settings.Interiors.Passes = TheSettingManager->GetSettingF("Shaders.Bloom.Interiors", "Passes");
 	Settings.Interiors.PassBlending = TheSettingManager->GetSettingF("Shaders.Bloom.Interiors", "PassBlending");
+	Settings.Interiors.Radius = TheSettingManager->GetSettingF("Shaders.Bloom.Interiors", "Radius");
+	Settings.Interiors.Threshold = TheSettingManager->GetSettingF("Shaders.Bloom.Interiors", "Threshold");
 };
 
 
 void BloomEffect::UpdateConstants() {
-	// .x and .y updated dynamically to reflect filterRadius.
-	Constants.Data.x = 0.005f;
-	Constants.Data.y = 0.005f * ((float)TheRenderManager->width / TheRenderManager->height);  // Scaled for non-square resolutions.
+	// .x and .y, the upsample radius, are set per level in RenderBloomBuffer.
 	Constants.Data.z = std::clamp(TheShaderManager->GetTransitionValue(Settings.Main.PassBlending, Settings.Night.PassBlending, Settings.Interiors.PassBlending), 0.0f, 1.0f);
 	Constants.Data.w = 1.0f / std::clamp(TheShaderManager->GetTransitionValue(Settings.Main.Passes, Settings.Night.Passes, Settings.Interiors.Passes), 2.0f, 8.0f);
 
 	// Flag for tonemapping.
 	Constants.ExtraData.x = Enabled && (!TheShaderManager->GameState.OverlayIsOn);
+	Constants.ExtraData.y = max(0.0f, TheShaderManager->GetTransitionValue(Settings.Main.Threshold, Settings.Night.Threshold, Settings.Interiors.Threshold));
 };
 
 
@@ -109,6 +114,7 @@ void BloomEffect::RenderBloomBuffer(IDirect3DSurface9* RenderTarget) {
 	NiDX9RenderState* RenderState = TheRenderManager->renderState;
 
 	const int passes = std::clamp((int) TheShaderManager->GetTransitionValue(Settings.Main.Passes, Settings.Night.Passes, Settings.Interiors.Passes), 2, 8);
+	const float radius = std::clamp(TheShaderManager->GetTransitionValue(Settings.Main.Radius, Settings.Night.Radius, Settings.Interiors.Radius), 0.5f, 3.0f);
 
 	int passNumber = 0;
 
@@ -129,10 +135,11 @@ void BloomEffect::RenderBloomBuffer(IDirect3DSurface9* RenderTarget) {
 		Device->SetStreamSource(0, Textures.BloomVertexBuffer[i], 0, sizeof(FrameVS)); // Set correct vertex buffer for given resolution.
 		Device->SetRenderTarget(0, Textures.BloomSurface[i]);  // Render to correct bloom buffer.
 
-		if (Constants.Data.z > 0.0f) {
-			Constants.Data.x = Settings.Resolution[i+1].z; // Pixel size x axis of the upsampled texture.
-			Constants.Data.y = Settings.Resolution[i+1].w; // Pixel size y axis of the upsampled texture.
-		}
+		// The tent radius in texels of the level being upsampled, the same on every level. It was a
+		// fixed 0.005 of the screen in additive mode, under a texel on the small levels, which left
+		// the widest part of the glow blocky.
+		Constants.Data.x = Settings.Resolution[i+1].z * radius;
+		Constants.Data.y = Settings.Resolution[i+1].w * radius;
 		Constants.Resolution = Settings.Resolution[i];
 		RenderPass(Device, passNumber, false);
 		passNumber++;
