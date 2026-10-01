@@ -747,9 +747,10 @@ Enabled = true                       # Whether to render screen space contact sh
 RenderDistance = 180000              # Distance limit for the contact shadow blur. ContactDistance decides how far the shadows themselves reach.
 Intensity = 0.315                    # Rescale the intensity of contact shadows, to combat jitter and blur making them faint.
 ContactStrength = 1.0                # Strength of the contact shadows: a dense, short march toward the sun for the shadow under a prop, in a crease, at a character's feet. 0 disables.
-ContactLength = 40.0                 # Length of the contact ray in game units at the camera. It grows with distance so it stays a usable size on screen.
-ContactThickness = 12.0              # How thick things in the depth buffer are assumed to be. Too low and thin objects cast nothing, too high and they cast shadows from behind.
-ContactDistance = 6000.0             # Contact shadows fade out by this distance.
+ContactLength = 20.0                 # Length of the contact ray in game units at the camera. It grows a little with distance, up to three times this.
+ContactThickness = 8.0               # How thick things in the depth buffer are assumed to be. Too low and thin objects cast nothing, too high and they cast shadows from behind.
+ContactDistance = 2500.0             # Contact shadows fade out by this distance. Past it the shadow maps are the only shadows, which is all that is needed there.
+ContactDebug = false                 # Debug view: the scene in grey, contact shadows in red, and in blue what the shadow maps already shade. Forward shadows only.
 
 [_Shaders.ShadowsExteriors.ShadowMaps]
 Mode = 2							 # Shadow mode, higher means higher quality, but higher computational cost. 0: VSM, 1: EVSM2, 2: EVSM4

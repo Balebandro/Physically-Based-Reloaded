@@ -110,6 +110,49 @@ void ShadowsExteriorEffect::UpdateConstants() {
 	// with the identical value when it draws.
 	TheRenderManager->device->SetPixelShaderConstantF(129, (const float*)&Constants.FormatData, 1);
 	TheRenderManager->device->SetPixelShaderConstantF(133, (const float*)&Constants.ForwardData, 1);
+
+	UpdateLightColors();
+}
+
+// The sun and ambient colours exactly as BSShaderLightingProperty::SetLight1x2x (0xB70820) hands
+// them to the object shaders as PSLightColor[0] and AmbientColor, for the composite's contact
+// shadows to split a pixel's light the way the forward path does. They are not the weather's
+// raw colours (TESR_SunColor, TESR_SunAmbient): both are scaled by the light's dimmer, the sun
+// by the HDR sunlight dimmer outdoors, and the ambient floored at fMinAmbient. Left out are the
+// per-object factors SetLight also applies -- forced darkness and the LOD dimmers -- which a
+// screen-space pass cannot know and which are 1 on almost everything.
+void ShadowsExteriorEffect::UpdateLightColors() {
+	static const bool* bHDR = (const bool*)0x11F941E;				// BSShaderManager::bHDR
+	static const bool* bInterior = (const bool*)0x11F9427;			// BSShaderManager::bInterior
+	static const float* fSunlightDimmer = (const float*)0x11F9190;	// BSShaderManager::fSunlightDimmer
+	static const float* fMinAmbient = (const float*)0x11F947C;		// BSShaderManager::fMinAmbient
+
+	NiDirectionalLight* sun = Tes ? Tes->directionalLight : nullptr;
+	if (!sun) {
+		Constants.SunLight = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 1.0f);
+		Constants.AmbientLight = D3DXVECTOR4(1.0f, 1.0f, 1.0f, 1.0f);
+		return;
+	}
+
+	float dimmer = *bHDR ? sun->Dimmer : (std::min)(sun->Dimmer, 1.0f);
+
+	D3DXVECTOR3 ambient(sun->Amb.r * dimmer, sun->Amb.g * dimmer, sun->Amb.b * dimmer);
+	if (*fMinAmbient > 0.0f) {
+		float luminance = ambient.x * 0.33f + ambient.y * 0.34f + ambient.z * 0.33f;
+		if (luminance > 0.0f) {
+			float boost = luminance <= *fMinAmbient ? *fMinAmbient / luminance : 1.0f;
+			ambient = (ambient + D3DXVECTOR3(0.1f, 0.1f, 0.1f)) * boost;
+		}
+		else {
+			ambient = D3DXVECTOR3(*fMinAmbient, *fMinAmbient, *fMinAmbient);
+		}
+	}
+
+	D3DXVECTOR3 sunColor(sun->Diff.r * dimmer, sun->Diff.g * dimmer, sun->Diff.b * dimmer);
+	if (*bHDR && !*bInterior) sunColor *= *fSunlightDimmer;
+
+	Constants.SunLight = D3DXVECTOR4(sunColor.x, sunColor.y, sunColor.z, 1.0f);
+	Constants.AmbientLight = D3DXVECTOR4(ambient.x, ambient.y, ambient.z, 1.0f);
 }
 
 bool ShadowsExteriorEffect::UpdateSettingsFromQuality(int quality) {
@@ -329,6 +372,7 @@ void ShadowsExteriorEffect::UpdateSettings() {
 	Constants.ContactData.y = max(TheSettingManager->GetSettingF("Shaders.ShadowsExteriors.ScreenSpace", "ContactLength"), 1.0f);
 	Constants.ContactData.z = max(TheSettingManager->GetSettingF("Shaders.ShadowsExteriors.ScreenSpace", "ContactThickness"), 0.1f);
 	Constants.ContactData.w = max(TheSettingManager->GetSettingF("Shaders.ShadowsExteriors.ScreenSpace", "ContactDistance"), 1.0f);
+	Constants.ContactDebug.x = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.ScreenSpace", "ContactDebug");
 
 	// Sun smoothing settings.
 	Settings.SunSmoothing.SmoothSun = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.SunSmoothing", "SmoothSun");
@@ -446,6 +490,9 @@ void ShadowsExteriorEffect::RegisterConstants() {
 	TheShaderManager->RegisterConstant("TESR_ShadowBlur", &Constants.ShadowBlur);
 	TheShaderManager->RegisterConstant("TESR_ShadowScreenSpaceData", &Constants.ScreenSpaceData);
 	TheShaderManager->RegisterConstant("TESR_ShadowContactData", &Constants.ContactData);
+	TheShaderManager->RegisterConstant("TESR_ShadowSunLight", &Constants.SunLight);
+	TheShaderManager->RegisterConstant("TESR_ShadowAmbientLight", &Constants.AmbientLight);
+	TheShaderManager->RegisterConstant("TESR_ShadowContactDebug", &Constants.ContactDebug);
 	TheShaderManager->RegisterConstant("TESR_OrthoData", &Constants.OrthoData);
 	TheShaderManager->RegisterConstant("TESR_ShadowFade", &Constants.ShadowFade);
 	TheShaderManager->RegisterConstant("TESR_ShadowRadius", &Constants.ShadowMapRadius);

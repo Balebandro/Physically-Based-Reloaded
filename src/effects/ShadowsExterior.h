@@ -42,6 +42,9 @@ public:
 		D3DXVECTOR4		FormatData;
 		D3DXVECTOR4		ScreenSpaceData;
 		D3DXVECTOR4		ContactData;		// x: strength, y: ray length, z: thickness, w: max distance
+		D3DXVECTOR4		SunLight;			// rgb: the sun colour the object shaders receive
+		D3DXVECTOR4		AmbientLight;		// rgb: the ambient colour the object shaders receive
+		D3DXVECTOR4		ContactDebug;		// x: debug view of the contact shadows, 0 off
 		D3DXVECTOR4		OrthoData;
 		D3DXVECTOR4		ShadowFade;
 		D3DXMATRIXA16	ShadowWorld;
@@ -201,6 +204,7 @@ public:
 
 	void		clearShadowsBuffer();
 	void		UpdateConstants();
+	void		UpdateLightColors();
 	void		UpdateSettings();
 	void		RegisterConstants();
 	void		RegisterTextures();

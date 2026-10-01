@@ -9,11 +9,26 @@ float4 TESR_SkyColor;
 float4 TESR_SunAmbient;
 float4 TESR_SunColor;
 float4 TESR_ShadowScreenSpaceData;
+float4 TESR_ShadowForwardData; // x: 1 when the forward path is SUPPRESSED
+float4 TESR_ShadowSunLight;     // the sun and ambient colours as the object shaders receive them,
+float4 TESR_ShadowAmbientLight; // see ShadowsExteriorEffect::UpdateLightColors
+float4 TESR_ShadowContactDebug; // x: [Shaders.ShadowsExteriors.ScreenSpace] ContactDebug
+float4 TESR_PBRData;           // z: LightingScale, w: AmbientScale, as the object shaders apply them
+float4 TESR_PBRExtraData;      // y: SkylightingScale
+float4 TESR_TerrainData;       // z: LightingScale, w: AmbientScale -- terrain has its own
+float4 TESR_TerrainSkyData;    // x: SkylightingScale
+float4 TESR_SkyIrradiance[9];  // the sky light the object shaders add, see SkyAmbient.hlsl
+
+// D3DXMACRO from EffectRecord, off [Shaders.ShadowsExteriors.Main] ForwardShadows.
+#ifndef FORWARD_SHADOWS
+    #define FORWARD_SHADOWS 0
+#endif
 
 sampler2D TESR_RenderedBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_DepthBuffer : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = ANISOTROPIC; MIPFILTER = LINEAR; };
 sampler2D TESR_PointShadowBuffer : register(s2)  = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_NormalsBuffer : register(s3) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
+sampler2D TESR_ShadowAtlas : register(s4) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 
 
 static const float DARKNESS = max(0.0,1-TESR_ShadowData.y);
@@ -35,7 +50,25 @@ struct VSIN
 #include "Includes/Depth.hlsl"
 #include "Includes/Normals.hlsl"
 #include "Includes/Shadows.hlsl"
+// Same bias as GetSunShadow (SHADOW_NORMAL_BIAS_TEXELS), so the cascade value this composite
+// reads back is the one the object shaders applied.
+#define CASCADE_NORMAL_BIAS_TEXELS 0.0f
+#include "Includes/SunCascades.hlsl"
 
+
+// Mirrors SkyAmbientRadiance (mode 0) in Shaders/Includes/SkyAmbient.hlsl, encoded the same way.
+float3 SkyIrradiance(float3 n) {
+    float3 irradiance = TESR_SkyIrradiance[0].rgb
+         + TESR_SkyIrradiance[1].rgb * n.y
+         + TESR_SkyIrradiance[2].rgb * n.z
+         + TESR_SkyIrradiance[3].rgb * n.x
+         + TESR_SkyIrradiance[4].rgb * (n.x * n.y)
+         + TESR_SkyIrradiance[5].rgb * (n.y * n.z)
+         + TESR_SkyIrradiance[6].rgb * (3.0f * n.z * n.z - 1.0f)
+         + TESR_SkyIrradiance[7].rgb * (n.x * n.z)
+         + TESR_SkyIrradiance[8].rgb * (n.x * n.x - n.y * n.y);
+    return sqrt(max(irradiance, 0.0f));
+}
 
 VSOUT FrameVS(VSIN IN)
 {
@@ -64,6 +97,67 @@ float4 Shadow(VSOUT IN) : COLOR0
 	if (TESR_WaterSettings.z == 1 && world_pos.z < (TESR_WaterSettings.x + 2) && world_pos.z > (TESR_WaterSettings.x - 2) && dot(world_normal, float3(0, 0, -1)) > 0.999) return color;
 
 	float2 Shadow = tex2D(TESR_PointShadowBuffer, IN.UVCoord).rg;
+
+#if FORWARD_SHADOWS
+	// With forward shadows running, the object shaders shadow the sun term alone: a surface in
+	// shadow keeps its ambient and sky light, and so keeps their colour. The red channel here
+	// then holds only the contact shadows, and they get the same treatment, so the two read as
+	// one shadow: remove the sun's share of this pixel's light instead of scaling the whole of
+	// it by Darkness and tinting it.
+	//
+	// The share is rebuilt from the terms the object shaders sum -- sun * N.L * LightingScale,
+	// weather ambient * AmbientScale, sky light * SkylightingScale -- in the same encoded space
+	// they light in, so scaling the pixel by (ambient + sky) / (sun + ambient + sky) is what the
+	// forward path would have written. Point light shadows still take the path below.
+	//
+	// The object shaders have already applied the cascades, so the contact shadow only takes what
+	// they left: sun visibility goes from the cascade's c to min(c, k), k being the contact
+	// shadow's, and the pixel scales by (ambient + sun * min(c, k)) / (ambient + sun * c).
+	// c comes from the same cascade lookup, done here only where a contact shadow exists.
+	[branch] if (!TESR_ShadowForwardData.x && !TESR_ShadowFade.z) {
+		float contactVisibility = saturate(lerp(TESR_ShadowFade.x, 1.0f, Shadow.r));
+
+		// Debug view. The scene in grey, the contact shadow mask in red, and in blue whatever the
+		// cascades had already shaded, which the contact shadows must leave alone.
+		[branch] if (TESR_ShadowContactDebug.x) {
+			float debugCascade = 1.0f;
+			[branch] if (TESR_ShadowFade.y) {
+				float debugDepth;
+				debugCascade = GetLightAmount(reconstructWorldPosition(IN.UVCoord, debugDepth), world_normal);
+			}
+			float3 debugColor = luma(color.rgb).xxx * 0.6f;
+			debugColor = lerp(debugColor, float3(0.1f, 0.2f, 0.9f), (1.0f - debugCascade) * 0.6f);
+			debugColor = lerp(debugColor, float3(1.0f, 0.05f, 0.05f), 1.0f - contactVisibility);
+			return float4(debugColor, 1.0f);
+		}
+
+		if (contactVisibility >= 1.0f) return float4(color.rgb, 1.0f);   // most of the screen
+
+		float cascadeVisibility = 1.0f;
+		[branch] if (TESR_ShadowFade.y) {
+			float cascadeDepth;
+			cascadeVisibility = GetLightAmount(reconstructWorldPosition(IN.UVCoord, cascadeDepth), world_normal);
+			cascadeVisibility = saturate(lerp(cascadeVisibility, 1.0f, TESR_ShadowFade.x));   // faded as GetSunShadow fades it
+		}
+		float sunTaken = cascadeVisibility - min(cascadeVisibility, contactVisibility);
+		if (sunTaken <= 0.0f) return float4(color.rgb, 1.0f);   // already in the cascades' shade
+
+		// Terrain lights with its own [Shaders.Terrain.*] scales, and nothing in the frame says
+		// which pixels are terrain. Contact shadows are mostly seen where things meet the ground,
+		// so surfaces facing up take the terrain scales and walls and objects the PBR ones.
+		// The terrain constants are only filled while the terrain shaders are enabled.
+		float terrainWeight = (TESR_TerrainData.z + TESR_TerrainData.w > 0.0f) ? smoothstep(0.5f, 0.8f, world_normal.z) : 0.0f;
+		float3 scales = lerp(float3(TESR_PBRData.z, TESR_PBRData.w, TESR_PBRExtraData.y),
+		                     float3(TESR_TerrainData.z, TESR_TerrainData.w, TESR_TerrainSkyData.x), terrainWeight);
+
+		float NdotL = saturate(dot(world_normal, TESR_SmoothedSunDir.xyz));
+		float3 sunLight = TESR_ShadowSunLight.rgb * (NdotL * scales.x);
+		float3 ambientLight = TESR_ShadowAmbientLight.rgb * scales.y + SkyIrradiance(world_normal) * scales.z;
+		float3 litNow = ambientLight + sunLight * cascadeVisibility;
+
+		return float4(color.rgb * (1.0f - sunLight * sunTaken / max(litNow, 0.0001f)), 1.0f);
+	}
+#endif
 	Shadow.r = lerp(TESR_ShadowFade.x, 1.0f, Shadow.r); // fade shadows to light when sun is low
 
 	// scale shadows strength to ambient before adding attenuation for pointlights (ShadowFade.z means point Lights are on)

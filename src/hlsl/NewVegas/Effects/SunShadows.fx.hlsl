@@ -1,15 +1,9 @@
 // Image space shadows shader for Oblivion Reloaded
 
 float4x4 TESR_WorldViewProjectionTransform;
-float4x4 TESR_ShadowCameraToLightTransformNear;
-float4x4 TESR_ShadowCameraToLightTransformMiddle;
-float4x4 TESR_ShadowCameraToLightTransformFar;
-float4x4 TESR_ShadowCameraToLightTransformLod;
 float4 TESR_ReciprocalResolution;
-float4 TESR_SmoothedSunDir;
 float4 TESR_ViewSpaceLightDir;
 float4 TESR_ShadowData; // x: quality, y: darkness, z: texel size
-float4 TESR_ShadowFormatData; // x: mode, y: format bits per pixels
 float4 TESR_ShadowScreenSpaceData; // x: Enabled, y: blurRadius, z: renderDistance, w: intensity
 float4 TESR_ShadowContactData; // x: strength, y: ray length, z: thickness, w: max distance
 float4 TESR_SunAmbient;
@@ -21,12 +15,7 @@ float4 TESR_ShadowFade; // x: sunset attenuation, y: shadows maps active, z: poi
 #ifndef FORWARD_SHADOWS
     #define FORWARD_SHADOWS 0
 #endif
-float4 TESR_ShadowBlur; // x: 1 / atlas resolution, y: whether the lod cascade was updated
 float4 TESR_ShadowForwardData; // x: 1 when the forward path is SUPPRESSED
-float4 TESR_ShadowNearCenter; // x,y,z: center (world space), w: radius
-float4 TESR_ShadowMiddleCenter; // x,y,z: center (world space), w: radius
-float4 TESR_ShadowFarCenter; // x,y,z: center (world space), w: radius
-float4 TESR_ShadowLodCenter; // x,y,z: center (world space), w: radius
 
 sampler2D TESR_DepthBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowAtlas : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
@@ -35,22 +24,20 @@ sampler2D TESR_PointShadowBuffer : register(s3)  = sampler_state { ADDRESSU = CL
 sampler2D TESR_NoiseSampler : register(s4) < string ResourceName = "Effects\bluenoise256.dds"; > = sampler_state { ADDRESSU = WRAP; ADDRESSV = WRAP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 
 #define CONTACT_STEPNUM 12
-#define CONTACT_GROWTH (1.0f / 600.0f)   // the ray doubles in length every 600 units of depth
+// Growth of the ray with depth, capped. Contact shadows are for detail the shadow maps are too
+// coarse to catch, which only exists close up; a ray that kept growing with distance shadowed
+// whole slopes and trees far off that the maps already cover, as a soft halo around their
+// shadows.
+#define CONTACT_GROWTH (1.0f / 2000.0f)
+#define CONTACT_MAX_SCALE 3.0f
 
 static const float DARKNESS = 1-TESR_ShadowData.y;
-static const float SSS_MAXDEPTH = TESR_ShadowScreenSpaceData.z * TESR_ShadowScreenSpaceData.x;   // now only bounds the denoising blur
+static const float SSS_MAXDEPTH = TESR_ShadowScreenSpaceData.z * TESR_ShadowScreenSpaceData.x;
+// Where the denoising blur stops: no further than RenderDistance, and no further than contact
+// shadows reach, since past that the buffer is uniformly lit and blurring it does nothing.
+// 0 when contact shadows are off, which clips every pixel and skips both blur passes' work.
+static const float CONTACT_BLUR_END = (TESR_ShadowContactData.x > 0.0f) ? min(SSS_MAXDEPTH, TESR_ShadowContactData.w) : 0.0f;
 
-static const float Mode = TESR_ShadowFormatData.x;
-static const float FormatBits = TESR_ShadowFormatData.y;
-
-// Normal-offset bias in shadow map TEXELS, not world units -- a fixed world-space offset is
-// several texels in the Near cascade and a fraction of one in the Lod cascade. See the note in
-// Shaders/Includes/Shadow.hlsl. Keep these three in step with the SHADOW_NORMAL_BIAS_TEXELS /
-// SHADOW_SLOPE_BIAS / SHADOW_FILTER_TAPS defaults there, or the two paths disagree.
-static const float NormalBiasTexels = 2.5f;
-static const float SlopeBias = 1.0f;
-#define SHADOW_FILTER_TAPS 1
-#define SHADOW_FILTER_SPREAD 1.0f
 
 struct VSOUT
 {
@@ -68,6 +55,7 @@ struct VSIN
 #include "Includes/Helpers.hlsl"
 #include "Includes/Depth.hlsl"
 #include "Includes/Shadows.hlsl"
+#include "Includes/SunCascades.hlsl"
 #include "Includes/Normals.hlsl"
 #include "Includes/BlurDepth.hlsl"
 
@@ -78,137 +66,6 @@ VSOUT FrameVS(VSIN IN)
 	OUT.vertPos = IN.vertPos;
 	OUT.UVCoord = IN.UVCoord;
 	return OUT;
-}
-
-float4 ScreenCoordToTexCoord(float4 coord){
-	// apply perspective (perspective division) and convert from -1/1 to range to 0/1 (shadowMap range);
-	coord.xyz /= coord.w;
-	coord.x = coord.x * 0.5f + 0.5f;
-	coord.y = coord.y * -0.5f + 0.5f;
-
-	return coord;
-}
-
-// Moments for one cascade, optionally averaged over several taps.
-//
-// Averaging the MOMENTS and evaluating Chebyshev once is the correct order -- moments are
-// linearly filterable, which is the entire reason variance shadow maps exist. Averaging
-// four separate Chebyshev results would be both wrong and slower.
-// tex2Dlod, not tex2D: with forward compiled in, the deferred lookup sits inside a dynamic
-// branch, and a gradient-taking sample there is illegal (X3528). The atlas has no mipmaps, so
-// an explicit LOD 0 is exactly equivalent -- the forward path samples it the same way.
-float4 SampleShadowMoments(float2 uv, float2 quadrantOffset) {
-#if SHADOW_FILTER_TAPS <= 1
-    return tex2Dlod(TESR_ShadowAtlas, float4(uv, 0.0f, 0.0f));
-#else
-	// Taps must stay inside their own quadrant: the atlas packs four unrelated cascades into
-	// one texture, so a tap crossing a quadrant border reads another cascade's depths as if
-	// they belonged to this one. ShadowMapBlur.pso clamps for the same reason.
-    float texel = TESR_ShadowBlur.x;
-    float2 lo = quadrantOffset + texel * 0.5f;
-    float2 hi = quadrantOffset + 0.5f - texel * 0.5f;
-
-    float2 d = texel * SHADOW_FILTER_SPREAD;
-    float4 m;
-    m  = tex2Dlod(TESR_ShadowAtlas, float4(clamp(uv + d * float2( 1.0f,  0.5f), lo, hi), 0.0f, 0.0f));
-    m += tex2Dlod(TESR_ShadowAtlas, float4(clamp(uv + d * float2(-0.5f,  1.0f), lo, hi), 0.0f, 0.0f));
-    m += tex2Dlod(TESR_ShadowAtlas, float4(clamp(uv + d * float2(-1.0f, -0.5f), lo, hi), 0.0f, 0.0f));
-    m += tex2Dlod(TESR_ShadowAtlas, float4(clamp(uv + d * float2( 0.5f, -1.0f), lo, hi), 0.0f, 0.0f));
-    return m * 0.25f;
-#endif
-}
-
-float GetLightAmountValue(float4x4 lightTransform, float4 coord, float offsetX, float offsetY, float bias, float bleedReduction) {
-    float4 LightSpaceCoord = ScreenCoordToTexCoord(mul(coord, lightTransform));
-
-	// Offset to the correct position in the atlas.
-    LightSpaceCoord.xy *= 0.5;
-    LightSpaceCoord.x += offsetX;
-    LightSpaceCoord.y += offsetY;
-
-    float4 shadowBufferValue = SampleShadowMoments(LightSpaceCoord.xy, float2(offsetX, offsetY));
-
-    float shadow;
-	
-	[branch]
-    if (Mode == 0.0f)
-        shadow = GetLightAmountValueVSM(shadowBufferValue.xy, LightSpaceCoord.z, bias, bleedReduction);
-    else if (Mode == 1.0f)
-        shadow = GetLightAmountValueEVSM2(shadowBufferValue.xy, LightSpaceCoord.z, bias, bleedReduction, FormatBits);
-	else
-        shadow = GetLightAmountValueEVSM4(shadowBufferValue, LightSpaceCoord.z, bias, bleedReduction, FormatBits);
-	
-    return shadow;
-}
-
-float GetLightAmount(float4 positionWS, float3 normal)
-{
-	// Normal offset.
-    float NdotL = dot(normal, TESR_SmoothedSunDir.xyz);
-    float offsetScale = saturate(1 - NdotL);
-
-	// World size of one shadow map texel, per cascade. GetCascadeViewProj builds each cascade
-	// as [-radius, +radius], so a texel is 2*radius/cascadeResolution; the atlas is two
-	// cascades wide, so cascadeResolution = 0.5 / TESR_ShadowBlur.x and the texel works out
-	// to 4 * radius * TESR_ShadowBlur.x.
-    float4 radii = {
-        TESR_ShadowNearCenter.w,
-        TESR_ShadowMiddleCenter.w,
-        TESR_ShadowFarCenter.w,
-        TESR_ShadowLodCenter.w,
-    };
-    float4 texelWorld = 4.0f * radii * max(TESR_ShadowBlur.x, 1.0f / 16384.0f);
-    float4 offsetDistance = offsetScale * NormalBiasTexels * texelWorld;
-
-	// Slope-scaled variance floor: a grazing texel spans a long run of receiver depth and
-	// needs more slack before Chebyshev calls it occluded.
-    float bias = (Mode == 0.0f ? 0.00001f : 0.01f) * (1.0f + SlopeBias * offsetScale);
-
-    const float blend = 0.9f;
-
-	// Each cascade is offset in its OWN texel scale -- one shared samplePos cannot suit all
-	// four when their texels differ by more than an order of magnitude.
-	float4 shadows = {
-        GetLightAmountValue(TESR_ShadowCameraToLightTransformNear,   float4(positionWS.xyz + offsetDistance.x * normal, 1.0f), 0.0, 0.0, bias, 0.1f),
-		GetLightAmountValue(TESR_ShadowCameraToLightTransformMiddle, float4(positionWS.xyz + offsetDistance.y * normal, 1.0f), 0.5, 0.0, bias, 0.2f),
-		GetLightAmountValue(TESR_ShadowCameraToLightTransformFar,    float4(positionWS.xyz + offsetDistance.z * normal, 1.0f), 0.0, 0.5, bias, 0.6f),
-		GetLightAmountValue(TESR_ShadowCameraToLightTransformLod,    float4(positionWS.xyz + offsetDistance.w * normal, 1.0f), 0.5, 0.5, bias, 0.8f),
-    };
-
-    float4 distances = {
-        length(positionWS.xyz - TESR_ShadowNearCenter.xyz),
-		length(positionWS.xyz - TESR_ShadowMiddleCenter.xyz),
-		length(positionWS.xyz - TESR_ShadowFarCenter.xyz),
-		length(positionWS.xyz - TESR_ShadowLodCenter.xyz),
-    };
-	
-    if (distances.x < TESR_ShadowNearCenter.w) {
-        if (distances.x < TESR_ShadowNearCenter.w * blend)
-            return shadows.x;
-		
-        return lerp(shadows.x, shadows.y, smoothstep(TESR_ShadowNearCenter.w * blend, TESR_ShadowNearCenter.w, distances.x));
-    }
-    else if (distances.y < TESR_ShadowMiddleCenter.w) {
-        if (distances.y < TESR_ShadowMiddleCenter.w * blend)
-            return shadows.y;
-		
-        return lerp(shadows.y, shadows.z, smoothstep(TESR_ShadowMiddleCenter.w * blend, TESR_ShadowMiddleCenter.w, distances.y));
-    }
-    else if (distances.z < TESR_ShadowFarCenter.w) {
-        if (distances.z < TESR_ShadowFarCenter.w * blend)
-            return shadows.z;
-		
-        return lerp(shadows.z, shadows.w, smoothstep(TESR_ShadowFarCenter.w * blend, TESR_ShadowFarCenter.w, distances.z));
-    }
-    else if (distances.w < TESR_ShadowLodCenter.w) {
-        if (distances.w < TESR_ShadowLodCenter.w * blend)
-            return shadows.w;
-		
-        return lerp(shadows.w, 1.0f, smoothstep(TESR_ShadowLodCenter.w * blend, TESR_ShadowLodCenter.w, distances.w));
-    }
-    else {
-        return 1.0f;
-    }
 }
 
 // returns a semi random float3 between 0 and 1 based on the given seed. (blue noise)
@@ -226,28 +83,58 @@ float4 ScreenSpaceShadow(VSOUT IN) : COLOR0
 	// light attenuation passes through in green.
 	float2 uv = IN.UVCoord;
 	float4 color = tex2D(TESR_PointShadowBuffer, uv);
-	float3 random3 = random(uv);
+	// tex2Dlod, not random(): the compiler sinks this sample to where it is used, past the dynamic
+	// returns below, and warns (X4121) about a gradient sample in flow control. The noise has no
+	// use for mips anyway.
+	float3 random3 = tex2Dlod(TESR_NoiseSampler, float4((uv / 256 + 0.5) / TESR_ReciprocalResolution.xy, 0.0f, 0.0f)).xyz;
 
 	if (!TESR_ShadowScreenSpaceData.x || TESR_ShadowContactData.x <= 0.0f) return float4(1.0, color.g, 0, 1);
 
-	const float3 origin = reconstructPosition(uv);
+	// reconstructPosition, sampled with tex2Dlod: it follows a dynamic return.
+	float4 originClip = float4(uv.x * 2.0f - 1.0f, (1.0f - uv.y) * 2.0f - 1.0f, tex2Dlod(TESR_DepthBuffer, float4(uv, 0.0f, 0.0f)).y, 1.0f);
+	float4 originView = mul(originClip, TESR_InvProjectionTransform);
+	const float3 origin = originView.xyz / originView.w;
 	if (origin.z > TESR_ShadowContactData.w) return float4(1.0, color.g, 0, 1);
 
-	// The ray grows with distance so it keeps a usable size on screen.
-	float scale = 1.0f + origin.z * CONTACT_GROWTH;
+	// A surface facing away from the sun has no sunlight for a contact shadow to take away, and
+	// the composite would scale whatever this found by a sun share of zero. Skipping it spares
+	// the whole march on roughly every surface in the sun's shade. The buffer holds view-space
+	// normals, the space TESR_ViewSpaceLightDir is in.
+	float3 viewNormal = tex2Dlod(TESR_NormalsBuffer, float4(uv, 0.0f, 0.0f)).xyz * 2.0f - 1.0f;
+	if (dot(viewNormal, TESR_ViewSpaceLightDir.xyz) <= 0.0f) return float4(1.0, color.g, 0, 1);
+
+	// The ray grows a little with distance so it keeps a usable size on screen, up to a cap.
+	float scale = min(1.0f + origin.z * CONTACT_GROWTH, CONTACT_MAX_SCALE);
 	float3 contactStep = TESR_ViewSpaceLightDir.xyz * (TESR_ShadowContactData.y * scale / CONTACT_STEPNUM);
 	float contactThickness = TESR_ShadowContactData.z * scale;
 	float contactBias = contactThickness * 0.05f;
 
+	// Marched in clip space. Projection is linear in homogeneous coordinates, so a view-space
+	// ray maps to a straight line there: project the start and one step once, then each sample
+	// costs an add and a divide instead of a full matrix multiply. View depth is linear along
+	// the ray too, so it steps the same way.
+	//
 	// tex2Dlod: the early outs above are dynamic flow, and a gradient sample after them is illegal.
-	float3 contactPos = origin + contactStep * random3.g;   // jittered start hides the step pattern
+	float3 startPos = origin + contactStep * random3.g;   // jittered start hides the step pattern
+	float4 clipPos = mul(float4(startPos, 1.0f), TESR_ProjectionTransform);
+	float4 clipStep = mul(float4(contactStep, 0.0f), TESR_ProjectionTransform);
+	float rayDepth = startPos.z;
+
+	// The nearer the occluder along the ray, the darker the shadow, fading to nothing at the
+	// ray's end. A shadow is darkest where an object meets the surface and fades away from it;
+	// a flat-dark mask instead ended in a hard rim around everything that also cast a
+	// shadow-map shadow, which read as a second, softer shadow behind the real one.
+	//
+	// Every hit counts, grass blades included: grass is not in the shadow maps, so this is the
+	// only shadow it casts.
 	float contact = 0.0f;
 	[unroll]
 	for (int j = 0; j < CONTACT_STEPNUM; j++) {
-		contactPos += contactStep;
-		float sceneDepth = tex2Dlod(TESR_DepthBuffer, float4(projectPosition(contactPos).xy, 0.0f, 0.0f)).x * farZ;
-		float delta = contactPos.z - sceneDepth;
-		if (delta > contactBias && delta < contactThickness) contact = 1.0f;
+		clipPos += clipStep;
+		rayDepth += contactStep.z;
+		float2 sampleUV = clipPos.xy / clipPos.w * float2(0.5f, -0.5f) + 0.5f;
+		float delta = rayDepth - tex2Dlod(TESR_DepthBuffer, float4(sampleUV, 0.0f, 0.0f)).x * farZ;
+		contact = (delta > contactBias && delta < contactThickness) ? max(contact, 1.0f - (float)j / CONTACT_STEPNUM) : contact;
 	}
 
 	float fade = 1.0f - smoothstep(TESR_ShadowContactData.w * 0.8f, TESR_ShadowContactData.w, origin.z);
@@ -260,12 +147,10 @@ float4 Shadow(VSOUT IN) : COLOR0
 {
 	float2 uv = IN.UVCoord;
 
-    float viewDepth;
-    float4 worldPos = reconstructWorldPosition(uv, viewDepth);
-
 	// Sample Screen Space shadows
 	float4 Shadow = tex2D(TESR_PointShadowBuffer, IN.UVCoord);
     Shadow = pow(Shadow, TESR_ShadowScreenSpaceData.w);
+
 	if (!TESR_ShadowFade.y) return Shadow; // disable shadow maps if ShadowFade.y == 0 (setting for shadow map disabled)
 
 	// Sample shadows from shadowmaps.
@@ -284,16 +169,15 @@ float4 Shadow(VSOUT IN) : COLOR0
 	// mid-session hands the cascades back here in the same frame -- game shaders cannot be
 	// recompiled at runtime, so a macro alone would leave neither path drawing shadows.
 #if FORWARD_SHADOWS
-	// GetWorldNormal samples the normals buffer, so it has to stay outside the branch.
-	float3 normal = GetWorldNormal(uv);
-	[branch] if (TESR_ShadowForwardData.x) {
-		Shadow.r = min(Shadow.r, GetLightAmount(worldPos, normal));
-	}
-#else
-	// Forward was compiled out entirely, so the cascades are always ours.
-	float3 normal = GetWorldNormal(uv);
-	Shadow.r = min(Shadow.r, GetLightAmount(worldPos, normal)); // darkest of screenspace & sun
+	if (!TESR_ShadowForwardData.x) return Shadow;
 #endif
+
+	// Only reached when the cascades are ours, so the position and normal are only paid for
+	// then. tex2Dlod for the normal: it is sampled after the dynamic returns above.
+    float viewDepth;
+    float4 worldPos = reconstructWorldPosition(uv, viewDepth);
+	float3 normal = mul(TESR_ViewTransform, float4(tex2Dlod(TESR_NormalsBuffer, float4(uv, 0.0f, 0.0f)).xyz * 2.0f - 1.0f, 1.0f)).xyz;   // GetWorldNormal
+	Shadow.r = min(Shadow.r, GetLightAmount(worldPos, normal)); // darkest of screenspace & sun
 
 	return Shadow;
 }
@@ -308,12 +192,12 @@ technique {
 
 	pass {
 		VertexShader = compile vs_3_0 FrameVS();
-	 	PixelShader = compile ps_3_0 DepthBlur(TESR_PointShadowBuffer, OffsetMaskH, TESR_ShadowScreenSpaceData.y, 3500, SSS_MAXDEPTH);
+	 	PixelShader = compile ps_3_0 DepthBlur(TESR_PointShadowBuffer, OffsetMaskH, TESR_ShadowScreenSpaceData.y, 3500, CONTACT_BLUR_END);
 	}
 
 	pass {
 		VertexShader = compile vs_3_0 FrameVS();
-	 	PixelShader = compile ps_3_0 DepthBlur(TESR_PointShadowBuffer, OffsetMaskV, TESR_ShadowScreenSpaceData.y, 3500, SSS_MAXDEPTH);
+	 	PixelShader = compile ps_3_0 DepthBlur(TESR_PointShadowBuffer, OffsetMaskV, TESR_ShadowScreenSpaceData.y, 3500, CONTACT_BLUR_END);
 	}
 
     pass {
