@@ -46,11 +46,9 @@ public:
 	struct TerrainSettings {
 		float LightScale;
 		float AmbientScale;
-		float Roughness;
-		float Metallicness;
+		float RoughnessScale;
 		float Saturation;
 		float SkylightingScale;
-		float SkylightingDirectionality;
 	};
 	struct ParallaxSettingsStruct {
 		bool Enabled;
@@ -79,7 +77,8 @@ public:
 		D3DXVECTOR4		Data;
 		D3DXVECTOR4		ExtraData;
 		// TerrainExtraData is full: x usePBR, y saturation, z NoiseScale, w NoiseTile.
-		D3DXVECTOR4		SkyData;      // x: skylight strength, y: sample directionality
+		D3DXVECTOR4		PBRData;      // [Shaders.PBR.Main] x: sky reflections, y: ambient normal detail, z: specular occlusion, w: debug view
+		D3DXVECTOR4		SkyData;      // x: skylight strength, z: linear lighting, w: vanilla-matched highlights
 	};
 	TerrainStruct	Constants;
 

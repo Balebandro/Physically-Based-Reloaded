@@ -81,124 +81,96 @@ float3 BRDF(float roughness, float3 fresnel, float NdotV, float NdotL, float Ndo
     return num/denom;
 }
 
+// --- Lighting space ---------------------------------------------------------------------------
+// The game lights in GAMMA space: textures and light colours are gamma-encoded and multiplied
+// as they are. Products survive that (sqrt(a) * sqrt(b) = sqrt(ab)), but the cosine, the BRDF
+// and every sum of light do not: falloff toward the terminator comes out too soft and sums of
+// lights too bright, which flattens everything a physically based model is meant to shape.
+//
+// With linear lighting on ([Shaders.PBR.Main] LinearLighting / [Shaders.Terrain.Main], set by
+// the template through linearLighting), colours are decoded on the way in (x^2, the same
+// encoding SkyAmbient.hlsl uses), all lighting is computed and summed linearly, and the result
+// is encoded once at the end. Off, decode and encode do nothing and this is the old behaviour.
+static bool linearLighting = false;
+
+float3 decodeColor(float3 c) { return linearLighting ? c * c : c; }
+float3 encodeColor(float3 c) { return linearLighting ? sqrt(max(c, 0.0f)) : c; }
+
+// Blinn-Phong exponent (vanilla glossiness, NiMaterialProperty::m_fShine or a land layer's
+// specular exponent) to GGX roughness: alpha = sqrt(2 / (n + 2)), roughness = sqrt(alpha).
+float shineToRoughness(float shine) {
+    return pow(2.0f / (max(shine, 0.0f) + 2.0f), 0.25f);
+}
+
+// --- Direct lighting --------------------------------------------------------------------------
+// All of these return light in the caller's units with PI folded in: a Lambertian surface lit
+// head-on returns albedo * lightColor. specScale scales the specular lobe only (a material's
+// specular mask times the specular strength setting).
+//
+// Diffuse is plain Lambert in every variant. It used to be (1 - F(L.H)) * Lambert where a
+// specular lobe existed and plain Lambert where it did not, so the same mesh changed
+// brightness at grazing light depending on which shader variant the game drew it with (and
+// it switches with distance and light count).
+
 float3 PBRDiffuse(float metallicness, float roughness, float3 albedo, float3 normal, float3 eyeDir, float3 lightDir, float3 lightColor) {
-    normal = normalize(normal);
-    lightDir = normalize(lightDir);
-
-    const float NdotL = shades(normal, lightDir);
-
-    // No Fresnel. These permutations render no specular lobe, so energy taken out of diffuse
-    // has nowhere to reappear -- PBRSun returns it as spec * NdotS, this path just loses it.
-    // (1 - LdotH)^5 then drives the surface to black as eyeDir approaches -lightDir, where
-    // normalize(eyeDir + lightDir) is singular besides. Dropping the term removes the last
-    // view dependence, which is what a purely Lambertian material should have.
-    const float3 diffuse = (1 - metallicness) * albedo / PI;
-
-    return diffuse * NdotL * lightColor * PI;
+    const float NdotL = shades(normalize(normal), normalize(lightDir));
+    return (1 - metallicness) * albedo * NdotL * lightColor;
 }
 
-float3 PBRSpecular(float metallicness, float roughness, float3 albedo, float3 normal, float3 eyeDir, float3 lightDir, float3 lightColor) {
-    const float3 reflectance = lerp(float(0.04).rrr, albedo, metallicness);
-    
-    normal = normalize(normal);
-    eyeDir = normalize(eyeDir);
-    lightDir = normalize(lightDir);
-    
+// GGX specular for one light direction, times N.L, PI and the light.
+float3 SpecularLobe(float3 f0, float roughness, float3 normal, float3 eyeDir, float3 lightDir, float3 lightColor) {
     const float3 halfway = normalize(eyeDir + lightDir);
     const float NdotL = max(shades(normal, lightDir), 0.00001);
     const float NdotV = max(shades(normal, eyeDir), 0.00001);
     const float NdotH = shades(normal, halfway);
     const float LdotH = shades(lightDir, halfway);
-
-    const float3 fresnel = Fresnel(reflectance, (1.0).xxx, LdotH);
-    
-    const float3 spec = BRDF(roughness, fresnel, NdotV, NdotL, NdotH);
-
-    return spec * NdotL * lightColor * PI;
+    const float3 fresnel = Fresnel(f0, (1.0).xxx, LdotH);
+    return BRDF(roughness, fresnel, NdotV, NdotL, NdotH) * NdotL * lightColor * PI;
 }
 
-float3 PBR(float metallicness, float roughness, float3 albedo, float3 normal, float3 eyeDir, float3 lightDir, float3 lightColor) {
-    const float3 reflectance = lerp(float(0.04).rrr, albedo, metallicness);
-    
-    normal = normalize(normal);
-    eyeDir = normalize(eyeDir);
-    lightDir = normalize(lightDir);
-    
-    const float3 halfway = normalize(eyeDir + lightDir);
-    const float NdotL = max(shades(normal, lightDir), 0.00001);
-    const float NdotV = max(shades(normal, eyeDir), 0.00001);
-    const float NdotH = shades(normal, halfway);
-    const float LdotH = shades(lightDir, halfway);
-
-    const float3 fresnel = Fresnel(reflectance, (1.0).xxx, LdotH);
-    
-    const float3 diffuse = (1 - metallicness) * LambertianDiffuse(albedo, fresnel);
-    
-    const float3 spec = BRDF(roughness, fresnel, NdotV, NdotL, NdotH);
-
-    return (diffuse + spec) * NdotL * lightColor * PI;
+float3 PBRSpecular(float metallicness, float roughness, float3 albedo, float3 normal, float3 eyeDir, float3 lightDir, float3 lightColor, float specScale = 1.0f) {
+    const float3 f0 = lerp(float(0.04).rrr, albedo, metallicness);
+    return SpecularLobe(f0, roughness, normalize(normal), normalize(eyeDir), normalize(lightDir), lightColor) * specScale;
 }
 
+float3 PBR(float metallicness, float roughness, float3 albedo, float3 normal, float3 eyeDir, float3 lightDir, float3 lightColor, float specScale = 1.0f) {
+    return PBRDiffuse(metallicness, roughness, albedo, normal, eyeDir, lightDir, lightColor)
+         + PBRSpecular(metallicness, roughness, albedo, normal, eyeDir, lightDir, lightColor, specScale);
+}
+
+// The sun is a disc, not a point: its angular radius in radians (the full disc is about 0.53
+// degrees; this is generous, as the old value was).
 #define SUN_RADIUS 0.00918043
 
-float3 PBRSunSpecular(float metallicness, float roughness, float3 albedo, float3 normal, float3 eyeDir, float3 lightDir, float3 lightColor) {
-    const float3 reflectance = lerp(float(0.04).rrr, albedo, metallicness);
-    
-    normal = normalize(normal);
-    eyeDir = normalize(eyeDir);
-    lightDir = normalize(lightDir);
-    
-    const float3 reflectDir = reflect(lightDir, normal);
+// Karis' representative point (Real Shading in Unreal Engine 4, 2013): the point of the sun's
+// disc nearest the VIEW reflection, plus the normalisation that keeps the lobe widened to cover
+// the disc from gaining energy. The old version reflected the LIGHT direction instead of the
+// view, which never lands on the disc, so the sun was effectively a point light and the
+// normalisation was missing.
+float3 SunSpecularDir(float3 normal, float3 eyeDir, float3 lightDir, float roughness, out float normalization) {
+    const float3 r = reflect(-eyeDir, normal);
+    const float3 centerToRay = dot(lightDir, r) * r - lightDir;
+    const float3 closest = lightDir + centerToRay * saturate(SUN_RADIUS / max(length(centerToRay), 1e-5f));
 
-    const float radius = sin(SUN_RADIUS);
-    const float dist = cos(SUN_RADIUS);
-    
-    const float3 LdotR = dot(lightDir, reflectDir);
-    const float3 closestPoint = reflectDir - LdotR * lightDir;
-    const float3 sunDir = LdotR < dist ? normalize(dist * lightDir + normalize(closestPoint) * radius) : reflectDir;
-    
-    const float3 halfway = normalize(eyeDir + sunDir);
-    const float NdotS = max(shades(normal, sunDir), 0.00001);
-    const float NdotV = max(shades(normal, eyeDir), 0.00001);
-    const float NdotH = shades(normal, halfway);
-    const float NdotL = shades(normal, lightDir);
-    const float LdotH = shades(lightDir, halfway);
+    const float alpha = roughness * roughness;
+    const float alphaPrime = saturate(alpha + SUN_RADIUS * 0.5f);
+    normalization = (alpha / alphaPrime) * (alpha / alphaPrime);
 
-    const float3 fresnel = Fresnel(reflectance, (1.0).xxx, LdotH);
-    
-    const float3 spec = BRDF(roughness, fresnel, NdotV, NdotS, NdotH);
-
-    return spec * NdotS * lightColor * PI;
+    return normalize(closest);
 }
 
-float3 PBRSun(float metallicness, float roughness, float3 albedo, float3 normal, float3 eyeDir, float3 lightDir, float3 lightColor) {
-    const float3 reflectance = lerp(float(0.04).rrr, albedo, metallicness);
-    
+float3 PBRSunSpecular(float metallicness, float roughness, float3 albedo, float3 normal, float3 eyeDir, float3 lightDir, float3 lightColor, float specScale = 1.0f) {
+    const float3 f0 = lerp(float(0.04).rrr, albedo, metallicness);
     normal = normalize(normal);
     eyeDir = normalize(eyeDir);
     lightDir = normalize(lightDir);
-    
-    const float3 reflectDir = reflect(lightDir, normal);
 
-    const float radius = sin(SUN_RADIUS);
-    const float dist = cos(SUN_RADIUS);
-    
-    const float3 LdotR = dot(lightDir, reflectDir);
-    const float3 closestPoint = reflectDir - LdotR * lightDir;
-    const float3 sunDir = LdotR < dist ? normalize(dist * lightDir + normalize(closestPoint) * radius) : reflectDir;
-    
-    const float3 halfway = normalize(eyeDir + sunDir);
-    const float NdotS = max(shades(normal, sunDir), 0.00001);
-    const float NdotV = max(shades(normal, eyeDir), 0.00001);
-    const float NdotH = shades(normal, halfway);
-    const float NdotL = shades(normal, lightDir);
-    const float LdotH = shades(lightDir, halfway);
+    float normalization;
+    const float3 sunDir = SunSpecularDir(normal, eyeDir, lightDir, roughness, normalization);
+    return SpecularLobe(f0, roughness, normal, eyeDir, sunDir, lightColor) * normalization * specScale;
+}
 
-    const float3 fresnel = Fresnel(reflectance, (1.0).xxx, LdotH);
-    
-    const float3 diffuse = (1 - metallicness) * LambertianDiffuse(albedo, fresnel);
-    
-    const float3 spec = BRDF(roughness, fresnel, NdotV, NdotS, NdotH);
-
-    return (diffuse * NdotL + spec * NdotS) * lightColor * PI;
+float3 PBRSun(float metallicness, float roughness, float3 albedo, float3 normal, float3 eyeDir, float3 lightDir, float3 lightColor, float specScale = 1.0f) {
+    return PBRDiffuse(metallicness, roughness, albedo, normal, eyeDir, lightDir, lightColor)
+         + PBRSunSpecular(metallicness, roughness, albedo, normal, eyeDir, lightDir, lightColor, specScale);
 }

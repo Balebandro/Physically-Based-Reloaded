@@ -41,7 +41,7 @@ float4 TESR_PBRExtraData : register(c135);
 // source rather than a tint on the weather ambient, so SkylightingScale is its only strength
 // knob and it survives AmbientScale = 0.
 float3 SkyAmbient(float3 worldNormal, float valid) {
-    return SkyAmbientRadiance(worldNormal, TESR_PBRExtraData.z) * TESR_PBRExtraData.y * valid;
+    return SkyAmbientRadiance(worldNormal) * TESR_PBRExtraData.y * valid;
 }
 
 #endif

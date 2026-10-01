@@ -190,18 +190,18 @@ struct VS_OUTPUT {
     float4 fogColor : COLOR1;
 #endif
     float4 sPosition : POSITION;
-    float2 uv : TEXCOORD0;
+    float4 uv : TEXCOORD0;          // zw: world up in tangent space, xy (viewDir.w: z), see Object.hlsl
     float4 lightDir : TEXCOORD1;
 
 #if LIGHTS > 1 || NUM_PT_LIGHTS > 1
     float4 light2Dir : TEXCOORD2;
 #endif
-    
+
 #if LIGHTS > 2 || NUM_PT_LIGHTS > 2
     float4 light3Dir : TEXCOORD3;
 #endif
-    
-    float3 viewDir : TEXCOORD6;
+
+    float4 viewDir : TEXCOORD6;
 
     // Object-space squared distances for point-light attenuation (vanillaAttSq), bypassing
     // lightDir/light2Dir/light3Dir above -- those are tangent-space (TBN-transformed) and their
@@ -249,26 +249,24 @@ VS_OUTPUT main(VS_INPUT IN) {
     // read by the PS either (same macro guards on both sides).
     OUT.lightDistSq = 0;
 
-    OUT.uv = IN.uv.xy;
-    
     float4 position = IN.position.xyzw;
-    
+
     #ifndef SKIN
         float3x3 tbn = float3x3(IN.tangent.xyz, IN.binormal.xyz, IN.normal.xyz);
-    
+
         OUT.sPosition.xyzw = mul(ModelViewProj, position.xyzw);
     #else
         float4 offset = IN.blendIndices.zyxw * 765.01001;
         float4 blend = IN.blendWeight.xyzz;
         blend.w = 1 - weight(IN.blendWeight.xyz);
         float3x3 tbn = BonesTransformTBN(Bones, offset, blend, IN.tangent, IN.binormal, IN.normal);
-    
+
         position.w = 1;
         position.xyz = BonesTransformPosition(Bones, offset, blend, position);
-    
+
         OUT.sPosition.xyzw = mul(SkinModelViewProj, position.xyzw);
     #endif
-    
+
     #if defined(DIFFUSE) || defined(POINT)
         float3 light = LightData[0].xyz - position.xyz;
         OUT.lightDistSq.x = dot(light, light);
@@ -280,6 +278,20 @@ VS_OUTPUT main(VS_INPUT IN) {
     OUT.lightDir.xyz = mul(tbn, light);
 
     OUT.viewDir.xyz = mul(tbn, EyePosition.xyz - position.xyz);
+
+    // World up in the normal map's tangent space, through the engine's own frame: the world
+    // images of the tangent, binormal and normal, whose z is how much each points up. For the
+    // normal-mapped ambient (Object.hlsl, getAmbientNormal), in spare interpolator channels.
+    #ifndef SKIN
+        #define OBJECT_TO_CLIP ModelViewProj
+    #else
+        #define OBJECT_TO_CLIP SkinModelViewProj
+    #endif
+    float3 upTS = float3(normalize(GetShadowWorldDir(mul(OBJECT_TO_CLIP, float4(tbn[0], 0.0f)))).z,
+                         normalize(GetShadowWorldDir(mul(OBJECT_TO_CLIP, float4(tbn[1], 0.0f)))).z,
+                         normalize(GetShadowWorldDir(mul(OBJECT_TO_CLIP, float4(tbn[2], 0.0f)))).z);
+    OUT.uv = float4(IN.uv.xy, upTS.xy);
+    OUT.viewDir.w = upTS.z;
 
     #if LIGHTS > 1 || NUM_PT_LIGHTS > 1
         light = LightData[1].xyz - position.xyz;
@@ -294,24 +306,24 @@ VS_OUTPUT main(VS_INPUT IN) {
         OUT.light3Dir.xyz = mul(tbn, light);
         OUT.lightDistSq.z = dot(light, light);
     #endif
-    
+
     #ifndef NO_VERTEX_COLOR
         OUT.vertexColor = clamp(IN.vertexColor, 0.0f, 1.0f);
     #endif
 
     #ifndef NO_FOG
         float3 fogPos = OUT.sPosition.xyz;
-    
+
         #ifdef REVERSED_DEPTH
             fogPos.z = OUT.sPosition.w - fogPos.z;
         #endif
-    
+
         float fogStrength = 1 - saturate((FogParam.x - length(fogPos)) / FogParam.y);
         fogStrength = log2(fogStrength);
         OUT.fogColor.a = exp2(fogStrength * FogParam.z);
         OUT.fogColor.rgb = FogColor.rgb;
     #endif
-    
+
     #ifdef PROJ_SHADOW
         float shadowParam = dot(ShadowProj[3].xyzw, position.xyzw);
         float2 shadowUV;
@@ -358,7 +370,7 @@ struct VS_OUTPUT {
     float4 vertexColor : COLOR0;
     float4 fogColor : COLOR1;
     float4 sPosition : POSITION;
-    float2 uv : TEXCOORD0;
+    float4 uv : TEXCOORD0;          // zw: world up in tangent space, xy; z in lPosition.w below MAX_LIGHTS 6
     float4 lPosition : TEXCOORD1;
     float4 lightDir : TEXCOORD2;  // .w = .x of viewDir
     float4 light2 : TEXCOORD3;   // .w = .y of viewDir
@@ -399,31 +411,42 @@ float4 EyePosition : register(c16);
 
 VS_OUTPUT main(VS_INPUT IN) {
     VS_OUTPUT OUT;
-    
-    OUT.uv = IN.uv.xy;
-    
+
     float4 position = IN.position.xyzw;
-    
+
     #ifndef SKIN
     float3x3 tbn = float3x3(IN.tangent.xyz, IN.binormal.xyz, IN.normal.xyz);
-    
+
     OUT.sPosition.xyzw = mul(ModelViewProj, position.xyzw);
     #else
         float4 offset = IN.blendIndices.zyxw * 765.01001;
         float4 blend = IN.blendWeight.xyzz;
         blend.w = 1 - weight(IN.blendWeight.xyz);
         float3x3 tbn = BonesTransformTBN(Bones, offset, blend, IN.tangent, IN.binormal, IN.normal);
-    
+
         position.w = 1;
         position.xyz = BonesTransformPosition(Bones, offset, blend, position);
         OUT.sPosition.xyzw = mul(SkinModelViewProj, position.xyzw);
     #endif
-    
+
     float3 viewDir = mul(tbn, EyePosition.xyz - position.xyz);
-    
+
     OUT.lPosition.xyz = position.xyz;
-    OUT.lPosition.w = LightData[0].w;
-    
+
+    // World up in tangent space, see the LIGHTS < 4 variant. lPosition.w used to carry
+    // LightData[0].w, the specular distance fade, which the pixel shader now gets per draw instead
+    // (ObjectMaterial.y); at MAX_LIGHTS 6 it holds the world position sentinel and z is rebuilt.
+    #ifndef SKIN
+        #define OBJECT_TO_CLIP ModelViewProj
+    #else
+        #define OBJECT_TO_CLIP SkinModelViewProj
+    #endif
+    float3 upTS = float3(normalize(GetShadowWorldDir(mul(OBJECT_TO_CLIP, float4(tbn[0], 0.0f)))).z,
+                         normalize(GetShadowWorldDir(mul(OBJECT_TO_CLIP, float4(tbn[1], 0.0f)))).z,
+                         normalize(GetShadowWorldDir(mul(OBJECT_TO_CLIP, float4(tbn[2], 0.0f)))).z);
+    OUT.uv = float4(IN.uv.xy, upTS.xy);
+    OUT.lPosition.w = upTS.z;
+
     #ifndef OPT
         float lights = min(MAX_LIGHTS, fvars0.z);
     #elif defined(SPECULAR)
@@ -434,7 +457,7 @@ VS_OUTPUT main(VS_INPUT IN) {
     float lightsFrac = frac(lights);
     float lightsThreshold = (lights < 0.0 ? (-lightsFrac < lightsFrac ? 1.0 : 0.0) : 0) + (lights - lightsFrac);
     float lightUsed;
-    
+
     #ifndef OPT
         OUT.lightDir.w = viewDir.x;
         OUT.lightDir.xyz = mul(tbn, LightData[0].xyz);
@@ -443,31 +466,31 @@ VS_OUTPUT main(VS_INPUT IN) {
         OUT.lightDir.xyz = lightUsed * mul(tbn, LightData[lightOffset + 0].xyz - position.xyz);
         OUT.lightDir.w = viewDir.x;
     #endif
-    
+
     lightUsed = 1 < lightsThreshold ? 1.0 : 0.0;
     OUT.light2.xyz = lightUsed * mul(tbn, LightData[lightOffset + 1].xyz - position.xyz);
     OUT.light2.w = viewDir.y;
-    
+
     lightUsed = 2 < lightsThreshold ? 1.0 : 0.0;
     OUT.light3.xyz = lightUsed * mul(tbn, LightData[lightOffset + 2].xyz - position.xyz);
     OUT.light3.w = viewDir.z;
-    
+
     #if MAX_LIGHTS > 3
         lightUsed = 3 < lightsThreshold ? 1.0 : 0.0;
         OUT.light4.xyz = lightUsed * mul(tbn, LightData[lightOffset + 3].xyz - position.xyz);
         OUT.light4.w = lightUsed * LightData[lightOffset + 3].w;
     #endif
-    
+
     #if MAX_LIGHTS > 4
         lightUsed = 4 < lightsThreshold ? 1.0 : 0.0;
         OUT.light5.xyz = lightUsed * mul(tbn, LightData[lightOffset + 4].xyz - position.xyz);
         OUT.light5.w = lightUsed * LightData[lightOffset + 4].w;
-        
+
         lightUsed = 5 < lightsThreshold ? 1.0 : 0.0;
         OUT.light6.xyz = lightUsed * mul(tbn, LightData[lightOffset + 5].xyz - position.xyz);
         OUT.light6.w = lightUsed * LightData[lightOffset + 5].w;
     #endif
-    
+
     OUT.vertexColor = clamp(IN.vertexColor, 0.0f, 1.0f);
 
     float3 fogPos = OUT.sPosition.xyz;
@@ -497,7 +520,7 @@ struct PS_INPUT {
 #ifndef NO_FOG
     float4 fogColor : COLOR1;
 #endif
-    float2 uv : TEXCOORD0;
+    float4 uv : TEXCOORD0;
     float4 lightDir : TEXCOORD1_centroid;
 #if LIGHTS > 1 || NUM_PT_LIGHTS > 1
     float4 light2Dir : TEXCOORD2_centroid;
@@ -505,7 +528,7 @@ struct PS_INPUT {
 #if LIGHTS > 2 || NUM_PT_LIGHTS > 2
     float4 light3Dir : TEXCOORD3_centroid;
 #endif
-    float3 viewDir : TEXCOORD6_centroid;
+    float4 viewDir : TEXCOORD6_centroid;   // w: world up in tangent space, z
     float3 lightDistSq : TEXCOORD5;
     float4 shadowWorldPos : TEXCOORD4;
 #ifdef PROJ_SHADOW
@@ -559,30 +582,44 @@ float4 PSLightColor[10] : register(c3);
 
 PS_OUTPUT main(PS_INPUT IN) {
     PS_OUTPUT OUT;
-    
+
     #if !defined(DIFFUSE) && !defined(ONLY_SPECULAR)
         float4 baseColor = tex2D(BaseMap, IN.uv.xy);
-    
+        float3 adAlbedo = baseColor.rgb;   // see "Light-only passes" in Object.hlsl
+
         #if defined(ONLY_LIGHT)
             baseColor.rgb = 1;
         #endif
     #else
         float4 baseColor = 1;
     #endif
-    
+
     #if !defined(OPT) && !defined(ONLY_SPECULAR)
         clip(AmbientColor.a >= 1 ? 0 : (baseColor.a - alphaTestRef));
     #endif
-    
+
     float4 normal = tex2D(NormalMap, IN.uv.xy);
     normal.xyz = normalize(expand(normal.xyz));
-    
-    float roughness = getRoughness(normal.a);
+
+    // Material: the mesh's glossiness exponent gives the roughness and the normal map alpha is
+    // the specular mask, see the Material notes in Object.hlsl. Hair keeps the old mapping.
+    #if defined(HAIR)
+        float roughness = getRoughness(normal.a);
+    #elif !defined(OPT)
+        float roughness = getMaterialRoughness(glossPower);
+    #else
+        float roughness = getMaterialRoughness(30.0f);   // OPT variants carry no Toggles: the engine's default
+    #endif
 
     // Geometric specular AA -- see the comment on SpecularAA itself. Unconditional: this is a
     // quality fix for high-frequency normal maps (hair chief among them), not a debug toggle,
     // and ddx/ddy have to run here at top level regardless of anything below.
+    float materialRoughness = roughness;
     roughness = SpecularAA(normal.xyz, roughness);
+    setupMaterial(normal.a, SpecularAA(normal.xyz, DEFAULT_ROUGHNESS), materialRoughness);
+    #if !defined(DIFFUSE) && !defined(ONLY_SPECULAR)
+        setupADCompensation(adAlbedo);
+    #endif
 
     //if (TESR_DebugVar.y > 0.0) {
     //    OUT.color.a = 1;
@@ -592,7 +629,7 @@ PS_OUTPUT main(PS_INPUT IN) {
     //        OUT.color.rgb = normal.aaa;
     //    return OUT;
     //}
-    
+
     #ifndef NO_VERTEX_COLOR
         #if defined(HAIR)
             float4 glow = tex2D(GlowMap, IN.uv.xy);
@@ -603,7 +640,10 @@ PS_OUTPUT main(PS_INPUT IN) {
             baseColor.rgb = baseColor.rgb * IN.vertexColor.rgb;
         #endif
     #endif
-    
+
+    // Linear lighting decodes the albedo here, once; see "Lighting space" in PBR.hlsl.
+    baseColor.rgb = decodeColor(baseColor.rgb);
+
     // Vanilla shadows.
     float3 shadowMultiplier = 1.0;
     #if defined(STBB)
@@ -613,7 +653,7 @@ PS_OUTPUT main(PS_INPUT IN) {
         float shadowMask = tex2D(ShadowMaskMap, IN.shadowUVs.zw).x;
         shadowMultiplier = lerp(1, shadow, shadowMask);
     #endif
-    
+
     // Applied to PSLightColor[0], the sun, only: ambient, emittance and point lights are
     // untouched. ddx/ddy must stay at top level, outside any dynamic branch.
     //
@@ -632,11 +672,16 @@ PS_OUTPUT main(PS_INPUT IN) {
                   ? GetSunShadow(IN.shadowWorldPos.xyz, shadowGeometricNormal)
                   : 1.0f;
         #endif
-        shadowMultiplier *= sunShadow;
+        // Not folded into shadowMultiplier: that one holds the vanilla GAMMA-space factors and
+        // goes inside decodeColor, while this is a real visibility, applied to linear light.
+
+        // Normal-mapped ambient and reflections (Object.hlsl, getAmbientNormal).
+        float shadowVSValid = SHADOW_VS_PRESENT(IN.shadowWorldPos.w) ? 1.0f : 0.0f;
+        float3 ambientNormal = getAmbientNormal(normal.xyz, float3(IN.uv.zw, IN.viewDir.w), shadowGeometricNormal, shadowVSValid);
     #endif
 
     #if !defined(DIFFUSE) && !defined(POINT)
-        float3 lighting = getSunLighting(IN.lightDir.xyz, PSLightColor[0].rgb * shadowMultiplier, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
+        float3 lighting = getSunLighting(IN.lightDir.xyz, PSLightColor[0].rgb * shadowMultiplier, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness, sunShadow);
     #else
         // Pointlights only. Attenuate from the object-space lightDistSq.x carried from the VS,
         // not length(IN.lightDir.xyz) -- that vector is tangent-space (TBN-transformed) and its
@@ -644,18 +689,19 @@ PS_OUTPUT main(PS_INPUT IN) {
         float att0 = vanillaAttSq(IN.lightDistSq.x, IN.lightDir.w);
         float3 lighting = getPointLightLightingAtt(IN.lightDir.xyz, att0, PSLightColor[0].rgb * shadowMultiplier, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
     #endif
-    
+
     // Self emmitance.
     #ifdef SI
         float3 glow = tex2D(GlowMap, IN.uv.xy).rgb;
-        lighting += baseColor.rgb * glow.rgb * EmittanceColor.rgb;
+        lighting += baseColor.rgb * decodeColor(glow.rgb * EmittanceColor.rgb);
     #endif
-    
+
     #if !defined(DIFFUSE) && !defined(ONLY_SPECULAR)
         // Reuses shadowGeometricNormal computed above -- see the comment there. Always in scope
         // here: POINT implies ONLY_SPECULAR, so !ONLY_SPECULAR implies !POINT.
-        lighting += getAmbientLighting(AmbientColor.rgb, baseColor.rgb, shadowGeometricNormal,
-                                       SHADOW_VS_PRESENT(IN.shadowWorldPos.w) ? 1.0f : 0.0f);
+        // Reflection first: it sets the share of the ambient it takes (skyReflectedFraction).
+        lighting += getObjectSkyReflection(IN.shadowWorldPos.xyz, shadowGeometricNormal, ambientNormal, roughness, shadowVSValid);
+        lighting += getAmbientLighting(AmbientColor.rgb, baseColor.rgb, ambientNormal, shadowVSValid);
     #endif
 
     // Other light sources. Same object-space attenuation fix as light0 above.
@@ -668,9 +714,9 @@ PS_OUTPUT main(PS_INPUT IN) {
         float att3 = vanillaAttSq(IN.lightDistSq.z, IN.light3Dir.w);
         lighting += getPointLightLightingAtt(IN.light3Dir.xyz, att3, PSLightColor[2].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
     #endif
-    
-    float3 finalColor = lighting.rgb;
-    
+
+    float3 finalColor = encodeColor(lighting.rgb);   // back to the game's gamma space, before fog
+
     // Fog.
     #ifndef NO_FOG
         #ifndef OPT
@@ -679,14 +725,19 @@ PS_OUTPUT main(PS_INPUT IN) {
             finalColor.rgb = lerp(finalColor.rgb, IN.fogColor.rgb, IN.fogColor.a);
         #endif
     #endif
-    
+
+
+    #if !defined(DIFFUSE) && !defined(POINT) && !defined(ONLY_SPECULAR)
+        [branch] if (TESR_PBRDebugData.x > 0.0f)
+            finalColor.rgb = getMaterialDebug(TESR_PBRDebugData.x, roughness, ambientNormal);
+    #endif
 
 #if SHADOW_FORCE_MARKER
     finalColor.rgb = float3(1.0f, 0.0f, 1.0f);   // unconditional: proves this shader ran
 #endif
 
     OUT.color.rgb = finalColor.rgb;
-    
+
     #if defined(DIFFUSE)
         OUT.color.a = 1;
     #elif defined(ONLY_SPECULAR)
@@ -702,7 +753,8 @@ PS_OUTPUT main(PS_INPUT IN) {
             // this pass would have produced without Forward Shadows; harmless and
             // exact when Forward Shadows is compiled out, since sunShadow is then
             // fixed at 1.0.
-            OUT.color.a = weight(finalColor.rgb) / max(sunShadow, 0.05f);
+            // Under linear lighting the encoded output scales as sqrt(sunShadow).
+            OUT.color.a = weight(finalColor.rgb) / max(linearLighting ? sqrt(sunShadow) : sunShadow, 0.05f);
         #else
             OUT.color.a = weight(finalColor.rgb);
         #endif
@@ -745,7 +797,7 @@ struct PS_INPUT {
     float4 vertexColor : COLOR0;
     float4 fogColor : COLOR1;
     float4 sPosition : POSITION;
-    float2 uv : TEXCOORD0;
+    float4 uv : TEXCOORD0;
     float4 lPosition : TEXCOORD1;
     float4 lightDir : TEXCOORD2_centroid;  // .w = .x of viewDir
     float4 light2 : TEXCOORD3_centroid; // .w = .y of viewDir
@@ -797,27 +849,41 @@ PS_OUTPUT main(PS_INPUT IN) {
     PS_OUTPUT OUT;
 
     float4 baseColor = tex2D(BaseMap, IN.uv.xy);
-    
+
     #ifndef OPT
         clip(AmbientColor.a >= 1 ? 0 : (baseColor.a - alphaTestRef));
     #endif
-    
+
     #ifndef OPT
         baseColor.rgb = useVertexColor <= 0 ? baseColor.rgb : (baseColor.rgb * IN.vertexColor.rgb);
     #else
         baseColor.rgb = baseColor.rgb * IN.vertexColor.rgb;
     #endif
-    
+
     float4 normal = tex2D(NormalMap, IN.uv.xy);
     normal.xyz = normalize(expand(normal.xyz));
-    
-    float roughness = getRoughness(normal.a);
-    
+
+    // Material, see the LIGHTS < 4 variant. It had no specular AA here before. The specular OPT
+    // variants have no Toggles but get the glossiness in PSLightColor[1].w (glossPow above:
+    // ShadowLightShader::SetupGeometryOpt_LightsSpecular writes m_fShine there); the other OPT
+    // variants get the light count there instead, so they take the engine's default of 30.
+    #if !defined(OPT)
+        float roughness = getMaterialRoughness(glossPower);
+    #elif defined(SPECULAR)
+        float roughness = getMaterialRoughness(glossPow);
+    #else
+        float roughness = getMaterialRoughness(30.0f);
+    #endif
+    float materialRoughness = roughness;
+    roughness = SpecularAA(normal.xyz, roughness);
+    setupMaterial(normal.a, SpecularAA(normal.xyz, DEFAULT_ROUGHNESS), materialRoughness);
+    baseColor.rgb = decodeColor(baseColor.rgb);
+
     // Lighting.
     float3 viewDir = { IN.lightDir.w, IN.light2.w, IN.light3.w };
-    
+
     float att;
-    
+
     // Forward sun shadows -- see the LIGHTS < 4 variant. Only the OPT-off path has a sun
     // term; with OPT the first slot is a point light and must not be shadowed by the sun.
     #ifndef OPT
@@ -830,45 +896,62 @@ PS_OUTPUT main(PS_INPUT IN) {
                   ? GetSunShadow(sunShadowWorldPos, sunShadowNormal)
                   : 1.0f;
         #endif
-        float3 lighting = getSunLighting(IN.lightDir.xyz, PSLightColor[0].rgb * sunShadow, viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
+        float3 lighting = getSunLighting(IN.lightDir.xyz, PSLightColor[0].rgb, viewDir.xyz, normal.xyz, baseColor.rgb, roughness, sunShadow);
     #else
         att = vanillaAtt(PSLightPosition[0].xyz - IN.lPosition.xyz, PSLightPosition[0].w);
         float3 lighting = getPointLightLightingAtt(IN.lightDir.xyz, att, PSLightColor[0].rgb, viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
     #endif
-    
+
     att = vanillaAtt(PSLightPosition[lightOffset + 0].xyz - IN.lPosition.xyz, PSLightPosition[lightOffset + 0].w);
     lighting += (1 >= lightsUsed ? 0.0 : 1.0) * getPointLightLightingAtt(IN.light2.xyz, att, PSLightColor[1].rgb, viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
-    
+
     att = vanillaAtt(PSLightPosition[lightOffset + 1].xyz - IN.lPosition.xyz, PSLightPosition[lightOffset + 1].w);
     lighting += (2 > lightsUsed ? 0.0 : 1.0) * getPointLightLightingAtt(IN.light3.xyz, att, PSLightColor[2].rgb, viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
-    
+
     #if MAX_LIGHTS > 3
         att = vanillaAtt(PSLightPosition[lightOffset + 2].xyz - IN.lPosition.xyz, PSLightPosition[lightOffset + 2].w);
         lighting += (3 > lightsUsed ? 0.0 : 1.0) * getPointLightLightingAtt(IN.light4.xyz, att, PSLightColor[3].rgb, viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
     #endif
-    
+
     #if MAX_LIGHTS > 4
         att = vanillaAtt(PSLightPosition[3].xyz - IN.lPosition.xyz, PSLightPosition[3].w);
         lighting += (4 > lightsUsed ? 0.0 : 1.0) * getPointLightLightingAtt(IN.light5.xyz, att, PSLightColor[4].rgb, viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
-    
+
         att = vanillaAtt(PSLightPosition[4].xyz - IN.lPosition.xyz, PSLightPosition[4].w);
         lighting += (5 > lightsUsed ? 0.0 : 1.0) * getPointLightLightingAtt(IN.light6.xyz, att, PSLightColor[5].rgb, viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
     #endif
-    
+
     // ddx/ddy must stay at pixel-shader top level.
     float3 ambNormal = GetShadowGeometricNormal(SHADOW_WP_LOAD(IN));
-    lighting += getAmbientLighting(AmbientColor.rgb, baseColor.rgb, ambNormal,
-                                   SHADOW_WP_VALID(IN) ? 1.0f : 0.0f);
+    float shadowVSValid = SHADOW_WP_VALID(IN) ? 1.0f : 0.0f;
 
-    // TODO: Vanilla attenuates the full specular term by IN.lPosition.w for some reason. Is this a problem?
-    float3 finalColor = lighting;
-    
+    // Normal-mapped ambient, see the LIGHTS < 4 variant. At MAX_LIGHTS 6 up's z has no channel
+    // and is rebuilt.
+    #if MAX_LIGHTS > 4
+        float3 upTS = rebuildUpTS(IN.uv.zw, ambNormal);
+    #else
+        float3 upTS = float3(IN.uv.zw, IN.lPosition.w);
+    #endif
+    float3 ambientNormal = getAmbientNormal(normal.xyz, upTS, ambNormal, shadowVSValid);
+
+    // Reflection first: it sets the share of the ambient it takes (skyReflectedFraction).
+    lighting += getObjectSkyReflection(SHADOW_WP_LOAD(IN), ambNormal, ambientNormal, roughness, shadowVSValid);
+    lighting += getAmbientLighting(AmbientColor.rgb, baseColor.rgb, ambientNormal, shadowVSValid);
+
+    // Vanilla attenuates the full specular term by LightData[0].w (IN.lPosition.w): the engine's specular
+    // distance fade. It arrives per draw as ObjectMaterial.y instead (setupMaterial), since lPosition.w
+    // carries the world position sentinel here.
+    float3 finalColor = encodeColor(lighting);   // back to the game's gamma space, before fog
+
+    [branch] if (TESR_PBRDebugData.x > 0.0f)
+        finalColor = getMaterialDebug(TESR_PBRDebugData.x, roughness, ambientNormal);
+
     #ifndef OPT
         finalColor.rgb = (useFog <= 0.0 ? finalColor.rgb : lerp(finalColor.rgb, IN.fogColor.rgb, IN.fogColor.a));
     #else
         finalColor.rgb = lerp(finalColor.rgb, IN.fogColor.rgb, IN.fogColor.a);
     #endif
-    
+
 
 #if SHADOW_FORCE_MARKER
     finalColor.rgb = float3(1.0f, 0.0f, 1.0f);   // unconditional: proves this shader ran

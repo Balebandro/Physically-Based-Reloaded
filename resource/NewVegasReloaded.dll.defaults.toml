@@ -571,50 +571,48 @@ GaussianWeight = 6.0
 Enabled = false                      # Blur in direction of the camera when turning. 
 
 [_Shaders.PBR.Main]
-Roughness = 1.0                      # Roughness scale.
-Metallicness = 0.0                   # Metalicness scale - unused, no metalic maps yet.
-AmbientScale = 1.0                   # Ambient lighting scale.
-SkylightingScale = 0.5               # Sky-colour ambient boost. 0 disables it.
-SkylightingMode = 0                  # 0 spherical harmonics, 1 directional sample. Recompiles shaders.
-SkylightingDirectionality = 0.6      # Mode 1 only: 0 samples straight up, 1 along the normal.
-LightingScale = 0.725                # Directional and point light scale.
-Saturation = 1.0                     # Color saturation.
+LightingScale = 0.725              # Sun and point light strength.
+AmbientScale = 1.0                 # Weather ambient light strength.
+SkylightingScale = 0.5             # Sky-colour ambient light. 0 disables it.
+Saturation = 1.0                   # Colour saturation of lit surfaces.
+RoughnessScale = 1.0               # Scales every surface's roughness. Below 1 is glossier (wet look), above 1 more matte.
+LinearLighting = true                # Light in linear space (correct falloff and light sums) instead of the game's gamma space. Objects and terrain.
+SpecularStrength = 1.0               # Strength of highlights and reflections on all surfaces.
+VanillaMatchedHighlights = 1.0       # 1 makes each material's highlight as strong as vanilla intended for its specular mask and glossiness (keeping the PBR shape); 0 is physically based (much duller on FNV assets). Objects and terrain.
+SpecularOnAll = true                 # Give every surface a highlight, not only meshes the game flags as specular.
+DefaultRoughness = 0.6               # Roughness for surfaces without gloss data (SpecularOnAll). Lower is shinier and tighter. 0.05-1.
+SkyReflectionScale = 1.0             # Sky reflections on objects and terrain (sheen at glancing angles). 0 disables. Exteriors only.
+SpecularOcclusion = true             # Fade reflections that a normal map tilts below the surface.
+AmbientNormalDetail = 1.0            # How much the normal map shapes sky light and reflections on objects and terrain (detail out of direct light). 0 is flat, as before.
+DebugView = 0                        # Material debug: 0 off, 1 roughness, 2 highlight strength, 3 flags (R specular flag, G distance fade, B added highlight; terrain dark blue), 4 ambient normal (white faces the sky). Objects and terrain.
 
 [_Shaders.PBR.Rain]
-Roughness = 1.0                      # Roughness scale.
-Metallicness = 0.0                   # Metalicness scale - unused, no metalic maps yet.
-AmbientScale = 1.0                   # Ambient lighting scale.
-SkylightingScale = 0.5               # Sky-colour ambient boost. 0 disables it.
-SkylightingDirectionality = 0.6      # Mode 1 only: 0 samples straight up, 1 along the normal.
-LightingScale = 1.0                  # Directional and point light scale.
-Saturation = 1.0                     # Color saturation.
+LightingScale = 1.0                # Sun and point light strength.
+AmbientScale = 1.0                 # Weather ambient light strength.
+SkylightingScale = 0.5             # Sky-colour ambient light. 0 disables it.
+Saturation = 1.0                   # Colour saturation of lit surfaces.
+RoughnessScale = 0.75              # Scales every surface's roughness. Below 1 is glossier (wet look), above 1 more matte.
 
 [_Shaders.PBR.Night]
-Roughness = 1.0                      # Roughness scale.
-Metallicness = 0.0                   # Metalicness scale - unused, no metalic maps yet.
-AmbientScale = 1.0                   # Ambient lighting scale.
-SkylightingScale = 0.5               # Sky-colour ambient boost. 0 disables it.
-SkylightingDirectionality = 0.6      # Mode 1 only: 0 samples straight up, 1 along the normal.
-LightingScale = 1.0                  # Directional and point light scale.
-Saturation = 1.0                     # Color saturation.
+LightingScale = 1.0                # Sun and point light strength.
+AmbientScale = 1.0                 # Weather ambient light strength.
+SkylightingScale = 0.5             # Sky-colour ambient light. 0 disables it.
+Saturation = 1.0                   # Colour saturation of lit surfaces.
+RoughnessScale = 1.0               # Scales every surface's roughness. Below 1 is glossier (wet look), above 1 more matte.
 
 [_Shaders.PBR.NightRain]
-Roughness = 1.0                      # Roughness scale.
-Metallicness = 0.0                   # Metalicness scale - unused, no metalic maps yet.
-AmbientScale = 1.0                   # Ambient lighting scale.
-SkylightingScale = 0.5               # Sky-colour ambient boost. 0 disables it.
-SkylightingDirectionality = 0.6      # Mode 1 only: 0 samples straight up, 1 along the normal.
-LightingScale = 1.0                  # Directional and point light scale.
-Saturation = 1.0                     # Color saturation.
+LightingScale = 1.0                # Sun and point light strength.
+AmbientScale = 1.0                 # Weather ambient light strength.
+SkylightingScale = 0.5             # Sky-colour ambient light. 0 disables it.
+Saturation = 1.0                   # Colour saturation of lit surfaces.
+RoughnessScale = 0.75              # Scales every surface's roughness. Below 1 is glossier (wet look), above 1 more matte.
 
 [_Shaders.PBR.Interiors]
-Roughness = 1.0                      # Roughness scale.
-Metallicness = 0.0                   # Metalicness scale - unused, no metalic maps yet.
-AmbientScale = 1.0                   # Ambient lighting scale.
-SkylightingScale = 0.0               # Sky-colour ambient boost. Off indoors: the coefficients describe the exterior sky.
-SkylightingDirectionality = 0.6      # Mode 1 only: 0 samples straight up, 1 along the normal.
-LightingScale = 1.0                  # Directional and point light scale.
-Saturation = 1.0                     # Color saturation.
+LightingScale = 1.0                # Sun and point light strength.
+AmbientScale = 1.0                 # Weather ambient light strength.
+SkylightingScale = 0.0             # Sky-colour ambient light. 0 disables it.
+Saturation = 1.0                   # Colour saturation of lit surfaces.
+RoughnessScale = 1.0               # Scales every surface's roughness. Below 1 is glossier (wet look), above 1 more matte.
 
 [_Shaders.PBR.Status]
 Enabled = true                       # Adds PBR specular formula to object shaders
@@ -865,63 +863,32 @@ SnowColorB = 0.8                    # Blue chanel for the color of snow coverage
 [_Shaders.SnowAccumulation.Status]
 Enabled = false                      # Snow accumulation on the floor during snowstorms.
 
-[_Shaders.Specular.Exterior]
-BlurMultiplier = 1.0                # Blur strength for detail smoothing.
-DistanceFade = 30000                # Max distance at which the effects will be displayed. Doesn't apply to sky tint.
-FresnelStrength = 1.0               # Strength for the grazing surface lighting boost called fresnel.
-Glossiness = 16                     # Higher value will make the specular effect affect more intensely a smaller region.
-SkyTintSaturation = 1.0             # Saturation of the sky lighting effect. Sky lighting is based on sky color. 
-SkyTintStrength = 0.5               # Strength for the sky lighting effect. This mostly affects horizontal, dark areas outside.
-SpecLumaTreshold = 0.25              # Treshold for the luma of areas affected by the specular boost.
-SpecularStrength = 0.2              # Strength of the effect for specular boost.
-
-[_Shaders.Specular.Rain]
-BlurMultiplier = 3.0                # Blur strength for detail smoothing during rainy weathers.
-DistanceFade = 30000                # Max distance at which the effects will be displayed during rainy weathers. Doesn't apply to sky tint.
-FresnelStrength = 1.0               # Strength for the grazing surface lighting boost called fresnel during rainy weathers.
-Glossiness = 7                      # Higher value will make the specular effect affect more intensely a smaller region during rainy weathers.
-SkyTintSaturation = 1.0             # Saturation of the sky lighting effect. Sky lighting is based on sky color during rainy weathers. 
-SkyTintStrength = 0.1               # Strength for the sky lighting effect during rainy weathers. This mostly affects horizontal, dark areas outside.
-SpecLumaTreshold = 0.25              # Treshold for the luma of areas affected by the specular boost during rainy weathers.
-SpecularStrength = 1.0              # Strength of the effect for specular boost during rainy weathers.
-
-[_Shaders.Specular.Status]
-Enabled = false                      # Shader that boosts a few lighting effects: specular boost, sky lighting and fresnel boost.
-
 [_Shaders.Terrain.Main]
 UsePBR = true                       # Use PBR lighting, disable to use vanilla.
-Roughness = 1.0                     # Scale texture roughness, higher roughness decreases specular.
-Metallicness = 0.0                  # Add metallicness.
+RoughnessScale = 1.0               # Scales terrain roughness. Below 1 is glossier (wet look), above 1 more matte.
 AmbientScale = 0.5                  # Scale ambient lighting.
 SkylightingScale = 0.5              # Sky-colour ambient boost. 0 disables it.
-SkylightingDirectionality = 0.6      # Mode 1 only: 0 samples straight up, 1 along the normal.
 LightingScale = 0.725               # Scale non-ambient lighting (sun or spotlights).
 TerrainSaturation = 1.0             # Control terrain saturation.
 
 [_Shaders.Terrain.Rain]
-Roughness = 0.7                     # Scale texture roughness, higher roughness decreases specular.
-Metallicness = 0.0                  # Add metallicness.
+RoughnessScale = 0.7               # Scales terrain roughness. Below 1 is glossier (wet look), above 1 more matte.
 AmbientScale = 0.5                  # Scale ambient lighting.
 SkylightingScale = 0.5              # Sky-colour ambient boost. 0 disables it.
-SkylightingDirectionality = 0.6      # Mode 1 only: 0 samples straight up, 1 along the normal.
 LightingScale = 1.0                 # Scale non-ambient lighting (sun or spotlights).
 TerrainSaturation = 1.0             # Control terrain saturation.
 
 [_Shaders.Terrain.Night]
-Roughness = 1.0                     # Scale texture roughness, higher roughness decreases specular.
-Metallicness = 0.0                  # Add metallicness.
+RoughnessScale = 1.0               # Scales terrain roughness. Below 1 is glossier (wet look), above 1 more matte.
 AmbientScale = 0.5                  # Scale ambient lighting.
 SkylightingScale = 0.5              # Sky-colour ambient boost. 0 disables it.
-SkylightingDirectionality = 0.6      # Mode 1 only: 0 samples straight up, 1 along the normal.
 LightingScale = 1.0                 # Scale non-ambient lighting (sun or spotlights).
 TerrainSaturation = 1.0             # Control terrain saturation.
 
 [_Shaders.Terrain.NightRain]
-Roughness = 0.6                     # Scale texture roughness, higher roughness decreases specular.
-Metallicness = 0.0                  # Add metallicness.
+RoughnessScale = 0.6               # Scales terrain roughness. Below 1 is glossier (wet look), above 1 more matte.
 AmbientScale = 0.5                  # Scale ambient lighting.
 SkylightingScale = 0.5              # Sky-colour ambient boost. 0 disables it.
-SkylightingDirectionality = 0.6      # Mode 1 only: 0 samples straight up, 1 along the normal.
 LightingScale = 1.0                 # Scale non-ambient lighting (sun or spotlights).
 TerrainSaturation = 1.0             # Control terrain saturation.
 

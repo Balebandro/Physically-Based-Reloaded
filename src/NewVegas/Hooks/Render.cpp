@@ -26,7 +26,8 @@ void __fastcall RenderHook(Main* This, UInt32 edx, BSRenderedTexture* RenderedTe
 void (__thiscall* SetShaders)(BSShader*, UInt32) = (void (__thiscall*)(BSShader*, UInt32))Hooks::SetShaders;
 void __fastcall SetShadersHook(BSShader* This, UInt32 edx, UInt32 PassIndex) {
 	
-	NiGeometry* Geometry = *(NiGeometry**)(*(void**)0x011F91E0);
+	void* CurrentRenderPass = *(void**)0x011F91E0;   // BSShaderManager::pCurrentRenderPass; pGeometry is its first member
+	NiGeometry* Geometry = CurrentRenderPass ? *(NiGeometry**)CurrentRenderPass : nullptr;
 	NiD3DPass* Pass = *(NiD3DPass**)0x0126F74C;
 	NiD3DVertexShaderEx* VertexShader = (NiD3DVertexShaderEx*)Pass->VertexShader;
 	NiD3DPixelShaderEx* PixelShader = (NiD3DPixelShaderEx*)Pass->PixelShader;
@@ -57,6 +58,29 @@ void __fastcall SetShadersHook(BSShader* This, UInt32 edx, UInt32 PassIndex) {
 		//DWNode::AddNode(Name, Geometry->m_parent, Geometry);
 	}
 	(*SetShaders)(This, PassIndex);
+
+	// Per-object material data for the PBR object shaders: ObjectMaterial, pixel register c150
+	// (Shaders/Includes/Object.hlsl). Set directly, per draw: the TESR_ constant table only
+	// uploads on a shader change. Shaders that do not declare c150 ignore it.
+	//   x = 1 when the mesh has the engine's Specular flag, so the diffuse-only shader variants
+	//       know not to add a highlight the game draws in its own specular pass.
+	//   y = the engine's specular distance fade, BSShaderPPLightingProperty::GetSpecularLODFade
+	//       (0xB66B80): 1 up to fSpecularLODStartFade, 0 from fSpecularLODEnd on, where the game
+	//       stops drawing the specular pass. Vanilla fades the highlight with it so it does not pop.
+	float ObjectMaterial[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
+	if (Geometry) {
+		BSShaderProperty* ShaderProperty = static_cast<BSShaderProperty*>(Geometry->GetProperty(NiProperty::kType_Shade));
+		if (ShaderProperty && ShaderProperty->GetFlag(BSSP_SPECULAR)) {
+			ObjectMaterial[0] = 1.0f;
+			const float StartFade = *(float*)0x011F9454;   // BSShaderManager::fSpecularLODStartFade
+			const float End = *(float*)0x011F9458;         // BSShaderManager::fSpecularLODEnd
+			const float Distance = ShaderProperty->fLODFade;   // fCameraDistance in the engine's own layout (0x34)
+			const bool Stinger = (ShaderProperty->ulFlags[1] & BSShaderProperty::stinger_prop) != 0;
+			if (End > 0.0f && !Stinger && Distance > StartFade)
+				ObjectMaterial[1] = Distance >= End ? 0.0f : 1.0f - (Distance - StartFade) / max(End - StartFade, 1e-3f);
+		}
+	}
+	TheRenderManager->device->SetPixelShaderConstantF(150, ObjectMaterial, 1);
 
 }
 

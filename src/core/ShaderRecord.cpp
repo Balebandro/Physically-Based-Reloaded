@@ -178,15 +178,8 @@ ShaderRecord* ShaderRecord::LoadShader(const char* Name, const char* SubPath, Sh
 	AppendDefine("FORWARD_SHADOWS",
 		TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.Main", "ForwardShadows") ? "1" : "0");
 
-	// Which skylighting model is compiled in. 0 = spherical harmonic irradiance, 1 = the older
-	// single directional sample. Compile time rather than a runtime branch: ps_3_0 flattens
-	// branches like this, so a runtime switch would make every lit pixel pay for BOTH paths.
-	// Changing the setting alters the preprocessed source, so the cache recompiles on next load.
-	AppendDefine("SKYLIGHTING_MODE",
-		TheSettingManager->GetSettingI("Shaders.PBR.Main", "SkylightingMode") ? "1" : "0");
-
 	// Shadow atlas encoding: 0 = VSM, 1 = EVSM2, 2 = EVSM4. Compile time for the same reason as
-	// above -- Shadow.hlsl's GetSunShadow and ShadowMap.pso both branch on it with #if, not a
+	// FORWARD_SHADOWS -- Shadow.hlsl's GetSunShadow and ShadowMap.pso both branch on it with #if, not a
 	// runtime read, since ps_3_0 would otherwise flatten all three variants into every shadowed
 	// pixel. Read straight from the setting manager rather than from the ShadowsExteriors
 	// effect, same reasoning as FORWARD_SHADOWS above.

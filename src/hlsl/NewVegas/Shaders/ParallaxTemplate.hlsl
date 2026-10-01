@@ -132,7 +132,7 @@ struct VS_OUTPUT
     float4 fogColor : COLOR1;
 #endif
     float4 sPosition : POSITION;
-    float2 uv : TEXCOORD0;
+    float4 uv : TEXCOORD0;          // zw: world up in tangent space, xy (Object.hlsl, getAmbientNormal)
 #ifndef NO_LIGHT
     float4 lightDir : TEXCOORD1;
     #ifdef DIFFUSE
@@ -185,20 +185,25 @@ row_major float4x4 ModelViewProj : register(c0);
 VS_OUTPUT main(VS_INPUT IN)
 {
     VS_OUTPUT OUT;
- 
+
     float3x3 tbn = float3x3(IN.tangent.xyz, IN.binormal.xyz, IN.normal.xyz);
-    
+
     OUT.sPosition.xyzw = mul(ModelViewProj, IN.position.xyzw);
-    OUT.uv = IN.uv.xy;
-    
+
+    // World up in the normal map's tangent space through the engine's own frame, for the
+    // normal-mapped ambient; see ObjectTemplate.hlsl. No channel is spare for z: rebuilt in the PS.
+    float2 upTS = float2(normalize(GetShadowWorldDir(mul(ModelViewProj, float4(tbn[0], 0.0f)))).z,
+                         normalize(GetShadowWorldDir(mul(ModelViewProj, float4(tbn[1], 0.0f)))).z);
+    OUT.uv = float4(IN.uv.xy, upTS);
+
     float3 eye = EyePosition.xyz - IN.position.xyz;
     OUT.viewDir.xyz = mul(tbn, eye);
     OUT.viewDir.w = length(eye);
-    
+
     #ifndef NO_VERTEX_COLOR
         OUT.vertexColor = clamp(IN.vertex_color, 0.0f, 1.0f);
     #endif
-    
+
     #ifndef NO_LIGHT
         #ifndef POINT
             OUT.lightDir.w = LightData[0].w;
@@ -237,7 +242,7 @@ VS_OUTPUT main(VS_INPUT IN)
             #endif
         #endif
     #endif
-    
+
     #ifndef NO_FOG
         float3 fogPos = OUT.sPosition.xyz;
         #ifdef REVERSED_DEPTH
@@ -248,7 +253,7 @@ VS_OUTPUT main(VS_INPUT IN)
         OUT.fogColor.a = exp2(fogStrength * FogParam.z);
         OUT.fogColor.rgb = FogColor.rgb;
     #endif
-    
+
     #ifdef PROJ_SHADOW
         float shadowParam = dot(ShadowProj[3].xyzw, IN.position.xyzw);
         float2 shadowUV;
@@ -273,7 +278,7 @@ struct PS_INPUT
 #ifndef NO_FOG
     float4 fogColor : COLOR1;
 #endif
-    float2 uv : TEXCOORD0;
+    float4 uv : TEXCOORD0;
 #ifndef NO_LIGHT
     float4 lightDir : TEXCOORD1_centroid;
 #endif
@@ -374,35 +379,36 @@ float4 EmittanceColor : register(c2);
 PS_OUTPUT main(PS_INPUT IN)
 {
     PS_OUTPUT OUT;
-    
+
     #if !defined(ONLY_LIGHT) && !defined(ONLY_SPECULAR) && !defined(NO_LIGHT)
         float alpha = tex2D(BaseMap, IN.uv.xy).a;
-    
+
         #ifndef OPT
             clip(AmbientColor.a >= 1 ? 0 : (alpha - alphaTestRef));
         #endif
     #endif
-    
+
     // Parallax.
     float3 viewDir = normalize(IN.viewDir.xyz);
     float distance = IN.viewDir.w;
-    
+
     float2 dx, dy;
     dx = ddx(IN.uv.xy);
     dy = ddy(IN.uv.xy);
-    
+
     float2 offsetUV = getParallaxCoords(distance, IN.uv.xy, dx, dy, viewDir.xyz, HeightMap);
 
     #if !defined(DIFFUSE) && !defined(ONLY_SPECULAR)
         float4 baseColor = tex2D(BaseMap, offsetUV.xy);
-    
+        float3 adAlbedo = baseColor.rgb;   // see "Light-only passes" in Object.hlsl
+
         #if defined(ONLY_LIGHT)
             baseColor.rgb = 1.f;
         #endif
     #else
         float4 baseColor = 1.f;
     #endif
-    
+
     // Vertex color.
     #ifndef NO_VERTEX_COLOR
         #ifndef OPT
@@ -412,7 +418,7 @@ PS_OUTPUT main(PS_INPUT IN)
             baseColor.xyz = baseColor.xyz * IN.vertexColor.rgb;
         #endif
     #endif
-    
+
     // Shadows.
     float3 shadowMultiplier = 1.0;
     #ifdef PROJ_SHADOW
@@ -420,9 +426,12 @@ PS_OUTPUT main(PS_INPUT IN)
         float shadowMask = tex2D(ShadowMaskMap, IN.shadowUVs.zw).x;
         shadowMultiplier = lerp(1, shadow, shadowMask);
     #endif
-    
+
+    // Visibilities, applied to linear light (see "Lighting space" in PBR.hlsl), unlike the vanilla
+    // projected shadow above, which is a gamma-space factor and stays in shadowMultiplier.
+    float sunVisibility = 1.0f;
     #ifndef NO_LIGHT
-        shadowMultiplier *= getParallaxShadowMultipler(distance, offsetUV, dx, dy, normalize(IN.lightDir.xyz), HeightMap);
+        sunVisibility = getParallaxShadowMultipler(distance, offsetUV, dx, dy, normalize(IN.lightDir.xyz), HeightMap);
     #endif
 
     // Forward sun shadows, folded into shadowMultiplier -- which scales PSLightColor[0]
@@ -436,29 +445,47 @@ PS_OUTPUT main(PS_INPUT IN)
 
     #if !defined(NO_LIGHT) && !defined(DIFFUSE) && !defined(POINT)
         #if FORWARD_SHADOWS
-        shadowMultiplier *= shadowWorldPosValid
-                          ? GetSunShadow(IN.shadowWorldPos.xyz, sunShadowNormal)
-                          : 1.0f;
+        sunVisibility *= shadowWorldPosValid
+                       ? GetSunShadow(IN.shadowWorldPos.xyz, sunShadowNormal)
+                       : 1.0f;
         #endif
     #endif
-    
+
     // Lighting.
     float3 lighting;
     float finalAtt;
-    
+
     #ifdef NO_LIGHT
         lighting = baseColor.rgb;
     #else
         float4 normal = tex2D(NormalMap, offsetUV.xy);
         normal.xyz = normalize(expand(normal.xyz));
 
-        float roughness = getRoughness(normal.a);
-    
+        // Material, as in ObjectTemplate.hlsl: the mesh's glossiness gives the roughness, the normal
+        // map alpha is the specular mask. OPT variants carry no Toggles (glossPower is a dummy 1
+        // there), so they take the engine's default glossiness. SpecularAA at top level.
+        #ifndef OPT
+            float materialRoughness = getMaterialRoughness(glossPower);
+        #else
+            float materialRoughness = getMaterialRoughness(30.0f);
+        #endif
+        float roughness = SpecularAA(normal.xyz, materialRoughness);
+        setupMaterial(normal.a, SpecularAA(normal.xyz, DEFAULT_ROUGHNESS), materialRoughness);
+        // The vanilla lighting fallback stays in gamma space, exactly as before.
+        if (!TESR_ParallaxData.y) linearLighting = false;
+        #if !defined(DIFFUSE) && !defined(ONLY_SPECULAR)
+            setupADCompensation(adAlbedo);
+        #endif
+        baseColor.rgb = decodeColor(baseColor.rgb);
+
+        // Normal-mapped ambient and reflections (Object.hlsl, getAmbientNormal).
+        float3 ambientNormal = getAmbientNormal(normal.xyz, rebuildUpTS(IN.uv.zw, sunShadowNormal), sunShadowNormal, shadowWorldPosValid);
+
         #if !defined(DIFFUSE) && !defined(POINT)
             if (TESR_ParallaxData.y)
-                lighting = getSunLighting(IN.lightDir.xyz, PSLightColor[0].rgb * shadowMultiplier, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
+                lighting = getSunLighting(IN.lightDir.xyz, PSLightColor[0].rgb * shadowMultiplier, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness, sunVisibility);
             else
-                lighting = getVanillaLightingAtt(IN.lightDir.xyz, 1.f, PSLightColor[0].rgb * shadowMultiplier, IN.viewDir.xyz, normal.xyz, baseColor.rgb, normal.a, glossPower);
+                lighting = getVanillaLightingAtt(IN.lightDir.xyz, 1.f, PSLightColor[0].rgb * shadowMultiplier * sunVisibility, IN.viewDir.xyz, normal.xyz, baseColor.rgb, normal.a, glossPower);
         #elif defined(DIFFUSE)
             // Pointlight vanilla att.
             if (TESR_ParallaxData.y)
@@ -473,46 +500,49 @@ PS_OUTPUT main(PS_INPUT IN)
             else
                 lighting = getVanillaLighting(IN.lightDir.xyz, IN.lightDir.w, PSLightColor[0].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, normal.a, glossPower);
         #endif
-    
+
         // Self emmitance.
         #ifdef SI
             float3 glow = tex2D(GlowMap, IN.uv.xy).rgb;
-            lighting += baseColor.rgb * glow.rgb * EmittanceColor.rgb;
+            lighting += baseColor.rgb * decodeColor(glow.rgb * EmittanceColor.rgb);
         #endif
-    
+
         #if !defined(DIFFUSE) && !defined(ONLY_SPECULAR)
-            if (TESR_ParallaxData.y)
-                lighting += getAmbientLighting(AmbientColor.rgb, baseColor.rgb, sunShadowNormal, shadowWorldPosValid);
+            if (TESR_ParallaxData.y) {
+                // Reflection first: it sets the share of the ambient it takes (skyReflectedFraction).
+                lighting += getObjectSkyReflection(IN.shadowWorldPos.xyz, sunShadowNormal, ambientNormal, roughness, shadowWorldPosValid);
+                lighting += getAmbientLighting(AmbientColor.rgb, baseColor.rgb, ambientNormal, shadowWorldPosValid);
+            }
             else
                 lighting += baseColor.rgb * AmbientColor.rgb;
         #endif
-    
+
         // Other light sources.
         #if LIGHTS > 1
             finalAtt = saturate(1 - tex2D(AttenuationMap, IN.light2Att.xy).x - tex2D(AttenuationMap, IN.light2Att.zw).x);
-        
+
             if (TESR_ParallaxData.y)
                 lighting += getPointLightLightingAtt(IN.light2Dir.xyz, finalAtt, PSLightColor[1].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
             else
                 lighting += getVanillaLightingAtt(IN.light2Dir.xyz, finalAtt, PSLightColor[1].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, normal.a, glossPower);
         #endif
-    
+
         #if LIGHTS > 2
             finalAtt = saturate(1 - tex2D(AttenuationMap, IN.light3Att.xy).x - tex2D(AttenuationMap, IN.light3Att.zw).x);
-        
+
             if (TESR_ParallaxData.y)
                 lighting += getPointLightLightingAtt(IN.light3Dir.xyz, finalAtt, PSLightColor[2].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
             else
                 lighting += getVanillaLightingAtt(IN.light3Dir.xyz, finalAtt, PSLightColor[2].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, normal.a, glossPower);
         #endif
-    
+
         #if NUM_PT_LIGHTS > 1
             if (TESR_ParallaxData.y)
                 lighting += getPointLightLighting(IN.light2Dir.xyz, IN.light2Dir.w, PSLightColor[1].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
             else
                 lighting += getVanillaLighting(IN.light2Dir.xyz, IN.light2Dir.w, PSLightColor[1].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, normal.a, glossPower);
         #endif
-    
+
         #if NUM_PT_LIGHTS > 2
             if (TESR_ParallaxData.y)
                 lighting += getPointLightLighting(IN.light3Dir.xyz, IN.light3Dir.w, PSLightColor[2].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
@@ -520,8 +550,17 @@ PS_OUTPUT main(PS_INPUT IN)
                 lighting += getVanillaLighting(IN.light3Dir.xyz, IN.light3Dir.w, PSLightColor[2].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, normal.a, glossPower);
         #endif
     #endif
-    
+
     // Fog.
+    #ifndef NO_LIGHT
+        lighting = encodeColor(lighting);   // back to the game's gamma space, before fog (no-op for vanilla lighting)
+
+        #if !defined(ONLY_LIGHT)
+            [branch] if (TESR_ParallaxData.y && TESR_PBRDebugData.x > 0.0f)
+                lighting = getMaterialDebug(TESR_PBRDebugData.x, roughness, ambientNormal);
+        #endif
+    #endif
+
     #ifndef NO_FOG
         #ifndef OPT
             lighting.rgb = (useFog <= 0.0 ? lighting.rgb : lerp(lighting.rgb, IN.fogColor.rgb, IN.fogColor.a));
@@ -529,9 +568,9 @@ PS_OUTPUT main(PS_INPUT IN)
             lighting.rgb = lerp(lighting.rgb, IN.fogColor.rgb, IN.fogColor.a);
         #endif
     #endif
-    
+
     OUT.color.rgb = lighting.rgb;
-    
+
     #if defined(DIFFUSE) || defined(NO_LIGHT)
         OUT.color.a = 1;
     #elif defined(ONLY_SPECULAR)

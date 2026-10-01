@@ -52,13 +52,13 @@ VS_OUTPUT main(VS_INPUT IN) {
 
     float2 uv = (IN.uv.xy * fUVScale) + LandBlendParams.xy;
     uv.x = 1 - uv.x;
-    
+
     OUT.uv.xy = (uv.xy * fUVScaleQuant) + fUVOffset;
     OUT.sunDirection.xyz = LightData.xyz;
-    
+
     float2 blendVector = LandBlendParams.zw - IN.position.xy;
     OUT.blend.x = 1 - saturate((fBlendBaseDistance - length(blendVector)) * fBlendScale);
-    
+
     // Fog.
     float3 fogPos = OUT.position.xyz;
     #ifdef REVERSED_DEPTH
@@ -126,9 +126,26 @@ PS_OUTPUT main(PS_INPUT IN) {
     float3 shadowNormal = GetShadowGeometricNormal(IN.shadowWorldPos);
     float sunShadow = FORWARD_SHADOWS ? GetSunShadow(IN.shadowWorldPos, shadowNormal) : 1.0f;
 
-    float3 lighting = getSunLighting(IN.sunDirection.xyz, PSLightColor.rgb, eyeDir, normal.xyz, AmbientColor.rgb, baseColor, normal.a, LandLODSpec.x, 1.0, sunShadow, shadowNormal);
+    // Linear lighting ([Shaders.PBR.Main] LinearLighting), PBR path only; see "Lighting space"
+    // in PBR.hlsl. The albedo is decoded once here and the result encoded before fog.
+    linearLighting = TESR_TerrainSkyData.z > 0.0f && TESR_TerrainExtraData.x;
+    baseColor = decodeColor(baseColor);
 
-    float3 final = lighting;
+    // The LOD normal map is in the land's world-aligned object space (it is lit against the
+    // sun direction as is), so it is the world normal for the sky light and reflections.
+    float3 ambientNormal = getTerrainAmbientNormal(normalize(normal.xyz), shadowNormal);
+    // Reflection first: it sets the share of the ambient it takes (skyReflectedFraction).
+    float terrainRoughness = getTerrainRoughness(LandLODSpec.x);
+    float3 skyReflection = 0.0f;
+    [branch] if (TESR_TerrainExtraData.x)
+        skyReflection = getTerrainSkyReflection(IN.shadowWorldPos, shadowNormal, ambientNormal, terrainRoughness, normal.a);
+
+    float3 lighting = getSunLighting(IN.sunDirection.xyz, PSLightColor.rgb, eyeDir, normal.xyz, AmbientColor.rgb, baseColor, normal.a, LandLODSpec.x, 1.0, sunShadow, ambientNormal);
+    lighting += skyReflection;
+
+    float3 final = encodeColor(lighting);
+    [branch] if (TESR_TerrainPBRData.w > 0.0f)
+        final = getTerrainDebug(TESR_TerrainPBRData.w, terrainRoughness, getTerrainSpecularScale(normal.a, terrainRoughness), ambientNormal);
     final = lerp(final, final * (noise * fNoiseScale + fNoiseOffset), saturate(TESR_TerrainExtraData.z)); // Apply noise.
     final = lerp(final, IN.fog.rgb, IN.fog.a); // Apply fog.
 

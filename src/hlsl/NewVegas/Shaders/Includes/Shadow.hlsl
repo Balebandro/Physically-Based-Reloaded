@@ -215,6 +215,16 @@ float3 GetShadowWorldPos(float4 clipPos) {
 }
 
 // ---------------------------------------------------------------------------
+// Camera-relative world DIRECTION from a clip-space direction (w = 0), e.g.
+// mul(ModelViewProj, float4(objectNormal, 0)). The inverse projection and view undo the
+// projection exactly, so this recovers the model-to-world rotation the vertex shader has no
+// matrix for. No divide: a direction keeps w = 0.
+// ---------------------------------------------------------------------------
+float3 GetShadowWorldDir(float4 clipDir) {
+    return mul(mul(clipDir, TESR_InvProjectionTransform), TESR_InvViewTransform).xyz;
+}
+
+// ---------------------------------------------------------------------------
 // Flat face normal from screen-space derivatives of the interpolated world position. Object
 // shaders carry their normal in TANGENT space, so no world normal is available to the bias.
 //

@@ -111,14 +111,13 @@ public:
 		};
 	};
 
+	// Per weather and time, blended by UpdateConstants: [Shaders.PBR.Main|Rain|Night|NightRain|Interiors].
 	struct PBRSettings {
 		float LightScale;
 		float AmbientScale;
-		float Roughness;
-		float Metallicness;
+		float RoughnessScale;
 		float Saturation;
 		float SkylightingScale;
-		float SkylightingDirectionality;
 	};
 	struct PBRSettingsStruct {
 		PBRSettings Default;
@@ -129,12 +128,30 @@ public:
 	};
 	PBRSettingsStruct Settings;
 
+	// Global, [Shaders.PBR.Main] only: lighting space and specular. See Shaders/Includes/Object.hlsl
+	// and the "Lighting space" notes in PBR.hlsl.
+	struct PBRMaterialSettings {
+		bool  LinearLighting;
+		float SpecularStrength;
+		float VanillaMatchedHighlights;
+		bool  SpecularOnAll;
+		float DefaultRoughness;
+		float SkyReflectionScale;
+		bool  SpecularOcclusion;
+		float AmbientNormalDetail;
+		int   DebugView;
+	};
+	PBRMaterialSettings MaterialSettings;
+
 	struct PBRStruct {
-		D3DXVECTOR4		Data;
-		D3DXVECTOR4		ExtraData;
+		D3DXVECTOR4		Data;           // x: specular strength, y: roughness scale, z: light scale, w: ambient scale
+		D3DXVECTOR4		ExtraData;      // x: saturation, y: skylight strength, z: vanilla-matched highlights, w: linear lighting
+		D3DXVECTOR4		SpecularData;   // x: default roughness (below 0: SpecularOnAll off), y: sky reflection strength, z: specular occlusion, w: ambient normal detail
+		D3DXVECTOR4		DebugData;      // x: material debug view (0 off)
 	};
 	PBRStruct	Constants;
 
+	float	Blend(float PBRSettings::* Member, float rainFactor);
 	void	UpdateConstants();
 	void	RegisterConstants();
 	void	UpdateSettings();
