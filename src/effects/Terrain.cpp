@@ -20,24 +20,40 @@ void TerrainShaders::UpdateSettings() {
 	Settings.Default.LightScale = TheSettingManager->GetSettingF("Shaders.Terrain.Main", "LightingScale");
 	Settings.Default.AmbientScale = TheSettingManager->GetSettingF("Shaders.Terrain.Main", "AmbientScale");
 	Settings.Default.SkylightingScale = TheSettingManager->GetSettingF("Shaders.Terrain.Main", "SkylightingScale");
+	Settings.Default.SpecularStrength = TheSettingManager->GetSettingF("Shaders.Terrain.Main", "SpecularStrength");
+	Settings.Default.VanillaMatchedHighlights = TheSettingManager->GetSettingF("Shaders.Terrain.Main", "VanillaMatchedHighlights");
+	Settings.Default.SkyReflectionScale = TheSettingManager->GetSettingF("Shaders.Terrain.Main", "SkyReflectionScale");
+	Settings.Default.AmbientNormalDetail = TheSettingManager->GetSettingF("Shaders.Terrain.Main", "AmbientNormalDetail");
 
 	Settings.Rain.Saturation = TheSettingManager->GetSettingF("Shaders.Terrain.Rain", "TerrainSaturation");
 	Settings.Rain.RoughnessScale = TheSettingManager->GetSettingF("Shaders.Terrain.Rain", "RoughnessScale");
 	Settings.Rain.LightScale = TheSettingManager->GetSettingF("Shaders.Terrain.Rain", "LightingScale");
 	Settings.Rain.AmbientScale = TheSettingManager->GetSettingF("Shaders.Terrain.Rain", "AmbientScale");
 	Settings.Rain.SkylightingScale = TheSettingManager->GetSettingF("Shaders.Terrain.Rain", "SkylightingScale");
+	Settings.Rain.SpecularStrength = TheSettingManager->GetSettingF("Shaders.Terrain.Rain", "SpecularStrength");
+	Settings.Rain.VanillaMatchedHighlights = TheSettingManager->GetSettingF("Shaders.Terrain.Rain", "VanillaMatchedHighlights");
+	Settings.Rain.SkyReflectionScale = TheSettingManager->GetSettingF("Shaders.Terrain.Rain", "SkyReflectionScale");
+	Settings.Rain.AmbientNormalDetail = TheSettingManager->GetSettingF("Shaders.Terrain.Rain", "AmbientNormalDetail");
 
 	Settings.Night.Saturation = TheSettingManager->GetSettingF("Shaders.Terrain.Night", "TerrainSaturation");
 	Settings.Night.RoughnessScale = TheSettingManager->GetSettingF("Shaders.Terrain.Night", "RoughnessScale");
 	Settings.Night.LightScale = TheSettingManager->GetSettingF("Shaders.Terrain.Night", "LightingScale");
 	Settings.Night.AmbientScale = TheSettingManager->GetSettingF("Shaders.Terrain.Night", "AmbientScale");
 	Settings.Night.SkylightingScale = TheSettingManager->GetSettingF("Shaders.Terrain.Night", "SkylightingScale");
+	Settings.Night.SpecularStrength = TheSettingManager->GetSettingF("Shaders.Terrain.Night", "SpecularStrength");
+	Settings.Night.VanillaMatchedHighlights = TheSettingManager->GetSettingF("Shaders.Terrain.Night", "VanillaMatchedHighlights");
+	Settings.Night.SkyReflectionScale = TheSettingManager->GetSettingF("Shaders.Terrain.Night", "SkyReflectionScale");
+	Settings.Night.AmbientNormalDetail = TheSettingManager->GetSettingF("Shaders.Terrain.Night", "AmbientNormalDetail");
 
 	Settings.NightRain.Saturation = TheSettingManager->GetSettingF("Shaders.Terrain.NightRain", "TerrainSaturation");
 	Settings.NightRain.RoughnessScale = TheSettingManager->GetSettingF("Shaders.Terrain.NightRain", "RoughnessScale");
 	Settings.NightRain.LightScale = TheSettingManager->GetSettingF("Shaders.Terrain.NightRain", "LightingScale");
 	Settings.NightRain.AmbientScale = TheSettingManager->GetSettingF("Shaders.Terrain.NightRain", "AmbientScale");
 	Settings.NightRain.SkylightingScale = TheSettingManager->GetSettingF("Shaders.Terrain.NightRain", "SkylightingScale");
+	Settings.NightRain.SpecularStrength = TheSettingManager->GetSettingF("Shaders.Terrain.NightRain", "SpecularStrength");
+	Settings.NightRain.VanillaMatchedHighlights = TheSettingManager->GetSettingF("Shaders.Terrain.NightRain", "VanillaMatchedHighlights");
+	Settings.NightRain.SkyReflectionScale = TheSettingManager->GetSettingF("Shaders.Terrain.NightRain", "SkyReflectionScale");
+	Settings.NightRain.AmbientNormalDetail = TheSettingManager->GetSettingF("Shaders.Terrain.NightRain", "AmbientNormalDetail");
 
 	ParallaxSettings.Enabled = TheSettingManager->GetSettingF("Shaders.Terrain.Parallax", "Enabled");
 	ParallaxSettings.HighQuality = TheSettingManager->GetSettingF("Shaders.Terrain.Parallax", "HighQuality");
@@ -47,14 +63,16 @@ void TerrainShaders::UpdateSettings() {
 	ParallaxSettings.Height = TheSettingManager->GetSettingF("Shaders.Terrain.Parallax", "Height");
 	ParallaxSettings.ShadowsIntensity = TheSettingManager->GetSettingF("Shaders.Terrain.Parallax", "ShadowsIntensity");
 
-	// [Shaders.PBR.Main] LinearLighting, shared with the object shaders so both light the same way.
+	// [Shaders.PBR.Main] LinearLighting, shared with the object shaders so both light the same way
+	// (two lighting spaces would show where terrain meets objects).
 	Constants.SkyData.z = TheSettingManager->GetSettingI("Shaders.PBR.Main", "LinearLighting") ? 1.0f : 0.0f;
-	Constants.SkyData.w = std::clamp(TheSettingManager->GetSettingF("Shaders.PBR.Main", "VanillaMatchedHighlights"), 0.0f, 1.0f);
-	// The object shaders' sky reflection, normal-mapped ambient, specular occlusion and debug view
-	// settings, applied to land too so one set of controls covers both.
-	Constants.PBRData.x = max(0.0f, TheSettingManager->GetSettingF("Shaders.PBR.Main", "SkyReflectionScale"));
-	Constants.PBRData.y = std::clamp(TheSettingManager->GetSettingF("Shaders.PBR.Main", "AmbientNormalDetail"), 0.0f, 1.0f);
-	Constants.PBRData.z = TheSettingManager->GetSettingI("Shaders.PBR.Main", "SpecularOcclusion") ? 1.0f : 0.0f;
+
+	// Land's own material settings: FNV's landscape specular data is crude and vanilla-matched land
+	// highlights blow out paths seen against a low sun, so terrain gets its own strength, vanilla
+	// match, reflections and ambient detail, per weather (blended in UpdateConstants). The
+	// specular occlusion switch is [Shaders.Terrain.Main] only.
+	Constants.PBRData.z = TheSettingManager->GetSettingI("Shaders.Terrain.Main", "SpecularOcclusion") ? 1.0f : 0.0f;
+	// DebugView stays the object one: one switch for the whole material debug view.
 	Constants.PBRData.w = (float)std::clamp(TheSettingManager->GetSettingI("Shaders.PBR.Main", "DebugView"), 0, 4);
 
 	LODSettings.NoiseScale = TheSettingManager->GetSettingF("Shaders.Terrain.LOD", "LODNoiseScale");
@@ -89,6 +107,16 @@ void TerrainShaders::UpdateConstants() {
 		TheShaderManager->GetTransitionValue(Settings.Rain.LightScale, Settings.NightRain.LightScale, 0.0), rainFactor);
 	Constants.Data.w = std::lerp(TheShaderManager->GetTransitionValue(Settings.Default.AmbientScale, Settings.Night.AmbientScale, 0.0),
 		TheShaderManager->GetTransitionValue(Settings.Rain.AmbientScale, Settings.NightRain.AmbientScale, 0.0), rainFactor);
+
+	// Land material settings, per weather like the rest.
+	auto blend = [&](float TerrainSettings::* member) {
+		return std::lerp(TheShaderManager->GetTransitionValue(Settings.Default.*member, Settings.Night.*member, 0.0),
+			TheShaderManager->GetTransitionValue(Settings.Rain.*member, Settings.NightRain.*member, 0.0), rainFactor);
+	};
+	Constants.Data.x = max(0.0f, blend(&TerrainSettings::SpecularStrength));
+	Constants.SkyData.w = std::clamp(blend(&TerrainSettings::VanillaMatchedHighlights), 0.0f, 1.0f);
+	Constants.PBRData.x = max(0.0f, blend(&TerrainSettings::SkyReflectionScale));
+	Constants.PBRData.y = std::clamp(blend(&TerrainSettings::AmbientNormalDetail), 0.0f, 1.0f);
 
 	ParallaxConstants.Data.x = ParallaxSettings.Enabled;
 	ParallaxConstants.Data.y = ParallaxSettings.Shadows;

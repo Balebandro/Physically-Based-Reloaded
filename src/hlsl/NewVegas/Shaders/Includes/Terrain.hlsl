@@ -80,8 +80,8 @@ float getTerrainRoughness(float glossPower) {
     return clamp(shineToRoughness(glossPower) * TESR_TerrainData.y, 0.04f, 1.0f);
 }
 
-// [Shaders.PBR.Main] settings shared with the object shaders: x SkyReflectionScale,
-// y AmbientNormalDetail, z SpecularOcclusion, w DebugView. c134 is clear on this side, see the
+// x SkyReflectionScale, y AmbientNormalDetail, z SpecularOcclusion ([Shaders.Terrain.Main]),
+// w DebugView ([Shaders.PBR.Main]). TESR_TerrainData.x is [Shaders.Terrain.Main] SpecularStrength. c134 is clear on this side, see the
 // note on TESR_TerrainSkyData.
 float4 TESR_TerrainPBRData : register(c134);
 
@@ -105,7 +105,7 @@ float3 getTerrainSkyReflection(float3 worldPos, float3 geometricNormal, float3 n
         horizon *= horizon;
     }
     float3 sky = linearLighting ? radiance : sqrt(radiance);
-    float3 reflected = EnvBRDFApprox(float(0.04f).rrr, roughness, NdotV) * horizon * strength * TESR_TerrainPBRData.x;
+    float3 reflected = EnvBRDFApprox(float(0.04f).rrr, roughness, NdotV) * horizon * strength * TESR_TerrainData.x * TESR_TerrainPBRData.x;
     skyReflectedFraction = saturate(reflected);   // see SkyAmbient.hlsl
     return sky * reflected;
 }
@@ -119,13 +119,13 @@ float3 getTerrainDebug(float mode, float roughness, float specularScale, float3 
     return (ambientNormal.z * 0.5f + 0.5f).xxx;
 }
 
-// [Shaders.PBR.Main] VanillaMatchedHighlights for land, in TESR_TerrainSkyData.w; see
-// vanillaMatchFactor in Object.hlsl.
+// Land highlight strength: the layer mask x [Shaders.Terrain.Main] SpecularStrength (TerrainData.x)
+// x its VanillaMatchedHighlights (TerrainSkyData.w); see vanillaMatchFactor in Object.hlsl.
 float getTerrainSpecularScale(float gloss, float roughness) {
     roughness = saturate(roughness / max(TESR_TerrainData.y, 0.01f));   // before RoughnessScale, as for objects
     float alpha = roughness * roughness;
     float matched = clamp(4.0f * alpha * alpha / 0.04f, 1.0f, 12.0f);
-    return gloss * lerp(1.0f, matched, saturate(TESR_TerrainSkyData.w));
+    return gloss * TESR_TerrainData.x * lerp(1.0f, matched, saturate(TESR_TerrainSkyData.w));
 }
 
 float3 getPointLightLighting(float3 lightDir, float att, float3 lightColor, float3 eyeDir, float3 normal, float3 albedo, float gloss = 0.0, float glossPower = 0.0, float metallicness = 1.0) {

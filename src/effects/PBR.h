@@ -118,6 +118,11 @@ public:
 		float RoughnessScale;
 		float Saturation;
 		float SkylightingScale;
+		float SpecularStrength;
+		float VanillaMatchedHighlights;
+		float DefaultRoughness;
+		float SkyReflectionScale;
+		float AmbientNormalDetail;
 	};
 	struct PBRSettingsStruct {
 		PBRSettings Default;
@@ -128,17 +133,12 @@ public:
 	};
 	PBRSettingsStruct Settings;
 
-	// Global, [Shaders.PBR.Main] only: lighting space and specular. See Shaders/Includes/Object.hlsl
-	// and the "Lighting space" notes in PBR.hlsl.
+	// Global switches, [Shaders.PBR.Main] only (blending an on/off between weathers means nothing).
+	// See Shaders/Includes/Object.hlsl and the "Lighting space" notes in PBR.hlsl.
 	struct PBRMaterialSettings {
 		bool  LinearLighting;
-		float SpecularStrength;
-		float VanillaMatchedHighlights;
 		bool  SpecularOnAll;
-		float DefaultRoughness;
-		float SkyReflectionScale;
 		bool  SpecularOcclusion;
-		float AmbientNormalDetail;
 		int   DebugView;
 	};
 	PBRMaterialSettings MaterialSettings;
