@@ -262,6 +262,9 @@
     <ClInclude Include="..\src\effects\Sharpening.h">
       <Filter>Effects</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\effects\SkinScattering.h">
+      <Filter>Effects</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\effects\Skin.h">
       <Filter>Effects</Filter>
     </ClInclude>
@@ -532,6 +535,9 @@
       <Filter>Effects</Filter>
     </ClCompile>
     <ClCompile Include="..\src\effects\Sharpening.cpp">
+      <Filter>Effects</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\effects\SkinScattering.cpp">
       <Filter>Effects</Filter>
     </ClCompile>
     <ClCompile Include="..\src\effects\Skin.cpp">

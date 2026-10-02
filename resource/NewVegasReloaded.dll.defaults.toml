@@ -829,16 +829,30 @@ Strength = 0.75
 Enabled = false                     # Edge contrast shader to increase detail sharpness.
 
 [_Shaders.Skin.Main]
-Attenuation = 0.84
-CoeffBlue = 0.12
-CoeffGreen = 0.22
-CoeffRed = 0.36
-MaterialThickness = 0.12
-RimScalar = 0.5
-SpecularPower = 0.78
+SpecularStrength = 1.0              # Skin highlight strength (two lobes: oily sheen plus pore haze). 1 reads a 50% specular mask as real skin.
+Roughness = 0.45                    # Skin roughness. Lower is oilier.
+VanillaMatchedHighlights = 0.0      # 1 makes skin highlights as strong as vanilla's own face highlights (same physically based shape); 0 is physical. Mostly matters at high Roughness.
+ShadowScatter = 1.0                 # Light bleeding red into shadow edges, and the red glow kept past the shadow line on side-lit skin. 0 disables both.
+Translucency = 0.5                  # Red light glowing through ears, nostrils and fingers against the light. 0 disables.
+SkyReflectionScale = 1.0            # Sky reflections on skin (sheen at glancing angles). 0 disables. Exteriors only.
+RainWetness = 0.5                   # How wet and glossy skin gets in the rain. 0 disables.
+
+[_Shaders.Skin.Scattering]
+ScreenSpace = true                  # Screen-space subsurface scattering: light spreads under the skin across the screen (separable SSS, the ENB look). Off falls back to per-pixel diffusion.
+Width = 8.0                         # How far light spreads under the skin on screen, x the measured skin profile. Higher is softer and waxier (the ENB look).
+DepthFollow = 1.0                   # How sharply the blur stops at depth edges (nose against cheek, chin against neck).
+AlbedoDetail = 1.0                  # How much skin texture detail (freckles, pores, brows, stubble) stays sharp: 1 diffuses only the light, 0 blurs the texture with it (the waxy look).
+StrengthRed = 0.48                  # How much of each colour scatters. Red scatters most, which gives skin its warmth.
+StrengthGreen = 0.41
+StrengthBlue = 0.28
+FalloffRed = 1.0                    # How wide each colour spreads, relative to red.
+FalloffGreen = 0.37
+FalloffBlue = 0.3
+PerPixelWidth = 1.0                 # Per-pixel diffusion from curvature, used only where the screen-space blur cannot reach (first-person arms, reflections, fading actors) or when ScreenSpace is off. 0 is plain shading.
+DebugView = 0                       # 1 tints skin by the screen-space test: green blurred, red rejected by distance, blue rejected by colour (something drawn over it). 2 shows scene brightness against the skin's own pass: green equal, red brighter, blue darker.
 
 [_Shaders.Skin.Status]
-Enabled = true                      # Replaces the skin shader with a subsurface-scattering approximation.
+Enabled = true                      # NVR's skin shader: subsurface scattering, translucency, physically based highlights and sky light. Overrides other skin shader mods.
 
 
 [_Shaders.Sky.Main]

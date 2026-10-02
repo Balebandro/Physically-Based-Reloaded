@@ -18,6 +18,9 @@ void __fastcall RenderHook(Main* This, UInt32 edx, BSRenderedTexture* RenderedTe
 	FlashlightEffect* Flashlight = TheShaderManager->Effects.Flashlight;
 	MaterialPass::BeginFrame(Flashlight->Enabled && Flashlight->spotLightActive);
 
+	// The skin scattering target is cleared on the frame's first skin draw.
+	if (TheShaderManager->Effects.SkinScattering) TheShaderManager->Effects.SkinScattering->BeginFrame();
+
 	//if (SettingsMain->Develop.TraceShaders && InterfaceManager->IsActive(Menu::MenuType::kMenuType_None) && Global->OnKeyDown(SettingsMain->Develop.TraceShaders) && DWNode::Get() == NULL) DWNode::Create();
 	(*Render)(This, RenderedTexture, Arg2, Arg3);
 
@@ -104,7 +107,18 @@ void __fastcall RenderWorldSceneGraphHook(Main* This, UInt32 edx, Sun* SkySun, U
 	TAAEffect* TAA = TheShaderManager->Effects.TAA;
 	if (TAA) TAA->BeginJitter();
 
+	// Skin scattering's target is bound only for skin drawn inside the world scene.
+	SkinScatteringEffect* SkinScattering = TheShaderManager->Effects.SkinScattering;
+	if (SkinScattering) SkinScattering->InWorldScene = true;
+
 	(*RenderWorldSceneGraph)(This, SkySun, IsFirstPerson, WireFrame, Arg4);
+
+	// The SkinShader hooks unbind the skin scattering target after every skin draw; this only
+	// guarantees nothing below (the material pass, depth resolves) ever draws into it.
+	if (SkinScattering) {
+		SkinScattering->InWorldScene = false;
+		SkinScattering->Unbind();
+	}
 
 	// Re-light nearby statics inside the flashlight cone. This has to happen here, before
 	// the viewmodel depth handling below clears the Z buffer: the pass draws with depth
@@ -136,6 +150,7 @@ void __fastcall RenderFirstPersonHook(Main* This, UInt32 edx, NiDX9Renderer* Ren
 	TheRenderManager->Clear(NULL, NiRenderer::kClear_ZBUFFER);
 	//ThisCall(0x00874C10, Global);
 	(*RenderFirstPerson)(This, Renderer, Geo, SkySun, RenderedTexture);
+	if (TheShaderManager->Effects.SkinScattering) TheShaderManager->Effects.SkinScattering->Unbind();
 	TheRenderManager->ResolveDepthBuffer(TheTextureManager->DepthTextureViewModel);
 }
 
@@ -178,6 +193,7 @@ bool bDoneRender_LockPickMenu = false;
 
 void(__cdecl* ProcessImageSpaceShaders)(NiDX9Renderer*, BSRenderedTexture*, BSRenderedTexture*) = (void(__cdecl*)(NiDX9Renderer*, BSRenderedTexture*, BSRenderedTexture*))Hooks::ProcessImageSpaceShaders;
 void __cdecl ProcessImageSpaceShadersHook(NiDX9Renderer* Renderer, BSRenderedTexture* SourceTarget, BSRenderedTexture* DestinationTarget) {
+	if (TheShaderManager->Effects.SkinScattering) TheShaderManager->Effects.SkinScattering->Unbind();
 	bool bLiveRenderedMenu = false; // FORenderedMenu, FOPipBoyManager
 	bool bLive3DMenu = false; // Normal menus, but 3D, lockpick etc
 	if (TESMain::IsMenuBackgroundReady() && TheGameMenuManager->IsLiveMenu && InterfaceManager->currentMode != 1) {

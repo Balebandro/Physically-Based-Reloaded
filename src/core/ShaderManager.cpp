@@ -45,6 +45,7 @@ void ShaderManager::Initialize() {
 	// initializing the list of effect names
 	TheShaderManager->RegisterEffect<AvgLumaEffect>(&TheShaderManager->Effects.AvgLuma);
 	TheShaderManager->RegisterEffect<AmbientOcclusionEffect>(&TheShaderManager->Effects.AmbientOcclusion);
+	TheShaderManager->RegisterEffect<SkinScatteringEffect>(&TheShaderManager->Effects.SkinScattering);
 	TheShaderManager->RegisterEffect<BloodLensEffect>(&TheShaderManager->Effects.BloodLens);
 	TheShaderManager->RegisterEffect<BloomEffect>(&TheShaderManager->Effects.Bloom);
 	TheShaderManager->RegisterEffect<BloomLegacyEffect>(&TheShaderManager->Effects.BloomLegacy);
@@ -822,6 +823,11 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 	// copy the source render target to both the rendered and source textures (rendered gets updated after every pass, source once per effect)
 	Device->StretchRect(RenderTarget, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
 	Device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
+
+	// First, on the scene exactly as drawn: it recognises skin by comparing each pixel with the
+	// colour the skin shader wrote, which any effect before it would change. Screen-space shadows
+	// and AO then darken the scattered skin like everything else.
+	Effects.SkinScattering->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);   // pass 2 reads the unblurred scene
 
 	if (GameState.isExterior) 
 		Effects.ShadowsExteriors->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);

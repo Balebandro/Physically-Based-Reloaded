@@ -166,6 +166,7 @@
     <ClCompile Include="..\src\effects\ShadowsExterior.cpp" />
     <ClCompile Include="..\src\effects\ShadowsInteriors.cpp" />
     <ClCompile Include="..\src\effects\Sharpening.cpp" />
+    <ClCompile Include="..\src\effects\SkinScattering.cpp" />
     <ClCompile Include="..\src\effects\Skin.cpp" />
     <ClCompile Include="..\src\effects\Sky.cpp" />
     <ClCompile Include="..\src\effects\Snow.cpp" />
@@ -274,6 +275,7 @@
     <ClInclude Include="..\src\effects\ShadowsExterior.h" />
     <ClInclude Include="..\src\effects\ShadowsInteriors.h" />
     <ClInclude Include="..\src\effects\Sharpening.h" />
+    <ClInclude Include="..\src\effects\SkinScattering.h" />
     <ClInclude Include="..\src\effects\Skin.h" />
     <ClInclude Include="..\src\effects\Sky.h" />
     <ClInclude Include="..\src\effects\Snow.h" />
