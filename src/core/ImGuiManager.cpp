@@ -1840,13 +1840,28 @@ void ImGuiManager::NewFrame() {
 				ImGuiKey imKey = VkToImGuiKey((USHORT)vk);
 				if (imKey != ImGuiKey_None)
 					io.AddKeyEvent(imKey, cur);
-				if (cur) {
+				// Numpad keys produce their character directly. ToUnicode would need the
+				// NumLock toggle in the key state below, and a numpad scancode translates per
+				// layout; Windows only sends VK_NUMPADn / VK_DECIMAL while NumLock is on anyway.
+				WCHAR numpadChar = 0;
+				if (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD9) numpadChar = (WCHAR)(L'0' + (vk - VK_NUMPAD0));
+				else if (vk == VK_DECIMAL)  numpadChar = L'.';
+				else if (vk == VK_ADD)      numpadChar = L'+';
+				else if (vk == VK_SUBTRACT) numpadChar = L'-';
+				else if (vk == VK_MULTIPLY) numpadChar = L'*';
+				else if (vk == VK_DIVIDE)   numpadChar = L'/';
+
+				if (cur && numpadChar) {
+					io.AddInputCharacterUTF16((ImWchar16)numpadChar);
+				}
+				else if (cur) {
 					WCHAR buf[4] = {};
 					BYTE ks[256] = {};
 					ks[VK_SHIFT]   = (GetAsyncKeyState(VK_SHIFT)   & 0x8000) ? 0x80 : 0;
 					ks[VK_CONTROL] = (GetAsyncKeyState(VK_CONTROL) & 0x8000) ? 0x80 : 0;
 					ks[VK_MENU]    = (GetAsyncKeyState(VK_MENU)    & 0x8000) ? 0x80 : 0;
 					ks[VK_CAPITAL] = (GetKeyState(VK_CAPITAL) & 1) ? 0x01 : 0;
+					ks[VK_NUMLOCK] = (GetKeyState(VK_NUMLOCK) & 1) ? 0x01 : 0;
 					ks[vk]         = 0x80;
 					int n = ToUnicode(vk, MapVirtualKey(vk, MAPVK_VK_TO_VSC), ks, buf, 4, 0);
 					for (int i = 0; i < n; i++)
