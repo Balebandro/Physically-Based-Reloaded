@@ -23,27 +23,46 @@ void SkinScatteringEffect::RegisterTextures() {
 	if (!Supported) Logger::Log("[WARNING] SkinScattering: the device cannot bind three render targets of their own formats; skin scattering is off");
 }
 
-// The settings live on the skin shader's own menu page, [Shaders.Skin.Scattering]; there is no
-// [Shaders.SkinScattering] section, so the effect record itself is always on and ScreenSpace is
-// the switch (with [Shaders.Skin.Status] Enabled above it).
+// The settings live on the skin shader's own menu pages: [Shaders.Skin.Scattering] outdoors,
+// [Shaders.Skin.Interiors] indoors. There is no [Shaders.SkinScattering] section, so the effect
+// record itself is always on and ScreenSpace is the switch (with [Shaders.Skin.Status] Enabled
+// above it).
+static void ReadProfile(SkinScatteringEffect::ProfileStruct* Profile, const char* Section) {
+	Profile->ScreenSpace = TheSettingManager->GetSettingI(Section, "ScreenSpace") != 0;
+	Profile->Width = max(0.0f, TheSettingManager->GetSettingF(Section, "Width"));
+	Profile->DepthFollow = max(0.0f, TheSettingManager->GetSettingF(Section, "DepthFollow"));
+	Profile->AlbedoDetail = std::clamp(TheSettingManager->GetSettingF(Section, "AlbedoDetail"), 0.0f, 1.0f);
+	Profile->Strength = D3DXVECTOR3(
+		TheSettingManager->GetSettingF(Section, "StrengthRed"),
+		TheSettingManager->GetSettingF(Section, "StrengthGreen"),
+		TheSettingManager->GetSettingF(Section, "StrengthBlue"));
+	// Falloff narrows each channel's profile inside the kernel's fixed sample range (a colour,
+	// 0-1, in Community Shaders). Above 1 the profile outgrows the samples: its weight lands on the
+	// few widely spaced outer taps and every bright spot is copied out as a row of dots. Width is
+	// what widens the scattering, samples and all.
+	Profile->Falloff = D3DXVECTOR3(
+		std::clamp(TheSettingManager->GetSettingF(Section, "FalloffRed"), 0.0f, 1.0f),
+		std::clamp(TheSettingManager->GetSettingF(Section, "FalloffGreen"), 0.0f, 1.0f),
+		std::clamp(TheSettingManager->GetSettingF(Section, "FalloffBlue"), 0.0f, 1.0f));
+}
+
 void SkinScatteringEffect::UpdateSettings() {
-	ScreenSpace = TheSettingManager->GetSettingI("Shaders.Skin.Scattering", "ScreenSpace") != 0;
+	ReadProfile(&ExteriorProfile, "Shaders.Skin.Scattering");
+	ReadProfile(&InteriorProfile, "Shaders.Skin.Interiors");
 	Constants.Debug.x = (float)std::clamp(TheSettingManager->GetSettingI("Shaders.Skin.Scattering", "DebugView"), 0, 2);
-	Profile.Width = max(0.0f, TheSettingManager->GetSettingF("Shaders.Skin.Scattering", "Width"));
-	Profile.DepthFollow = max(0.0f, TheSettingManager->GetSettingF("Shaders.Skin.Scattering", "DepthFollow"));
-	Profile.AlbedoDetail = std::clamp(TheSettingManager->GetSettingF("Shaders.Skin.Scattering", "AlbedoDetail"), 0.0f, 1.0f);
-	Profile.Strength = D3DXVECTOR3(
-		TheSettingManager->GetSettingF("Shaders.Skin.Scattering", "StrengthRed"),
-		TheSettingManager->GetSettingF("Shaders.Skin.Scattering", "StrengthGreen"),
-		TheSettingManager->GetSettingF("Shaders.Skin.Scattering", "StrengthBlue"));
-	Profile.Falloff = D3DXVECTOR3(
-		TheSettingManager->GetSettingF("Shaders.Skin.Scattering", "FalloffRed"),
-		TheSettingManager->GetSettingF("Shaders.Skin.Scattering", "FalloffGreen"),
-		TheSettingManager->GetSettingF("Shaders.Skin.Scattering", "FalloffBlue"));
 	KernelDirty = true;
 }
 
 void SkinScatteringEffect::UpdateConstants() {
+	// Indoors or out: the kernel is rebuilt when the profile in use changes.
+	const bool isInterior = !TheShaderManager->GameState.isExterior;
+	if (isInterior != ProfileIsInterior) {
+		ProfileIsInterior = isInterior;
+		KernelDirty = true;
+	}
+	Profile = isInterior ? InteriorProfile : ExteriorProfile;
+	ScreenSpace = Profile.ScreenSpace;
+
 	if (KernelDirty) {
 		CalculateKernel();
 		KernelDirty = false;

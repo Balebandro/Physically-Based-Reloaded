@@ -45,10 +45,14 @@ public:
 		float		AlbedoDetail;   // 0 blurs the texture with the light (waxy), 1 blurs light only
 		D3DXVECTOR3	Strength;       // per channel: how much of the light scatters
 		D3DXVECTOR3	Falloff;        // per channel: profile width
+		bool		ScreenSpace;
 	};
-	ProfileStruct	Profile;
+	ProfileStruct	Profile = {};                 // the one in use, copied each frame from:
+	ProfileStruct	ExteriorProfile = {};         // [Shaders.Skin.Scattering]
+	ProfileStruct	InteriorProfile = {};         // [Shaders.Skin.Interiors]
+	bool			ProfileIsInterior = false;
 	bool			KernelDirty = true;
-	bool			ScreenSpace = true;     // [Shaders.Skin.Scattering] ScreenSpace
+	bool			ScreenSpace = true;     // the profile in use's ScreenSpace
 
 	// The second render target. Texture is what the effect samples; Surface is what skin draws
 	// write into: the texture's own surface, or a multisampled one resolved into it.

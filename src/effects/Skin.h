@@ -15,7 +15,20 @@ public:
 	};
 	SkinStruct Constants;
 
-	// [Shaders.Skin.Main] settings applied per frame.
+	// The skin material, outdoors ([Shaders.Skin.Main] + [Shaders.Skin.Scattering]) and indoors
+	// ([Shaders.Skin.Interiors]); UpdateConstants picks one each frame.
+	struct MaterialStruct {
+		float SpecularStrength;
+		float Roughness;
+		float VanillaMatchedHighlights;
+		float ShadowScatter;
+		float Translucency;
+		float PerPixelWidth;
+	};
+	MaterialStruct Exterior = {};
+	MaterialStruct Interior = {};
+
+	// Outdoors only: both are forced off indoors.
 	float SkyReflectionScale = 1.0f;
 	float RainWetness = 0.5f;
 

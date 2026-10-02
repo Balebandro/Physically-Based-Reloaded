@@ -845,11 +845,29 @@ AlbedoDetail = 1.0                  # How much skin texture detail (freckles, po
 StrengthRed = 0.48                  # How much of each colour scatters. Red scatters most, which gives skin its warmth.
 StrengthGreen = 0.41
 StrengthBlue = 0.28
-FalloffRed = 1.0                    # How wide each colour spreads, relative to red.
+FalloffRed = 1.0                    # How wide each colour spreads within the blur, 0-1 (above 1 is clamped: it breaks the blur into dots). Use Width to spread further.
 FalloffGreen = 0.37
 FalloffBlue = 0.3
 PerPixelWidth = 1.0                 # Per-pixel diffusion from curvature, used only where the screen-space blur cannot reach (first-person arms, reflections, fading actors) or when ScreenSpace is off. 0 is plain shading.
 DebugView = 0                       # 1 tints skin by the screen-space test: green blurred, red rejected by distance, blue rejected by colour (something drawn over it). 2 shows scene brightness against the skin's own pass: green equal, red brighter, blue darker.
+
+[_Shaders.Skin.Interiors]
+SpecularStrength = 1.0              # Indoors: skin highlight strength.
+Roughness = 0.45                    # Indoors: skin roughness. Lower is oilier.
+VanillaMatchedHighlights = 0.0      # Indoors: 1 makes highlights as strong as vanilla's; 0 is physical.
+ShadowScatter = 1.0                 # Indoors: light bleeding red into shadow edges.
+Translucency = 0.5                  # Indoors: red glow through ears, nostrils and fingers against a lamp.
+ScreenSpace = true                  # Indoors: screen-space subsurface scattering.
+Width = 8.0                         # Indoors: how far light spreads under the skin on screen.
+DepthFollow = 1.0                   # Indoors: how sharply the blur stops at depth edges.
+AlbedoDetail = 1.0                  # Indoors: how much skin texture detail stays sharp (1 sharpest).
+StrengthRed = 0.48                  # Indoors: how much of each colour scatters.
+StrengthGreen = 0.41
+StrengthBlue = 0.28
+FalloffRed = 1.0                    # Indoors: how wide each colour spreads within the blur, 0-1.
+FalloffGreen = 0.37
+FalloffBlue = 0.3
+PerPixelWidth = 1.0                 # Indoors: per-pixel diffusion where the screen-space blur cannot reach.
 
 [_Shaders.Skin.Status]
 Enabled = true                      # NVR's skin shader: subsurface scattering, translucency, physically based highlights and sky light. Overrides other skin shader mods.
