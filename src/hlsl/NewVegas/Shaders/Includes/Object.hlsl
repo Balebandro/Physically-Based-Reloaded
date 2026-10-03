@@ -140,6 +140,15 @@ float3 getAmbientNormal(float3 normalTS, float3 upTS, float3 geometricNormal, fl
     return float3(heading * sqrt(saturate(1.0f - up * up)), up);
 }
 
+// The normal map's normal in world space, through the smooth world frame the vertex shader sent
+// (ObjectTemplate.hlsl, WORLD_FRAME_REG / MERGED_LIGHTS): for reflections, where the ambient
+// normal's per-triangle heading shows as facets. mirrored is 1 for a left-handed frame.
+float3 getReflectionNormal(float3 N, float3 T, float mirrored, float3 normalTS) {
+    T = normalize(T - N * dot(T, N));
+    float3 B = cross(N, T) * (mirrored > 0.5f ? -1.0f : 1.0f);
+    return normalize(normalTS.x * T + normalTS.y * B + normalTS.z * N);
+}
+
 // Up in tangent space with z rebuilt from xy, for the variant with no channel spare for it. Its
 // sign is the vertex normal's vertical sign, which the geometric normal shares.
 float3 rebuildUpTS(float2 xy, float3 geometricNormal) {

@@ -155,6 +155,21 @@
     #define MERGED_LIGHTS
 #endif
 
+// The passes with ambient (no ONLY_LIGHT) send the smooth world normal and tangent too, for the
+// reflections of authored materials (Object.hlsl, getReflectionNormal): xyz the normal, w the
+// tangent's x, in a free interpolator (TEXCOORD7, or TEXCOORD3 when PROJ_SHADOW takes 7: those
+// variants have at most two lights); the tangent's y in lightDistSq.w, plus 4 for a mirrored frame
+// (constant across a triangle, so it survives interpolation); its z is upTS.x. The light-only
+// passes have the frame in their colour interpolators (MERGED_LIGHTS). The VS and PS of a pair
+// agree on ONLY_LIGHT, PROJ_SHADOW and the light count, so both sides pick the same slot.
+#if !defined(ONLY_LIGHT) && (!defined(LIGHTS) || LIGHTS < 4)
+    #if !defined(PROJ_SHADOW)
+        #define WORLD_FRAME_REG TEXCOORD7
+    #elif !(LIGHTS > 2 || NUM_PT_LIGHTS > 2)
+        #define WORLD_FRAME_REG TEXCOORD3
+    #endif
+#endif
+
 #include "includes/Helpers.hlsl"
 #include "includes/Object.hlsl"
 // The camera matrices Shadow.hlsl rebuilds world positions with are moved out of c100-c107 in vertex
@@ -224,7 +239,7 @@ struct VS_OUTPUT {
     // lightDir/light2Dir/light3Dir above -- those are tangent-space (TBN-transformed) and their
     // length is only correct if the TBN basis is orthonormal. .x = light0 (DIFFUSE/POINT only,
     // where light0 is itself a point light rather than the sun), .y = light2, .z = light3.
-    float3 lightDistSq : TEXCOORD5;
+    float4 lightDistSq : TEXCOORD5;   // w: the world tangent's y (WORLD_FRAME_REG)
 
     // TEXCOORD4 is free at LIGHTS < 4. .w carries SHADOW_VS_SENTINEL.
     float4 shadowWorldPos : TEXCOORD4;
@@ -235,6 +250,9 @@ struct VS_OUTPUT {
 #ifdef MERGED_LIGHTS
     float4 worldNormal : COLOR0;    // xyz the world normal x 0.5 + 0.5, w 1 for a right-handed frame, 0 mirrored
     float4 worldTangent : COLOR1;   // xyz the world tangent x 0.5 + 0.5
+#endif
+#ifdef WORLD_FRAME_REG
+    float4 worldFrame : WORLD_FRAME_REG;   // xyz the world normal, w the world tangent's x
 #endif
 };
 
@@ -317,6 +335,10 @@ VS_OUTPUT main(VS_INPUT IN) {
     #ifdef MERGED_LIGHTS
         OUT.worldNormal = float4(worldNormal * 0.5f + 0.5f, dot(cross(worldNormal, worldTangent), worldBinormal) >= 0.0f ? 1.0f : 0.0f);
         OUT.worldTangent = float4(worldTangent * 0.5f + 0.5f, 0.0f);
+    #endif
+    #ifdef WORLD_FRAME_REG
+        OUT.worldFrame = float4(worldNormal, worldTangent.x);
+        OUT.lightDistSq.w = worldTangent.y + (dot(cross(worldNormal, worldTangent), worldBinormal) >= 0.0f ? 0.0f : 4.0f);
     #endif
 
     #if LIGHTS > 1 || NUM_PT_LIGHTS > 1
@@ -555,7 +577,7 @@ struct PS_INPUT {
     float4 light3Dir : TEXCOORD3_centroid;
 #endif
     float4 viewDir : TEXCOORD6_centroid;   // w: world up in tangent space, z
-    float3 lightDistSq : TEXCOORD5;
+    float4 lightDistSq : TEXCOORD5;
     float4 shadowWorldPos : TEXCOORD4;
 #ifdef PROJ_SHADOW
     float4 shadowUVs : TEXCOORD7;
@@ -563,6 +585,9 @@ struct PS_INPUT {
 #ifdef MERGED_LIGHTS
     float4 worldNormal : COLOR0;
     float4 worldTangent : COLOR1;
+#endif
+#ifdef WORLD_FRAME_REG
+    float4 worldFrame : WORLD_FRAME_REG;
 #endif
 };
 
@@ -737,6 +762,24 @@ PS_OUTPUT main(PS_INPUT IN) {
         // Normal-mapped ambient and reflections (Object.hlsl, getAmbientNormal).
         float shadowVSValid = SHADOW_VS_PRESENT(IN.shadowWorldPos.w) ? 1.0f : 0.0f;
         float3 ambientNormal = getAmbientNormal(normal.xyz, float3(IN.uv.zw, IN.viewDir.w), shadowGeometricNormal, shadowVSValid);
+
+        // Reflections want the real normal-mapped world normal; the ambient normal's heading is
+        // the flat triangle's, which a detailed environment shows as facets.
+        float3 reflectionGeometricNormal = shadowGeometricNormal;
+        float3 reflectionNormal = ambientNormal;
+        #if defined(WORLD_FRAME_REG)
+            [branch] if (shadowVSValid > 0.0f) {
+                float tangentY = IN.lightDistSq.w;
+                float mirrored = tangentY > 2.0f ? 1.0f : 0.0f;
+                reflectionGeometricNormal = normalize(IN.worldFrame.xyz);
+                reflectionNormal = getReflectionNormal(reflectionGeometricNormal, float3(IN.worldFrame.w, tangentY - 4.0f * mirrored, IN.uv.z), mirrored, normal.xyz);
+            }
+        #elif defined(MERGED_LIGHTS)
+            [branch] if (shadowVSValid > 0.0f) {
+                reflectionGeometricNormal = normalize(IN.worldNormal.xyz * 2.0f - 1.0f);
+                reflectionNormal = getReflectionNormal(reflectionGeometricNormal, IN.worldTangent.xyz * 2.0f - 1.0f, IN.worldNormal.w > 0.5f ? 0.0f : 1.0f, normal.xyz);
+            }
+        #endif
     #endif
 
     #if !defined(DIFFUSE) && !defined(POINT)
@@ -759,7 +802,7 @@ PS_OUTPUT main(PS_INPUT IN) {
         // Reuses shadowGeometricNormal computed above -- see the comment there. Always in scope
         // here: POINT implies ONLY_SPECULAR, so !ONLY_SPECULAR implies !POINT.
         // Reflection first: it sets the share of the ambient it takes (skyReflectedFraction).
-        lighting += getObjectSkyReflection(IN.shadowWorldPos.xyz, shadowGeometricNormal, ambientNormal, roughness, shadowVSValid);
+        lighting += getObjectSkyReflection(IN.shadowWorldPos.xyz, reflectionGeometricNormal, reflectionNormal, roughness, shadowVSValid);
         lighting += getAmbientLighting(AmbientColor.rgb, baseColor.rgb, ambientNormal, shadowVSValid);
     #endif
 

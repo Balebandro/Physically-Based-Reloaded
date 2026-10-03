@@ -115,6 +115,17 @@
         #define MERGED_PACKED
     #endif
 #endif
+// The passes with ambient send the smooth world normal and tangent too, for the reflections of
+// authored materials (Object.hlsl, getReflectionNormal): the normal and the tangent's x in
+// TEXCOORD5 (free there: those variants have at most two lights), the tangent's y in lightDir.w
+// (the sun's, which these pixel shaders never read) plus 4 for a mirrored frame (constant across
+// a triangle, so it survives interpolation), its z in uv.z (upTS.x). One layout for every such
+// variant, so a vertex shader with more lights than its pixel shader still agrees with it. The
+// AD passes have the frame already (MERGED_LIGHTS).
+#if !defined(ONLY_LIGHT) && !defined(AD) && !defined(DIFFUSE) && !defined(NO_LIGHT) && !(LIGHTS > 2)
+    #define WORLD_FRAME
+#endif
+
 #ifdef MERGED_PACKED
     #define ATTENUATION_UV2(a) float2((a).z, 0.5f)
 #else
@@ -196,6 +207,9 @@ struct VS_OUTPUT
     float4 worldNormal : COLOR0;    // xyz the world normal x 0.5 + 0.5, w 1 for a right-handed frame, 0 mirrored
     float4 worldTangent : COLOR1;   // xyz the world tangent x 0.5 + 0.5
 #endif
+#ifdef WORLD_FRAME
+    float4 worldFrameNormal : TEXCOORD5;    // xyz the world normal, w the world tangent's x
+#endif
 };
 
 #ifdef VS
@@ -241,6 +255,11 @@ VS_OUTPUT main(VS_INPUT IN)
             OUT.worldNormal = float4(worldNormal * 0.5f + 0.5f, handedness);
             OUT.worldTangent = float4(worldTangent * 0.5f + 0.5f, 0.0f);
         #endif
+    #endif
+    #ifdef WORLD_FRAME
+        float3 frameNormal = normalize(GetShadowWorldDir(mul(ModelViewProj, float4(tbn[2], 0.0f))));
+        float frameRightHanded = dot(cross(frameNormal, worldTangent), worldBinormal) >= 0.0f ? 1.0f : 0.0f;
+        OUT.worldFrameNormal = float4(frameNormal, worldTangent.x);   // the tangent's y in lightDir.w below
     #endif
 
     float3 eye = EyePosition.xyz - IN.position.xyz;
@@ -294,6 +313,9 @@ VS_OUTPUT main(VS_INPUT IN)
         OUT.light2Att.w = worldTangent.y;
         OUT.light3Att.w = worldTangent.z;
         OUT.lightDir.w = handedness;
+    #endif
+    #ifdef WORLD_FRAME
+        OUT.lightDir.w = worldTangent.y + (frameRightHanded > 0.5f ? 0.0f : 4.0f);
     #endif
 
     #ifndef NO_FOG
@@ -362,6 +384,9 @@ struct PS_INPUT
 #elif defined(MERGED_LIGHTS)
     float4 worldNormal : COLOR0;
     float4 worldTangent : COLOR1;
+#endif
+#ifdef WORLD_FRAME
+    float4 worldFrameNormal : TEXCOORD5;
 #endif
 };
 
@@ -579,6 +604,29 @@ PS_OUTPUT main(PS_INPUT IN)
         // Normal-mapped ambient and reflections (Object.hlsl, getAmbientNormal).
         float3 ambientNormal = getAmbientNormal(normal.xyz, rebuildUpTS(IN.uv.zw, sunShadowNormal), sunShadowNormal, shadowWorldPosValid);
 
+        // Reflections want the real normal-mapped world normal; the ambient normal's heading is
+        // the flat triangle's, which a detailed environment shows as facets.
+        float3 reflectionGeometricNormal = sunShadowNormal;
+        float3 reflectionNormal = ambientNormal;
+        #if defined(WORLD_FRAME)
+            [branch] if (shadowWorldPosValid > 0.0f) {
+                float tangentY = IN.lightDir.w;
+                float mirrored = tangentY > 2.0f ? 1.0f : 0.0f;
+                reflectionGeometricNormal = normalize(IN.worldFrameNormal.xyz);
+                reflectionNormal = getReflectionNormal(reflectionGeometricNormal, float3(IN.worldFrameNormal.w, tangentY - 4.0f * mirrored, IN.uv.z), mirrored, normal.xyz);
+            }
+        #elif defined(MERGED_PACKED)
+            [branch] if (shadowWorldPosValid > 0.0f) {
+                reflectionGeometricNormal = normalize(IN.worldNormal.xyz * 2.0f - 1.0f);
+                reflectionNormal = getReflectionNormal(reflectionGeometricNormal, float3(IN.worldNormal.w * 2.0f - 1.0f, IN.light2Att.w, IN.light3Att.w), IN.lightDir.w > 0.5f ? 0.0f : 1.0f, normal.xyz);
+            }
+        #elif defined(MERGED_LIGHTS)
+            [branch] if (shadowWorldPosValid > 0.0f) {
+                reflectionGeometricNormal = normalize(IN.worldNormal.xyz * 2.0f - 1.0f);
+                reflectionNormal = getReflectionNormal(reflectionGeometricNormal, IN.worldTangent.xyz * 2.0f - 1.0f, IN.worldNormal.w > 0.5f ? 0.0f : 1.0f, normal.xyz);
+            }
+        #endif
+
         #if !defined(DIFFUSE) && !defined(POINT)
             if (TESR_ParallaxData.y)
                 lighting = getSunLighting(IN.lightDir.xyz, PSLightColor[0].rgb * shadowMultiplier, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness, sunVisibility);
@@ -608,7 +656,7 @@ PS_OUTPUT main(PS_INPUT IN)
         #if !defined(DIFFUSE) && !defined(ONLY_SPECULAR)
             if (TESR_ParallaxData.y) {
                 // Reflection first: it sets the share of the ambient it takes (skyReflectedFraction).
-                lighting += getObjectSkyReflection(IN.shadowWorldPos.xyz, sunShadowNormal, ambientNormal, roughness, shadowWorldPosValid);
+                lighting += getObjectSkyReflection(IN.shadowWorldPos.xyz, reflectionGeometricNormal, reflectionNormal, roughness, shadowWorldPosValid);
                 lighting += getAmbientLighting(AmbientColor.rgb, baseColor.rgb, ambientNormal, shadowWorldPosValid);
             }
             else
