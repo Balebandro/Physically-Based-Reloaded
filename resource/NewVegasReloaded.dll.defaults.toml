@@ -576,6 +576,7 @@ AmbientScale = 1.0                 # Weather ambient light strength.
 SkylightingScale = 0.5             # Sky-colour ambient light. 0 disables it.
 LinearLighting = true                # Light in linear space (correct falloff and light sums) instead of the game's gamma space, as Community Shaders' linear lighting. Objects and terrain.
 MergeLightPasses = true              # With LinearLighting: lamps and highlights the game would add in extra passes are lit in the mesh's first pass instead, so they sum in linear space like the rest. Removes the brightness seams between meshes lit in one pass and meshes lit in several. Objects, hair, parallax, skin and first person (not tree branches).
+RouteLighting30 = true               # Draw the meshes the game gives its single-pass Lighting30 shader with the shaders NVR replaces instead, so they get NVR lighting, PBR and _rmaos maps: parallax occlusion meshes (as parallax), blood and bullet-hole decals with a normal map, and meshes saved with a Lighting30 or NoFader shader block. Applies to meshes as they load: restart the game after changing it.
 DebugView = 0                        # Material debug: 0 off, 1 roughness (authored maps; vanilla materials show their glossiness), 2 metalness, 3 flags (R the game's specular flag, G an authored _rmaos map, B specular distance fade), 4 ambient normal (white faces the sky), 5 the dynamic environment cube along the normal (authored materials; black when DynamicCubemaps is off).
 
 [_Shaders.PBR.Rain]

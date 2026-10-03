@@ -701,6 +701,82 @@ void InstallFaceGenInteriorPatch() {
     SafeWrite32(0xBE018C, (UInt32)&FaceGenInteriorFlag);
 }
 
+// --- Lighting30 meshes onto NVR's shaders -------------------------------------------------------
+// The engine draws some lit meshes with Lighting30Shader, a single-pass SM3 lighting shader NVR does
+// not replace, so they keep vanilla shading (no PBR, _rmaos maps, merged lights or NVR lighting):
+//   1 parallax occlusion meshes (BSSP_ParallaxOcclusion), whenever bUse30Lighting is on (any GPU
+//     with more than 255 instruction slots), instead of ParallaxShader
+//   2 dynamic decals with a normal map (BSTempEffectSimpleDecal::FinalizeGeometry, 0x68C0A7: blood,
+//     bullet holes), always
+//   3 NIFs whose shader block is Lighting30ShaderProperty or NoFaderShaderProperty (both streamed by
+//     Lighting30ShaderProperty::CreateObject, 0xBB45D0)
+// All three pass through BSShaderPPLightingProperty::ClarifyShader (0xB68880, vtable slot 44 of both
+// property classes) from BSShaderManager::PrepareGeometry, which attaches whatever property it
+// returns in place of the old one. That is how the engine itself turns a mesh into a Lighting30 one
+// (case 1, and alpha/decal meshes in bloom mode: MAKE_LIGHTING30). The hook does the reverse:
+//   - a Lighting30ShaderProperty (exact class; Lighting30 adds only its pass building, the class is
+//     otherwise BSShaderPPLightingProperty's) is copied into a new BSShaderPPLightingProperty
+//     (CreateObject 0xB68D50, then CopyTo3, vtable slot 52, the copy its constructor uses), set to
+//     ShadowLightShader and run through ClarifyShader, which sends parallax meshes to ParallaxShader
+//   - the parallax occlusion flag is hidden from ClarifyShader for the call, so it takes the
+//     parallax branch it takes when bUse30Lighting is off, and put back after
+// Meshes keep their flags, textures and alpha; only the shader and its pass lists change. Case 4
+// (alpha and decal meshes with HDR off and bloom on) is left alone. [Shaders.PBR.Main]
+// RouteLighting30; read once, applies to meshes as they load.
+namespace Lighting30Route {
+
+    typedef void* (__thiscall* ClarifyShaderFn)(void*, NiGeometry*, int, int);
+    static const ClarifyShaderFn ClarifyShader = (ClarifyShaderFn)0xB68880;
+    static const UInt32 Lighting30VTable = 0x10B9910;
+    static const UInt32 ParallaxOcclusionBit = 1u << 28;   // BSSP_ParallaxOcclusion (0x1C), ulFlags[0]
+
+    // BSShaderProperty members by offset (NVR's headers stop at NiShadeProperty).
+    static UInt32& ShaderPropertyType(void* Property) { return *(UInt32*)((UInt8*)Property + 0x1C); }
+    static UInt32& Flags0(void* Property) { return *(UInt32*)((UInt8*)Property + 0x20); }
+    static UInt32& ShaderIndex(void* Property) { return *(UInt32*)((UInt8*)Property + 0x58); }
+
+    static bool Enabled() {
+        static int Setting = -1;
+        if (Setting < 0) Setting = TheSettingManager->GetSettingI("Shaders.PBR.Main", "RouteLighting30") ? 1 : 0;
+        return Setting != 0;
+    }
+
+    // ClarifyShader with the parallax occlusion flag hidden.
+    static void* ClarifyWithoutLighting30(void* Property, NiGeometry* Geometry, int a, int b) {
+        const bool Occlusion = (Flags0(Property) & ParallaxOcclusionBit) != 0;
+        if (Occlusion) Flags0(Property) &= ~ParallaxOcclusionBit;
+        void* Result = ClarifyShader(Property, Geometry, a, b);
+        if (Occlusion) Flags0(Property) |= ParallaxOcclusionBit;
+        if (Result && Occlusion) Flags0(Result) |= ParallaxOcclusionBit;
+        return Result;
+    }
+
+    void* __fastcall Hook(void* Property, void*, NiGeometry* Geometry, int a, int b) {
+        if (!Enabled()) return ClarifyShader(Property, Geometry, a, b);
+        if (*(UInt32*)Property != Lighting30VTable) return ClarifyWithoutLighting30(Property, Geometry, a, b);
+
+        void* Copy = ((void* (__cdecl*)())0xB68D50)();   // BSShaderPPLightingProperty::CreateObject
+        if (!Copy) return ClarifyShader(Property, Geometry, a, b);
+        UInt32* VTable = *(UInt32**)Property;
+        ThisCall(VTable[52], Property, Copy);           // CopyTo3: textures, texture set, flags, material values
+        ShaderIndex(Copy) = 1;                          // BSSM_SHADER_SHADOWLIGHT
+        ShaderPropertyType(Copy) = NiShadeProperty::kProp_PPLighting;
+
+        void* Replacement = ClarifyWithoutLighting30(Copy, Geometry, a, b);
+        if (Replacement) {
+            // The engine made yet another property from the copy (bloom mode): use that one.
+            ThisCall((*(UInt32**)Copy)[0], Copy, 1);     // scalar deleting destructor: never attached, no references
+            return Replacement;
+        }
+        return Copy;
+    }
+}
+
+void InstallLighting30Route() {
+    SafeWrite32(0x10AE0D0 + 44 * 4, (UInt32)Lighting30Route::Hook);   // BSShaderPPLightingProperty
+    SafeWrite32(0x10B9910 + 44 * 4, (UInt32)Lighting30Route::Hook);   // Lighting30ShaderProperty
+}
+
 // Every frame, before the scene's pass lists are built (RenderHook).
 void UpdateFaceGenInteriorFlag() {
     MergedLights::BeginFrame();

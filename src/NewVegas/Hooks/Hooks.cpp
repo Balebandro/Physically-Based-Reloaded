@@ -42,6 +42,7 @@ void AttachHooks() {
 	kSkinPrepareGeometryDetour.ReplaceVirtualFunc(0x10BB980 + 27 * 4, SkinShader__PrepareGeometryForRendering);
 	kSkinPostGeometryDetour.ReplaceVirtualFunc(0x10BB980 + 35 * 4, SkinShader__PostGeometry);
 	InstallFaceGenInteriorPatch();   // interior faces get SkinShader's own passes (Hooks/Shaders.cpp)
+	InstallLighting30Route();        // Lighting30 meshes onto ShadowLightShader and ParallaxShader (Hooks/Shaders.cpp)
 	kLightPrepareGeometryDetour.ReplaceVirtualFunc(0x10AF2F8 + 27 * 4, ShadowLightShader__PrepareGeometryForRendering);
 	kLightPostGeometryDetour.ReplaceVirtualFunc(0x10AF2F8 + 35 * 4, ShadowLightShader__PostGeometry);
 	kParallaxPrepareGeometryDetour.ReplaceVirtualFunc(0x10BB7A8 + 27 * 4, ParallaxShader__PrepareGeometryForRendering);

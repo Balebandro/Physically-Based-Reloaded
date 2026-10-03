@@ -8,6 +8,7 @@ extern VirtFuncDetour kSkinPostGeometryDetour;
 void* __fastcall SkinShader__PrepareGeometryForRendering(void* apThis, void*, void* apGeometry, void* apPartition, void* apRendererData, void* apState);
 void __fastcall SkinShader__PostGeometry(void* apThis, void*, void* apProperties);
 void InstallFaceGenInteriorPatch();
+void InstallLighting30Route();
 void WriteObjectMaterial(NiGeometry* Geometry);
 extern VirtFuncDetour kLightPrepareGeometryDetour;
 extern VirtFuncDetour kLightPostGeometryDetour;
