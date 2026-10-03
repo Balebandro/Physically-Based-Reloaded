@@ -292,7 +292,7 @@ namespace MergedLights {
     // these hooks do not cover (tree branches) use the same light-only shaders and must never
     // read another mesh's lamps.
     static bool  sLightsUploaded = false;
-    static bool  sViewOverridden = false;   // first person: the viewmodel camera's inverse matrices are in c100-c107
+    static bool  sViewOverridden = false;   // first person: the viewmodel camera's inverse matrices are in vertex c240-c247
 
     // BSSM_DIFFUSEPT2/3 and their FaceGen, parallax, skinned and projected-shadow forms. Not the
     // tree branch ones (Sb).
@@ -345,7 +345,7 @@ namespace MergedLights {
 
     // First-person meshes are drawn with the viewmodel camera (its own FOV and near plane), but
     // the shaders rebuild world positions and directions through TESR_InvProjectionTransform and
-    // TESR_InvViewTransform (c100-c107, Includes/Shadow.hlsl), which are the world camera's: the
+    // TESR_InvViewTransform (vertex c240-c247, Includes/Shadow.hlsl), which are the world camera's: the
     // world frame and position the merged lamps need come out skewed. For a first-person draw the
     // inverses of the renderer's matrices at that moment, the viewmodel camera's, go there instead
     // (NiDX9Renderer::SetCameraData writes them for every camera), and EndDraw puts NVR's back.
@@ -353,8 +353,8 @@ namespace MergedLights {
         D3DXMATRIX InvProj, InvView;
         if (!D3DXMatrixInverse(&InvProj, NULL, &TheRenderManager->projMatrix)) return;
         if (!D3DXMatrixInverse(&InvView, NULL, &TheRenderManager->viewMatrix)) return;
-        TheRenderManager->device->SetVertexShaderConstantF(100, (const float*)&InvProj, 4);
-        TheRenderManager->device->SetVertexShaderConstantF(104, (const float*)&InvView, 4);
+        TheRenderManager->device->SetVertexShaderConstantF(240, (const float*)&InvProj, 4);
+        TheRenderManager->device->SetVertexShaderConstantF(244, (const float*)&InvView, 4);
         sViewOverridden = true;
     }
 
@@ -475,8 +475,8 @@ namespace MergedLights {
             sLightsUploaded = false;
         }
         if (sViewOverridden) {
-            TheRenderManager->device->SetVertexShaderConstantF(100, (const float*)&TheRenderManager->InvProjMatrix, 4);
-            TheRenderManager->device->SetVertexShaderConstantF(104, (const float*)&TheRenderManager->InvViewMatrix, 4);
+            TheRenderManager->device->SetVertexShaderConstantF(240, (const float*)&TheRenderManager->InvProjMatrix, 4);
+            TheRenderManager->device->SetVertexShaderConstantF(244, (const float*)&TheRenderManager->InvViewMatrix, 4);
             sViewOverridden = false;
         }
         if (sPassMuted) {

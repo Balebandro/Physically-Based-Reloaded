@@ -23,6 +23,13 @@
 //
 // The VS matrices are relocatable: GRASS23x00*.vso indexes InstanceData from c20 well past
 // c100.
+//
+// Not clear in SKINNED vertex shaders: the game's bone upload goes past Bones[54]'s c97 and
+// overwrote c100-c107, so actors rebuilt their world position from bone data and read the sun
+// shadow at the wrong place (in practice at the player's position: actors flipped light/dark as
+// the player crossed a shadow edge). The object, parallax and skin vertex shaders and SM3003/
+// SM3004.vso define SHADOW_INVPROJ_REG/SHADOW_INVVIEW_REG as c240/c244 before including this file
+// (upstream PR #79); pixel shaders keep c100/c104.
 // ---------------------------------------------------------------------------
 #ifndef SHADOW_INVPROJ_REG
     #define SHADOW_INVPROJ_REG c100
