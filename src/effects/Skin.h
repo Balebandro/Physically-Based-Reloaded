@@ -12,6 +12,7 @@ public:
 	struct SkinStruct {
 		D3DXVECTOR4		Data;        // x SpecularStrength, y Roughness, z PerPixelWidth ([Shaders.Skin.Scattering]), w Translucency
 		D3DXVECTOR4		ExtraData;   // x SkyReflectionScale (0 indoors), y wetness (rain x RainWetness), z ShadowScatter, w VanillaMatchedHighlights
+		D3DXVECTOR4		DebugData;   // x [Shaders.Skin.Debug] DebugView, y 1 while the Interiors settings are in use
 	};
 	SkinStruct Constants;
 
@@ -31,6 +32,13 @@ public:
 	// Outdoors only: both are forced off indoors.
 	float SkyReflectionScale = 1.0f;
 	float RainWetness = 0.5f;
+
+	// [Shaders.Skin.Debug] DebugView, indoors and out. 1-7 are drawn by the skin shaders
+	// (SkinTemplate.hlsl); 8-10 by the skin scattering effect, which steps aside for 1-7 so it
+	// does not blur them.
+	int DebugView = 0;
+	static const int DebugViewCount = 10;
+	static const int FirstScatteringDebugView = 8;
 
 	// Vanilla's variants, from the vanilla shaders' own constants and inputs
 	// (shaderpackage010.sdp); see SkinTemplate.hlsl. Vertex shaders come in pairs: static, then

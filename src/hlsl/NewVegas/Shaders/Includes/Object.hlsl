@@ -12,50 +12,52 @@
     #include "includes/SkyAmbient.hlsl"
 #endif
 
-// [Shaders.PBR.*], blended by weather and time (PBRShaders::UpdateConstants).
-float4 TESR_PBRData : register(c32);        // x: specular strength, y: roughness scale, z: light scale, w: ambient scale
-float4 TESR_PBRExtraData : register(c33);   // x: saturation, y: skylight strength, z: vanilla-matched highlights, w: linear lighting
-// [Shaders.PBR.Main] specular: x default roughness (below 0: SpecularOnAll off),
-// y sky reflection strength (0 off, and 0 in interiors), z specular occlusion on,
-// w ambient normal detail.
-float4 TESR_PBRSpecularData : register(c151);
-// [Shaders.PBR.Main] x DebugView (0 off).
-float4 TESR_PBRDebugData : register(c153);
+// Object lighting, as Community Shaders does it (docs/pbr-rework-design.md):
+//   - materials with an authored _rmaos map get true PBR: the OpenPBR Surface base substrate
+//     (PBR.hlsl OpenPBR_*), with CS's ambient occlusion handling
+//   - every other material keeps vanilla's shading: Lambert diffuse, vanilla's Blinn-Phong
+//     highlight on meshes the game flags as specular, vanilla ambient plus NVR's sky ambient,
+//     no reflections
+// Both in linear space when LinearLighting is on.
 
-// Per-object data written for every draw by SetShadersHook (Hooks/Render.cpp), NOT through
-// the TESR_ constant table, hence the name: x is 1 when the mesh carries the engine's Specular
-// flag (BSSP_SPECULAR). Such a mesh gets its highlight from the game's own specular shaders or
-// passes; every other mesh has none unless we add one. y is the engine's specular distance
-// fade for flagged meshes (1 otherwise), which vanilla applies to the whole highlight.
+// [Shaders.PBR.*], blended by weather and time (PBRShaders::UpdateConstants).
+float4 TESR_PBRData : register(c32);        // z: light scale, w: ambient scale
+float4 TESR_PBRExtraData : register(c33);   // y: skylight strength, w: linear lighting
+float4 TESR_PBRSpecularData : register(c151);   // y: 1 outdoors (the sky is the environment), 0 indoors
+float4 TESR_PBRDebugData : register(c153);  // x: DebugView (0 off)
+
+#define LIGHT_SCALE         (TESR_PBRData.z)
+#define AMBIENT_SCALE       (TESR_PBRData.w)
+#define SKY_AMBIENT_STRENGTH (TESR_PBRExtraData.y)
+#define OUTDOORS            (TESR_PBRSpecularData.y > 0.5f)
+
+// Per-object data written for every draw by the per-geometry hooks (NewVegas/Hooks/Shaders.cpp,
+// WriteObjectMaterial), not through the TESR_ constant table: x is 1 when the mesh carries the
+// engine's Specular flag (BSSP_SPECULAR), y is the engine's specular distance fade for flagged
+// meshes (1 otherwise), which vanilla applies to the whole highlight.
 float4 ObjectMaterial : register(c150);
 
-// --- Material ---------------------------------------------------------------------------------
-// What the engine gives a lit mesh (ShadowLightShader::UpdateTogglesConstant): Toggles.z is the
-// material's glossiness, NiMaterialProperty::m_fShine (30 without one), the Blinn-Phong
-// exponent vanilla raises N.H to; the normal map alpha is the specular MASK, how strong the
-// highlight is: vanilla's spec = mask * pow(N.H, shine).
-//
-// So the exponent gives the roughness (the Blinn-Phong to GGX mapping alpha = sqrt(2 / (n + 2)),
-// roughness = sqrt(alpha)) and the mask scales the highlight and the reflection. The old code
-// read the mask as gloss (roughness = 1 - mask), so unmasked areas got a broad full-strength
-// highlight, masked ones a needle, and every mesh's own glossiness was ignored.
-float getMaterialRoughness(float shine) {
-    return clamp(shineToRoughness(shine) * TESR_PBRData.y, 0.04f, 1.0f);
-}
-
-// Hair and the parallax shaders keep the old mask-as-gloss reading.
-float getRoughness(float gloss) {
-    return saturate(max(0.043, 1 - gloss) * TESR_PBRData.y);
-}
+// Per draw too (MaterialMaps in Hooks/Shaders.cpp): x is 1 when the material's authored _rmaos map
+// is bound to RMAOSMap. Channels, as OpenPBR parameters: R specular_roughness, G base_metalness,
+// B ambient occlusion, A specular_weight (1 = the dielectric reflectivity of IOR 1.5, F0 0.04;
+// it also scales the metal's Fresnel). Not Community Shaders' A, which stores F0 itself: a CS map
+// needs its alpha divided by 0.04.
+// y is 1 when the dynamic environment cube (effects/DynamicCubemaps.h) is bound to EnvCubeMap:
+// what is around the camera, linear, GGX prefiltered with roughness = mip / 7.
+float4 MaterialMap : register(c152);
+sampler2D RMAOSMap : register(s10);
+samplerCUBE EnvCubeMap : register(s11);
+#define ENVIRONMENT_CUBE (MaterialMap.y > 0.5f)
+#define ENVIRONMENT_CUBE_MIPS 7.0f
 
 // --- Light-only passes ---------------------------------------------------------------------
 // Meshes lit by several lights or casting projected shadows (actors especially) are drawn in
 // two passes: an AD pass with the albedo forced to 1 (ONLY_LIGHT, AD), then a separate texture
 // pass that MULTIPLIES the frame by the diffuse texture (BSShaderProperty::AddPass::Texture,
 // BSSM_TEXTURE*). The engine still binds the diffuse texture to stage 0 for the AD pass
-// (ShadowLightShader::UpdateDiffuseNormalStages), so the highlight and reflection this shader
-// adds can be divided by it here; the texture pass multiplies them back to their true value,
-// instead of tinting them with the albedo. Without this, such meshes got neither.
+// (ShadowLightShader::UpdateDiffuseNormalStages), so the highlight this shader adds can be
+// divided by it here; the texture pass multiplies it back to its true value, instead of tinting
+// it with the albedo.
 #if defined(ONLY_LIGHT) && !defined(DIFFUSE) && !defined(SPECULAR)
     #define AD_PASS
 #endif
@@ -71,97 +73,66 @@ void setupADCompensation(float3 albedo) {
 #endif
 }
 
-// Per pixel state, set by setupMaterial before any lighting call. Shaders that never call it
-// (ParallaxTemplate) keep the defaults: gamma lighting, unscaled specular, no added highlight.
-static float specularScale = 1.0f;     // direct specular lobe strength
-static float reflectionScale = 1.0f;   // sky reflection strength
-static float extraSpecular = 0.0f;     // 1 when this variant adds a highlight the game would not draw
-static float extraRoughness = 1.0f;
+// 1 in a light-only pass that has taken over its mesh's highlight passes (Includes/MergedLights.hlsl,
+// TESR_MergedLightCount.y): it draws the flagged material's highlight itself, divided by the
+// texture the texture pass multiplies back in, as the specular-only passes would have.
+static bool mergedSpecular = false;
 
-// --- Highlights on every surface ([Shaders.PBR.Main] SpecularOnAll) ---------------------------
-// The game only draws a highlight on meshes with its Specular flag; everything else goes
-// through the diffuse-only shader variants, so most props, rocks and buildings never shine.
-// Those variants add a highlight themselves, at DefaultRoughness and full strength: such meshes
-// have no gloss data (the normal map alpha is not a specular mask there).
-//
-// Never for a mesh that HAS the flag: drawn with several lights, the game splits it into a
-// diffuse-only pass plus its own specular passes (BSShaderPPLightingProperty::
-// GetRenderPasses_2x), and adding one here would double it. Nor in the light-accumulation
-// variants (ONLY_LIGHT, which DIFFUSE implies), whose output is later multiplied by the
-// texture, nor for hair, which has its own specular pass.
-#define DEFAULT_ROUGHNESS (clamp(TESR_PBRSpecularData.x, 0.05f, 1.0f))
+// --- Material ---------------------------------------------------------------------------------
+// Per pixel state, set by setupMaterial before any lighting call.
+static bool   pbrMaterial = false;      // an authored _rmaos map is bound
+static float  pbrRoughness = 1.0f;      // specular_roughness
+static float  pbrMetalness = 0.0f;      // base_metalness
+static float  pbrAO = 1.0f;
+static float  pbrSpecularWeight = 1.0f; // specular_weight
+static float  pbrEta = 1.5f;            // the IOR ratio after specular_weight's modulation
+static float3 pbrAlbedo = 0.5f;         // base_color: the metal's F0 and multi-bounce AO's albedo, real even in light-only passes
 
-// --- Vanilla-matched highlights ([Shaders.PBR.Main] VanillaMatchedHighlights) ---------------
-// FNV's specular masks and glossiness were authored for vanilla's Blinn-Phong highlight,
-// mask * pow(N.H, shine): its peak is mask x the light whatever the glossiness. A physically
-// based GGX lobe for a dielectric (F0 0.04) peaks at F0 / (4 alpha^2) of the light, about 16% at
-// vanilla's default glossiness of 30, so assets come out several times duller than their
-// authors intended. This scales a flagged material's DIRECT highlight by 4 alpha^2 / F0, so its
-// peak matches vanilla's for the same mask and glossiness while keeping the PBR shape (GGX,
-// Fresnel, the sun's disc). 0 is physical, 1 is fully matched; capped at 12x for the very
-// broad lobes of tiny glossiness values. Reflections stay physical: the sky is not a point light.
-float vanillaMatchFactor(float roughness) {
-    float alpha = roughness * roughness;
-    float matched = clamp(4.0f * alpha * alpha / 0.04f, 1.0f, 12.0f);
-    return lerp(1.0f, matched, saturate(TESR_PBRExtraData.z));
+static float  vanillaMask = 0.0f;       // the normal map alpha: vanilla's specular mask
+static float  vanillaShine = 30.0f;     // the material's glossiness, vanilla's Blinn-Phong exponent
+
+// Vanilla's glossiness (NiMaterialProperty::m_fShine) as a perceptual roughness, for the
+// templates that still pass one around and the debug view. Lighting does not use it.
+float getMaterialRoughness(float shine) {
+    return clamp(shineToRoughness(shine), 0.04f, 1.0f);
 }
+float getRoughness(float gloss) {
+    return saturate(max(0.043f, 1.0f - gloss));
+}
+#define DEFAULT_ROUGHNESS 1.0f
 
-// specularMask: the normal map alpha. defaultRoughness: DEFAULT_ROUGHNESS after SpecularAA,
-// computed at top level for its ddx/ddy. materialRoughness: the material's roughness BEFORE
-// SpecularAA, for the vanilla match (matching the widened lobe would undo what the AA is for).
-void setupMaterial(float specularMask, float defaultRoughness, float materialRoughness) {
+// Call once per pixel at the TOP LEVEL of the shader: it samples and takes derivatives.
+//   specularMask: the normal map alpha
+//   shine:        the material's glossiness (Toggles.z, 30 without one)
+//   normalTS:     the normal map's normal, for the authored roughness' specular AA
+//   uv:           the texture coordinates (after any parallax offset)
+//   albedoGamma:  the diffuse texture sample, gamma-encoded, before an AD pass forces it to 1;
+//                 1 where no base texture is bound (DIFFUSE, ONLY_SPECULAR)
+void setupMaterial(float specularMask, float shine, float3 normalTS, float2 uv, float3 albedoGamma) {
     linearLighting = TESR_PBRExtraData.w > 0.0f;
+    vanillaMask = specularMask;
+    vanillaShine = max(shine, 1.0f);
 
-#if defined(HAIR)
-    specularScale = 1.0f;
-    reflectionScale = 1.0f;
-#else
-    reflectionScale = specularMask * TESR_PBRData.x;
-    // Matched against the material's own roughness, before the weather RoughnessScale: matching
-    // the scaled one would hold the peak at vanilla's and cancel the brighter, tighter highlights
-    // rain's lower roughness is meant to give.
-    specularScale = reflectionScale * vanillaMatchFactor(saturate(materialRoughness / max(TESR_PBRData.y, 0.01f)));
-#endif
-
-    // The engine's specular distance fade (ObjectMaterial.y, 1 for unflagged meshes), so a
-    // flagged mesh's highlight and reflection fade out where the game stops drawing its
-    // specular pass instead of popping off. Not in the specular-only passes: the engine has
-    // already multiplied their light colour by the same fade (BSShaderLightingProperty::SetLight1x2x).
-#if !defined(ONLY_SPECULAR)
-    specularScale *= saturate(ObjectMaterial.y);
-    reflectionScale *= saturate(ObjectMaterial.y);
-#endif
-
-#if !defined(SPECULAR) && !defined(ONLY_SPECULAR) && (!defined(ONLY_LIGHT) || defined(AD_PASS)) && !defined(HAIR)
-    extraSpecular = (TESR_PBRSpecularData.x >= 0.0f && ObjectMaterial.x < 0.5f) ? 1.0f : 0.0f;
-    extraRoughness = defaultRoughness;
-    // No gloss data and no vanilla highlight to match: physical strength.
-    if (extraSpecular > 0.0f) {
-        specularScale = TESR_PBRData.x;
-        reflectionScale = TESR_PBRData.x;
-    }
-#endif
+    float4 rmaos = tex2D(RMAOSMap, uv);
+    pbrMaterial = MaterialMap.x > 0.5f;
+    pbrRoughness = SpecularAA(normalTS, clamp(rmaos.r, 0.04f, 1.0f));
+    pbrMetalness = saturate(rmaos.g);
+    pbrAO = saturate(rmaos.b);
+    pbrSpecularWeight = saturate(rmaos.a);
+    pbrEta = OpenPBR_ModulatedIOR(pbrSpecularWeight);
+    pbrAlbedo = decodeColor(albedoGamma);
 }
 
-// --- Normal-mapped ambient ([Shaders.PBR.Main] AmbientNormalDetail) ------------------------
-// The direct lights use the normal map in tangent space, but the sky light and reflections need
-// to know which way each normal-mapped pixel faces in the WORLD: up toward the sky or down
-// toward the ground. They used the smooth geometric normal, so on any surface the sun is not
-// hitting, every fold, seam and panel line in the normal map vanished.
-//
+// --- Normal-mapped ambient -------------------------------------------------------------------
+// The direct lights use the normal map in tangent space, but the sky light needs to know which
+// way each normal-mapped pixel faces in the WORLD: up toward the sky or down toward the ground.
 // The vertex shader expresses world UP in the normal map's own space, through the engine's own
-// tangent frame (the world images of the mesh's tangent, binormal and normal, packed into spare
-// interpolator channels). dot(normal map, that up) is then exactly how much each normal-mapped
-// pixel faces the sky, with no tangent convention to match: it is the engine's frame.
-//
-// The ambient normal keeps the geometric normal's compass heading and takes its up/down from the
-// normal map, which is what the sky and ground terms depend on most. AmbientNormalDetail blends
-// the up/down toward the geometric normal's (0 is the old, flat behaviour). valid is 0 under a
-// vanilla vertex shader, where the packed channels are undefined.
+// tangent frame; dot(normal map, that up) is how much each pixel faces the sky. The ambient
+// normal keeps the geometric normal's compass heading and takes its up/down from the normal map.
+// valid is 0 under a vanilla vertex shader, where the packed channels are undefined.
 float3 getAmbientNormal(float3 normalTS, float3 upTS, float3 geometricNormal, float valid) {
     float mapUp = clamp(dot(normalTS, upTS), -1.0f, 1.0f);
-    float detail = valid > 0.0f ? saturate(TESR_PBRSpecularData.w) : 0.0f;
-    float up = lerp(geometricNormal.z, mapUp, detail);
+    float up = valid > 0.0f ? mapUp : geometricNormal.z;
 
     float2 heading = geometricNormal.xy;
     float headingLength = length(heading);
@@ -176,30 +147,8 @@ float3 rebuildUpTS(float2 xy, float3 geometricNormal) {
     return float3(xy, geometricNormal.z >= 0.0f ? z : -z);
 }
 
-// Vanilla
-float3 getVanillaLighting(float3 lightDir, float radius, float3 lightColor, float3 viewDir, float3 normal, float3 albedo, float gloss, float glossPower) {
-    float att = vanillaAtt(lightDir, radius);
-
-    lightDir = normalize(lightDir);
-    viewDir = normalize(viewDir);
-    float3 halfwayDir = normalize(lightDir + viewDir);
-
-    float NdotL = shades(normal.xyz, lightDir.xyz);
-
-    #if defined(ONLY_SPECULAR)
-        float specStrength = gloss * pow(abs(shades(normal.xyz, halfwayDir.xyz)), glossPower);
-        float3 lighting = saturate(((0.2 >= NdotL ? (specStrength * saturate(NdotL + 0.5)) : specStrength) * lightColor.rgb) * att);
-    #elif defined(SPECULAR)
-        float specStrength = gloss * pow(abs(shades(normal.xyz, halfwayDir.xyz)), glossPower);
-        float3 lighting = albedo.rgb * NdotL * lightColor.rgb * att;
-        lighting += saturate(((0.2 >= NdotL ? (specStrength * saturate(NdotL + 0.5)) : specStrength) * lightColor.rgb) * att);
-    #else
-        float3 lighting = albedo.rgb * NdotL * lightColor.rgb * att;
-    #endif
-
-    return lighting;
-}
-
+// --- Vanilla shading, in gamma space -----------------------------------------------------------
+// The parallax shader's vanilla fallback (PBR off) and the merged lamps under it.
 float3 getVanillaLightingAtt(float3 lightDir, float att, float3 lightColor, float3 viewDir, float3 normal, float3 albedo, float gloss, float glossPower) {
     lightDir = normalize(lightDir);
     viewDir = normalize(viewDir);
@@ -221,27 +170,65 @@ float3 getVanillaLightingAtt(float3 lightDir, float att, float3 lightColor, floa
     return lighting;
 }
 
-// --- PBR direct lighting ----------------------------------------------------------------------
+float3 getVanillaLighting(float3 lightDir, float radius, float3 lightColor, float3 viewDir, float3 normal, float3 albedo, float gloss, float glossPower) {
+    return getVanillaLightingAtt(lightDir, vanillaAtt(lightDir, radius), lightColor, viewDir, normal, albedo, gloss, glossPower);
+}
+
+// --- Direct light -------------------------------------------------------------------------------
+// One light, already decoded and scaled (linear when LinearLighting is on). Which terms a
+// variant draws:
+//   ONLY_SPECULAR (the engine's highlight passes): the highlight alone. Its light colour already
+//     carries the engine's specular distance fade (BSShaderLightingProperty::SetLight1x2x).
+//     Authored materials never get here: their highlight passes are muted and the highlight is
+//     drawn with the rest (MaterialMaps in Hooks/Shaders.cpp), since these passes have no
+//     base_color for a metal's Fresnel.
+//   SPECULAR (one full pass): diffuse and highlight.
+//   the rest (diffuse-only and light-only): diffuse; the highlight too for authored materials,
+//     and for vanilla ones whose highlight passes were merged in. Divided by the texture in the
+//     light-only pass, which the texture pass multiplies back in.
+
+// Vanilla's Blinn-Phong highlight, mask x N.H^shine, with its lift below N.L 0.2.
+float3 vanillaHighlight(float3 N, float3 L, float3 V, float NdotL, float3 light) {
+    float specStrength = vanillaMask * pow(saturate(dot(N, normalize(L + V))), vanillaShine);
+    return saturate((NdotL <= 0.2f ? specStrength * saturate(NdotL + 0.5f) : specStrength) * light);
+}
+
+float3 directLight(float3 L, float3 light, float3 V, float3 N, float3 albedo) {
+    L = normalize(L);
+    V = normalize(V);
+    N = normalize(N);
+
+    [branch] if (pbrMaterial) {
+        float3 diffuse, specular;
+        OpenPBR_DirectLight(N, V, L, light, pbrRoughness, pbrMetalness, pbrSpecularWeight, pbrEta, albedo, pbrAlbedo, diffuse, specular);
+        #if defined(ONLY_SPECULAR)
+            return specular;
+        #else
+            return diffuse + specular * adCompensation;
+        #endif
+    }
+
+    float NdotL = saturate(dot(N, L));
+    #if defined(ONLY_SPECULAR)
+        return vanillaHighlight(N, L, V, NdotL, light);
+    #elif defined(SPECULAR)
+        return albedo * NdotL * light + vanillaHighlight(N, L, V, NdotL, light) * saturate(ObjectMaterial.y);
+    #else
+        float3 diffuse = albedo * NdotL * light;
+        [branch] if (mergedSpecular)
+            diffuse += vanillaHighlight(N, L, V, NdotL, light) * saturate(ObjectMaterial.y) * adCompensation;
+        return diffuse;
+    #endif
+}
+
 // lightColor arrives gamma-encoded, as the engine supplies it, with any GAMMA-space factor the
 // vanilla pipeline applies already in (projected shadow maps, STBB's 0.85): decodeColor turns
 // it linear when linear lighting is on. Point light attenuation is applied inside the decode,
 // so lights keep the falloff the game was tuned with. visibility (the forward sun shadow) is a
-// real visibility and is applied to the decoded light.
-
+// real visibility and is applied to the decoded light. roughness is unused (the material state
+// holds it); the parameter stays for the templates.
 float3 getPointLightLightingAtt(float3 lightDir, float att, float3 lightColor, float3 viewDir, float3 normal, float3 albedo, float roughness) {
-    lightColor = decodeColor(lightColor * att) * TESR_PBRData.z;
-    albedo = lerp(luma(albedo), albedo, TESR_PBRExtraData.x);
-
-    #if defined(ONLY_SPECULAR)
-        return PBRSpecular(0, roughness, albedo, normal, viewDir, lightDir, lightColor, specularScale);
-    #elif defined(SPECULAR)
-        return PBR(0, roughness, albedo, normal, viewDir, lightDir, lightColor, specularScale);
-    #else
-        [branch] if (extraSpecular > 0.0f)
-            return PBRDiffuse(0, extraRoughness, albedo, normal, viewDir, lightDir, lightColor)
-                 + PBRSpecular(0, extraRoughness, albedo, normal, viewDir, lightDir, lightColor, specularScale) * adCompensation;
-        return PBRDiffuse(0, roughness, albedo, normal, viewDir, lightDir, lightColor);
-    #endif
+    return directLight(lightDir, decodeColor(lightColor * att) * LIGHT_SCALE, viewDir, normal, albedo);
 }
 
 float3 getPointLightLighting(float3 lightDir, float radius, float3 lightColor, float3 viewDir, float3 normal, float3 albedo, float roughness) {
@@ -249,126 +236,97 @@ float3 getPointLightLighting(float3 lightDir, float radius, float3 lightColor, f
 }
 
 float3 getSunLighting(float3 lightDir, float3 lightColor, float3 viewDir, float3 normal, float3 albedo, float roughness, float visibility = 1.0f) {
-    lightColor = decodeColor(lightColor) * visibility * TESR_PBRData.z;
-    albedo = lerp(luma(albedo), albedo, TESR_PBRExtraData.x);
-
-    #if defined(ONLY_SPECULAR)
-        return PBRSunSpecular(0, roughness, albedo, normal, viewDir, lightDir, lightColor, specularScale);
-    #elif defined(SPECULAR)
-        return PBRSun(0, roughness, albedo, normal, viewDir, lightDir, lightColor, specularScale);
-    #else
-        [branch] if (extraSpecular > 0.0f)
-            return PBRDiffuse(0, extraRoughness, albedo, normal, viewDir, lightDir, lightColor)
-                 + PBRSunSpecular(0, extraRoughness, albedo, normal, viewDir, lightDir, lightColor, specularScale) * adCompensation;
-        return PBRDiffuse(0, roughness, albedo, normal, viewDir, lightDir, lightColor);
-    #endif
+    return directLight(lightDir, decodeColor(lightColor) * visibility * LIGHT_SCALE, viewDir, normal, albedo);
 }
 
 // [_Main.Develop.Main], via Debug.cpp UpdateSettings. c135: c132 is TESR_ShadowBlur.
-// Populated even with Shaders.Debug disabled -- Debug has no per-frame UpdateConstants.
 float4 TESR_DebugVar : register(c135);
 
-// --- Hemisphere skylight ------------------------------------------------------------------
-// Additive upper-sky term on top of the weather ambient. [Shaders.PBR.*] SkylightingScale;
-// no separate toggle, 0 disables the term.
-#define SKY_AMBIENT_STRENGTH  (TESR_PBRExtraData.y)
-
-// --- Sky reflections ([Shaders.PBR.Main] SkyReflectionScale) ------------------------------
-// The specular counterpart of the skylight: what the sky contributes as a REFLECTION. Without
-// it a surface reflects nothing but the sun's highlight and reads as matte from every other
-// angle; with it, glancing angles pick up the sky (Fresnel) and rough surfaces a soft sheen.
+// --- Ambient ----------------------------------------------------------------------------------
+// Vanilla materials: the weather ambient plus NVR's sky light (TESR_SkyIrradiance, the
+// counterpart of Community Shaders' Skylighting), times the albedo; no reflections.
 //
-// There is no environment map. The sky is TESR_SkyIrradiance, order-2 spherical harmonics
-// convolved with the cosine lobe (A0/pi = 1, A1/pi = 2/3, A2/pi = 1/4, see
-// SkyShaders::UpdateConstants): dividing those factors back out recovers the radiance as sharp
-// as nine coefficients hold it, leaving them in is the fully rough answer, and roughness blends
-// band by band.
+// Authored materials: the OpenPBR substrate's environment lobes (OpenPBR_EnvironmentWeights, split
+// sum with energy compensation). The diffuse ambient is the irradiance x base_color x the share
+// the dielectric's reflection leaves x CS's multi-bounce AO; the reflection is the environment x
+// the specular lobe x CS's specular occlusion. The environment is the dynamic cubemap built from
+// the screen (as CS's Dynamic Cubemaps; it falls back to the sky and the room's light where
+// nothing was seen). Without it, the sky outdoors and the room's ambient light indoors: a metal
+// reflecting nothing would go black.
 //
-// The reflection follows the per-pixel world normal (getAmbientNormal), so normal-map detail
-// ripples through it; the horizon test uses the geometric normal.
-//
-// Interiors get 0 from the C++ side: nothing occludes this sky, so indoors it would light
-// every surface from a sky it cannot see.
-// SKY_REFLECTION_GROUND, EnvBRDFApprox and SkyReflectionRadiance live in SkyAmbient.hlsl, shared
-// with the terrain shaders.
+// The templates call getObjectSkyReflection first, then getAmbientLighting.
 
-// worldPos is camera-relative, as GetShadowWorldPos builds it; normal is the world normal
-// from getAmbientNormal. valid is 0 under a vanilla vertex shader.
-float3 getSkyReflection(float3 worldPos, float3 geometricNormal, float3 normal, float roughness, float valid) {
-    float3 v = -normalize(worldPos);
-    float3 r = reflect(-v, normal);
-    float3 radiance = SkyReflectionRadiance(r, roughness);
-    float NdotV = saturate(dot(normal, v));
+static float3 pbrSpecularLobe = 0.0f;   // set by getObjectSkyReflection, used by getAmbientLighting
+static float  pbrDiffuseShare = 1.0f;
+static float  pbrSpecularOcclusion = 1.0f;
 
-    // Specular occlusion ([Shaders.PBR.Main] SpecularOcclusion): a normal map can tilt the
-    // reflection below the real surface, where it would see the inside of the object; fade it
-    // out as it crosses the geometric horizon. Crevices are left to the ambient occlusion
-    // effect, which darkens the final colour, reflections included.
-    float horizon = 1.0f;
-    [flatten] if (TESR_PBRSpecularData.z > 0.0f) {
-        horizon = saturate(1.0f + 1.2f * dot(r, geometricNormal));
-        horizon *= horizon;
-    }
+// Light-accumulation and highlight-only variants draw no ambient.
+#if (defined(ONLY_LIGHT) && !defined(AD_PASS)) || defined(ONLY_SPECULAR)
+    #define NO_AMBIENT
+#endif
 
-    // Radiance is linear: encode it for gamma lighting, as SkyAmbient.hlsl does for the
-    // skylight. Dielectric F0 (metalness is 0 everywhere; nothing in FNV's data marks metal).
-    // The select keeps an undefined worldPos from reaching the output as NaN.
-    float3 sky = linearLighting ? radiance : sqrt(radiance);
-    float3 reflected = EnvBRDFApprox(float(0.04f).rrr, roughness, NdotV) * horizon * reflectionScale * TESR_PBRSpecularData.y;
-    skyReflectedFraction = valid > 0.0f ? saturate(reflected) : 0.0f;   // see SkyAmbient.hlsl
-    return valid > 0.0f ? sky * reflected : 0.0f;
-}
-
-// Which surfaces reflect, and at what roughness. materialRoughness is the template's own; it
-// is only meaningful on meshes with the Specular flag.
+// worldPos is camera-relative, as GetShadowWorldPos builds it; normal is the world normal from
+// getAmbientNormal. valid is 0 under a vanilla vertex shader.
 float3 getObjectSkyReflection(float3 worldPos, float3 geometricNormal, float3 normal, float materialRoughness, float valid) {
-#if (defined(ONLY_LIGHT) && !defined(AD_PASS)) || defined(ONLY_SPECULAR) || defined(HAIR)
+#ifdef NO_AMBIENT
     return 0.0f;
 #else
-    #if defined(SPECULAR)
-        float reflects = 1.0f;
-        float roughness = materialRoughness;
-    #else
-        // A flagged mesh drawn as diffuse-only plus separate specular passes: those passes add
-        // no ambient, so its reflection belongs here, at its own roughness. Unflagged meshes
-        // reflect only with SpecularOnAll, at the default roughness.
-        bool flagged = ObjectMaterial.x >= 0.5f;
-        float reflects = flagged ? 1.0f : extraSpecular;
-        float roughness = flagged ? materialRoughness : extraRoughness;
-    #endif
-    [branch] if (reflects * reflectionScale * TESR_PBRSpecularData.y <= 0.0f)
+    [branch] if (!pbrMaterial || valid <= 0.0f)
         return 0.0f;
-    return getSkyReflection(worldPos, geometricNormal, normal, roughness, valid) * adCompensation;
+
+    float3 V = -normalize(worldPos);
+    float NdotV = saturate(dot(normal, V));
+    OpenPBR_EnvironmentWeights(NdotV, pbrRoughness, pbrMetalness, pbrSpecularWeight, pbrEta, pbrAlbedo, pbrSpecularLobe, pbrDiffuseShare);
+    pbrSpecularOcclusion = CS_SpecularOcclusion(NdotV, pbrRoughness * pbrRoughness, pbrAO);
+
+    [branch] if (!OUTDOORS && !ENVIRONMENT_CUBE)
+        return 0.0f;   // indoors without the cube the environment is the ambient light: getAmbientLighting
+
+    // A normal map can tilt the reflection below the real surface, where it would see the inside
+    // of the object: fade it out as it crosses the geometric horizon.
+    float3 r = reflect(-V, normal);
+    float horizon = saturate(1.0f + 1.2f * dot(r, geometricNormal));
+    float3 radiance;   // linear
+    [branch] if (ENVIRONMENT_CUBE)
+        radiance = texCUBElod(EnvCubeMap, float4(r, pbrRoughness * ENVIRONMENT_CUBE_MIPS)).rgb;
+    else
+        radiance = SkyReflectionRadiance(r, pbrRoughness);
+    float3 environment = linearLighting ? radiance : sqrt(radiance);
+    return environment * pbrSpecularLobe * (pbrSpecularOcclusion * horizon * horizon) * adCompensation;
 #endif
 }
 
-// Both scaled by (1 - skyReflectedFraction): the energy balance with the sky reflection, which
-// the templates evaluate first. See SkyAmbient.hlsl.
-float3 getAmbientLighting(float3 ambient, float3 albedo) {
-    return decodeColor(ambient) * TESR_PBRData.w * albedo * (1.0f - skyReflectedFraction);
+float3 getAmbientLighting(float3 ambient, float3 albedo, float3 worldNormal, float worldNormalValid) {
+    float3 flatAmbient = decodeColor(ambient) * AMBIENT_SCALE;
+
+    // SkylightingScale is the sky's only strength knob: a second, independent light source, not a
+    // tint on the weather ambient. Decoded on its own, as SkyAmbientRadiance returns it encoded.
+    // worldNormalValid is 0 under a vanilla VS, where the carried world position is undefined.
+    float3 irradiance = flatAmbient + decodeColor(SkyAmbientRadiance(worldNormal)) * SKY_AMBIENT_STRENGTH * worldNormalValid;
+
+#ifndef NO_AMBIENT
+    [branch] if (pbrMaterial) {
+        float3 diffuse = irradiance * albedo * pbrDiffuseShare * CS_MultiBounceAO(pbrAlbedo, pbrAO);
+        float3 indoorReflection = (OUTDOORS || ENVIRONMENT_CUBE) ? 0.0f : flatAmbient * pbrSpecularLobe * pbrSpecularOcclusion * adCompensation;
+        return diffuse + indoorReflection;
+    }
+#endif
+    return irradiance * albedo;
 }
 
-float3 getAmbientLighting(float3 ambient, float3 albedo, float3 worldNormal, float worldNormalValid) {
-    float3 flatAmbient = decodeColor(ambient) * TESR_PBRData.w;
-
-    // AmbientScale (TESR_PBRData.w) scales the weather ambient above but not this: the sky is a
-    // second, independent light source, so SkylightingScale is its only strength knob and it
-    // survives AmbientScale = 0. Decoded on its own before the sum, as SkyAmbientRadiance
-    // returns it encoded.
-    float3 skyTerm = decodeColor(SkyAmbientRadiance(worldNormal)) * SKY_AMBIENT_STRENGTH;
-
-    // worldNormalValid is 0 under a vanilla VS, where the carried world position is undefined.
-    return (flatAmbient + skyTerm * worldNormalValid) * albedo * (1.0f - skyReflectedFraction);
+float3 getAmbientLighting(float3 ambient, float3 albedo) {
+    return getAmbientLighting(ambient, albedo, float3(0.0f, 0.0f, 1.0f), 0.0f);
 }
 
 // --- Material debug view ([Shaders.PBR.Main] DebugView) -------------------------------------
-// 1 roughness, 2 highlight strength (mask x SpecularStrength x vanilla match x distance fade, /4), 3 flags (red: the
-// mesh has the engine's Specular flag, green: its specular distance fade, blue: highlight added by
-// SpecularOnAll), 4 ambient normal (how much each pixel faces the sky: white up, black down).
+// 1 roughness (authored; vanilla materials show their glossiness as roughness), 2 metalness,
+// 3 flags (red: the engine's Specular flag, green: an authored _rmaos map, blue: its specular
+// distance fade), 4 ambient normal (how much each pixel faces the sky: white up, black down),
+// 5 the dynamic environment cube along the normal, sharp (authored materials; black without it).
 float3 getMaterialDebug(float mode, float roughness, float3 ambientNormal) {
-    float r = extraSpecular > 0.0f ? extraRoughness : roughness;
-    if (mode < 1.5f) return r.xxx;
-    if (mode < 2.5f) return saturate(specularScale * 0.25f).xxx;
-    if (mode < 3.5f) return float3(ObjectMaterial.x, saturate(ObjectMaterial.y), extraSpecular);
-    return (ambientNormal.z * 0.5f + 0.5f).xxx;
+    if (mode < 1.5f) return (pbrMaterial ? pbrRoughness : roughness).xxx;
+    if (mode < 2.5f) return (pbrMaterial ? pbrMetalness : 0.0f).xxx;
+    if (mode < 3.5f) return float3(ObjectMaterial.x, pbrMaterial ? 1.0f : 0.0f, saturate(ObjectMaterial.y));
+    if (mode < 4.5f) return (ambientNormal.z * 0.5f + 0.5f).xxx;
+    return (pbrMaterial && ENVIRONMENT_CUBE) ? sqrt(texCUBElod(EnvCubeMap, float4(ambientNormal, 0.0f)).rgb) : 0.0f;
 }

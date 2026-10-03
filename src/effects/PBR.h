@@ -112,17 +112,12 @@ public:
 	};
 
 	// Per weather and time, blended by UpdateConstants: [Shaders.PBR.Main|Rain|Night|NightRain|Interiors].
+	// Object lighting follows Community Shaders (docs/pbr-rework-design.md): vanilla shading for
+	// vanilla materials, true PBR for authored _rmaos ones, so only the light strengths are settings.
 	struct PBRSettings {
 		float LightScale;
 		float AmbientScale;
-		float RoughnessScale;
-		float Saturation;
 		float SkylightingScale;
-		float SpecularStrength;
-		float VanillaMatchedHighlights;
-		float DefaultRoughness;
-		float SkyReflectionScale;
-		float AmbientNormalDetail;
 	};
 	struct PBRSettingsStruct {
 		PBRSettings Default;
@@ -137,16 +132,15 @@ public:
 	// See Shaders/Includes/Object.hlsl and the "Lighting space" notes in PBR.hlsl.
 	struct PBRMaterialSettings {
 		bool  LinearLighting;
-		bool  SpecularOnAll;
-		bool  SpecularOcclusion;
+		bool  MergeLightPasses;   // with LinearLighting: point lights the game splits into extra passes are lit in the first one (Hooks/Shaders.cpp)
 		int   DebugView;
 	};
 	PBRMaterialSettings MaterialSettings;
 
 	struct PBRStruct {
-		D3DXVECTOR4		Data;           // x: specular strength, y: roughness scale, z: light scale, w: ambient scale
-		D3DXVECTOR4		ExtraData;      // x: saturation, y: skylight strength, z: vanilla-matched highlights, w: linear lighting
-		D3DXVECTOR4		SpecularData;   // x: default roughness (below 0: SpecularOnAll off), y: sky reflection strength, z: specular occlusion, w: ambient normal detail
+		D3DXVECTOR4		Data;           // x, y: 1 (unused), z: light scale, w: ambient scale
+		D3DXVECTOR4		ExtraData;      // x: 1 (unused), y: skylight strength, z: 0 (unused), w: linear lighting
+		D3DXVECTOR4		SpecularData;   // y: 1 outdoors (authored materials reflect the sky), 0 indoors (they reflect the ambient light)
 		D3DXVECTOR4		DebugData;      // x: material debug view (0 off)
 	};
 	PBRStruct	Constants;

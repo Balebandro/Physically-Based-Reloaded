@@ -2437,6 +2437,33 @@ static void RenderContent() {
 	ImGui::Separator();
 	ImGui::Spacing();
 
+	// Pages split by location: say which one is in charge where the player stands, or edits to
+	// the other one look like settings that stopped working after a cell change.
+	{
+		const bool isExterior = TheShaderManager->GameState.isExterior;
+		const char* notice = nullptr;
+		if (!isExterior) {
+			if (SelectedSection == "Shaders.Skin.Main" || SelectedSection == "Shaders.Skin.Scattering")
+				notice = "You are indoors: skin uses Skin > Interiors here. These settings apply outdoors (Skin > Debug works everywhere).";
+			else if (SelectedSection == "Shaders.PBR.Main")
+				notice = "You are indoors: the per-weather values use PBR > Interiors here. LinearLighting, MergeLightPasses and DebugView still apply.";
+			else if (SelectedSection == "Shaders.PBR.Night" || SelectedSection == "Shaders.PBR.Rain" || SelectedSection == "Shaders.PBR.NightRain")
+				notice = "You are indoors: PBR uses PBR > Interiors here. These settings apply outdoors.";
+		}
+		else {
+			if (SelectedSection == "Shaders.Skin.Interiors")
+				notice = "You are outdoors: skin uses Skin > Main and Skin > Scattering here. These settings apply indoors.";
+			else if (SelectedSection == "Shaders.PBR.Interiors")
+				notice = "You are outdoors: PBR uses PBR > Main / Night / Rain / NightRain here. These settings apply indoors.";
+		}
+		if (notice) {
+			ImGui::PushTextWrapPos(0.0f);
+			ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f), "%s", notice);
+			ImGui::PopTextWrapPos();
+			ImGui::Spacing();
+		}
+	}
+
 	// LUT section: render DNI cycle pickers before the normal settings loop
 	if (SelectedSection == "Shaders.LUT.Main") {
 		LUTEffect* lut = TheShaderManager->Effects.LUT;

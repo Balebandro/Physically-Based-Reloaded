@@ -247,6 +247,8 @@ struct PS_INPUT {
 #elif defined(ONLY_LIGHT)
     sampler2D BaseMap : register(s0);
     sampler2D NormalMap : register(s1);
+    sampler2D FaceGenMap0 : register(s2);   // bound by the SkinShader hook on faces (SkinScreenSpaceScatter.y)
+    sampler2D FaceGenMap1 : register(s3);
     #ifdef PROJ_SHADOW
         sampler2D ShadowMap : register(s5);
         sampler2D ShadowMaskMap : register(s6);
@@ -292,6 +294,57 @@ float3 PointLight(int i, float3 d, float3 albedo, float3 N, float3 Nsoft, float3
     #endif
 }
 
+// [Shaders.Skin.Debug] DebugView 1-7, replacing the colour this pass writes:
+//   1 which pass drew the skin: green one full pass (the sun and up to one point light), cyan one
+//     full pass with up to four point lights, yellow a light-only pass the engine multiplies by
+//     the texture afterwards, red added for every extra point-light pass on top. Indoors, skin
+//     usually goes the yellow and red route.
+//   2 which settings are in use: blue Interiors, orange outdoors (Main + Scattering); bright where
+//     the screen-space blur takes this skin, dark where per-pixel diffusion stands in
+//   3 direct light (sun and lamps, with the scattering and translucency) on white skin
+//   4 ambient and sky light on white skin
+//   5 highlights alone: the lights' and the sky reflection
+//   6 material: red roughness, green highlight strength (specular mask x SpecularStrength), blue
+//     the VanillaMatchedHighlights boost (full at its 12x cap)
+//   7 curvature: red the per-pixel diffusion (PerPixelWidth; 0 where the blur takes over), green
+//     thin features, where Translucency can show
+// The light-only passes are divided by the texture the engine multiplies them by afterwards, so
+// every view reads true. The extra point-light passes add to the pass under them: in 3 and 5 they
+// add their own light (the engine's texture pass tints it), elsewhere nothing, or red in 1.
+float3 SkinDebugView(float view, float3 direct, float3 ambient, float3 highlights, float3 albedo, float3 adAlbedo) {
+    #if defined(DIFFUSE)
+        if (view < 1.5f) return float3(0.5f, 0.0f, 0.0f);
+        if (view > 2.5f && view < 3.5f) return encodeColor(direct);
+        if (view > 4.5f && view < 5.5f) return encodeColor(highlights);
+        return 0.0f;
+    #else
+        float3 onWhite = 1.0f / max(albedo, 0.02f);   // light as it would fall on white skin
+        float3 c;
+        if (view < 1.5f) {
+            #if defined(ONLY_LIGHT)
+                c = float3(1.0f, 1.0f, 0.0f);
+            #elif defined(MANY)
+                c = float3(0.0f, 1.0f, 1.0f);
+            #else
+                c = float3(0.0f, 1.0f, 0.0f);
+            #endif
+        }
+        else if (view < 2.5f) {
+            c = TESR_SkinDebugData.y > 0.0f ? float3(0.2f, 0.45f, 1.0f) : float3(1.0f, 0.55f, 0.1f);
+            c *= SkinScreenSpaceScatter.x > 0.0f ? 1.0f : 0.3f;
+        }
+        else if (view < 3.5f) c = encodeColor(direct * onWhite);
+        else if (view < 4.5f) c = encodeColor(ambient * onWhite);
+        else if (view < 5.5f) c = encodeColor(highlights);
+        else if (view < 6.5f) c = float3(skinRoughness, saturate(skinSpecScale * 0.5f), saturate((skinVanillaMatch - 1.0f) / 11.0f));
+        else c = float3(skinCurvature, skinThinness, 0.0f);
+        #if defined(ONLY_LIGHT)
+            c /= max(adAlbedo, 0.05f);
+        #endif
+        return c;
+    #endif
+}
+
 // COLOR1 goes to the skin scattering effect's target, bound only during NVR's skin draws in the
 // main scene (src/effects/SkinScattering.h); anywhere else it is discarded.
 //   rgb  the highlights' share of COLOR0 (gamma, fogged), which the effect takes out before it
@@ -316,7 +369,10 @@ PS_OUTPUT main(PS_INPUT IN) {
         float3 adAlbedo = 1.0f;   // no base texture bound to divide by
     #elif defined(ONLY_LIGHT)
         float4 baseColor = tex2D(BaseMap, IN.uv.xy);
-        float3 adAlbedo = baseColor.rgb;
+        // What the engine multiplies this pass by afterwards: the base texture, or on faces the
+        // FaceGen blend its texture pass (SLS1005) applies, the same as the full pass's.
+        float3 faceGenColor = 2.0f * ((expand(tex2D(FaceGenMap0, IN.uv.xy).rgb) + baseColor.rgb) * (2.0f * tex2D(FaceGenMap1, IN.uv.xy).rgb));
+        float3 adAlbedo = SkinScreenSpaceScatter.y > 0.0f ? faceGenColor : baseColor.rgb;
         baseColor.rgb = 1.0f;
     #else
         float4 baseTexture = tex2D(BaseMap, IN.uv.xy);
@@ -361,6 +417,7 @@ PS_OUTPUT main(PS_INPUT IN) {
     // --- lights: diffuse and highlights kept apart (see PS_OUTPUT)
     float3 diffuseLight = 0.0f;
     float3 specularLight = 0.0f;
+    float3 ambientLight = 0.0f;   // kept apart for the debug views
     float3 specular;
 
     #if !defined(DIFFUSE)
@@ -386,14 +443,34 @@ PS_OUTPUT main(PS_INPUT IN) {
         specularLight += specular;
     #endif
 
+    // --- the lamps of the mesh's additive passes, which are then muted (Includes/MergedLights.hlsl)
+    // Light-only passes only, without transmission (SkinLampLight). Each lamp's vector goes into
+    // tangent space through the world frame, divided by its radius, as the vertex shader does for
+    // its own lamps. The frame is read straight from the interpolators inside the loop: held in
+    // temporaries next to everything else it overflows ps_3_0's 32.
+    #if defined(ONLY_LIGHT) && !defined(DIFFUSE)
+        [branch] if (TESR_MergedLightCount.x > 0.0f) {
+            [loop] for (int i = 0; i < MERGED_MAX_LIGHTS; i++) {
+                if (i >= TESR_MergedLightCount.x) break;
+                float3 toLamp = TESR_MergedLightPosition[i].xyz - IN.shadowWorldPos.xyz;
+                float3 d = float3(dot(normalize(IN.tangent.xyz), toLamp), dot(normalize(IN.binormal.xyz), toLamp), dot(normalize(IN.normal.xyz), toLamp)) / TESR_MergedLightPosition[i].w;
+                float3 lampColor = TESR_MergedLightColor[i].rgb * (1.0f - saturate(dot(d, d)));
+                diffuseLight += SkinLampLight(albedo, N, Nsoft, V, d, lampColor, specular);
+                specularLight += specular;
+            }
+        }
+    #endif
+
     // --- sky and ambient (reflection first: it sets the share of the ambient it takes)
     #if !defined(DIFFUSE)
         // Built here, not at the top: nine values held through every light overflow ps_3_0's
         // 32 temporaries in the many-light variants.
         float3x3 worldFrame = float3x3(normalize(IN.tangent.xyz), normalize(IN.binormal.xyz), normalize(IN.normal.xyz));
         float3 worldN = normalize(mul(N, worldFrame));
+
         specularLight += SkinSkyReflection(-normalize(worldPos), worldFrame[2], worldN);
-        diffuseLight += SkinAmbient(AmbientColor.rgb, albedo, worldN, normalize(mul(Nsoft, worldFrame)));
+        ambientLight = SkinAmbient(AmbientColor.rgb, albedo, worldN, normalize(mul(Nsoft, worldFrame)));
+        diffuseLight += ambientLight;
     #endif
 
     float4 color;
@@ -412,6 +489,9 @@ PS_OUTPUT main(PS_INPUT IN) {
         color.rgb = fogOn ? lerp(color.rgb, IN.fog.rgb, IN.fog.a) : color.rgb;
         specularShare *= fogOn ? 1.0f - IN.fog.a : 1.0f;
     #endif
+
+    [branch] if (TESR_SkinDebugData.x > 0.0f)
+        color.rgb = SkinDebugView(TESR_SkinDebugData.x, diffuseLight - ambientLight, ambientLight, specularLight, albedo, adAlbedo);
 
     #if defined(DIFFUSE)
         color.a = 1.0f;

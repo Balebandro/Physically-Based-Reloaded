@@ -12,6 +12,558 @@ void __fastcall SkyShader__UpdateConstants(SkyShader* apThis, void*, const NiPro
     TheRenderManager->device->SetPixelShaderConstantF(20, (const float*)&TheShaderManager->ShaderConst.skyObjectID, 1);
 }
 
+// Per-object material data for the PBR object shaders: ObjectMaterial, pixel register c150
+// (Shaders/Includes/Object.hlsl), set directly, not through the TESR_ constant table.
+//   x = 1 when the mesh has the engine's Specular flag, so the diffuse-only shader variants
+//       know not to add a highlight the game draws in its own specular pass.
+//   y = the engine's specular distance fade, BSShaderPPLightingProperty::GetSpecularLODFade
+//       (0xB66B80): 1 up to fSpecularLODStartFade, 0 from fSpecularLODEnd on, where the game
+//       stops drawing the specular pass. Vanilla fades the highlight with it so it does not pop.
+// Written by SetShadersHook (once per batch) and by the per-geometry hooks below (every draw):
+// within a batch each mesh has its own.
+void WriteObjectMaterial(NiGeometry* Geometry) {
+    float ObjectMaterial[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
+    if (Geometry) {
+        BSShaderProperty* ShaderProperty = static_cast<BSShaderProperty*>(Geometry->GetProperty(NiProperty::kType_Shade));
+        if (ShaderProperty && ShaderProperty->GetFlag(BSSP_SPECULAR)) {
+            ObjectMaterial[0] = 1.0f;
+            const float StartFade = *(float*)0x011F9454;   // BSShaderManager::fSpecularLODStartFade
+            const float End = *(float*)0x011F9458;         // BSShaderManager::fSpecularLODEnd
+            const float Distance = ShaderProperty->fLODFade;   // fCameraDistance in the engine's own layout (0x34)
+            const bool Stinger = (ShaderProperty->ulFlags[1] & BSShaderProperty::stinger_prop) != 0;
+            if (End > 0.0f && !Stinger && Distance > StartFade)
+                ObjectMaterial[1] = Distance >= End ? 0.0f : 1.0f - (Distance - StartFade) / max(End - StartFade, 1e-3f);
+        }
+    }
+    TheRenderManager->device->SetPixelShaderConstantF(150, ObjectMaterial, 1);
+}
+
+// --- Authored material maps (_rmaos) ---------------------------------------------------------
+// The texture slot for Community Shaders style PBR materials (docs/pbr-rework-design.md): a
+// material whose diffuse texture `foo.dds` has a companion `foo_rmaos.dds` (loose or in a BSA) is
+// lit with true PBR (Shaders/Includes/Object.hlsl). Channels: R roughness, G metalness, B ambient
+// occlusion, A specular (F0). No NIF editing: the companion is found by name.
+//
+// The diffuse texture is the shader property's first diffuse slot
+// (BSShaderPPLightingProperty::ppTextures[0][0], an NiSourceTexture) and its path NVR already
+// reads (ddsPath1). The companion is looked up once per texture through the engine's own
+// FileFinder::GetFile (0xAFDF20), which takes loose files first and then the archives, as the
+// game does for every texture; the bytes become a D3D texture with D3DXCreateTextureFromFileInMemory.
+// Textures without a companion are remembered as such, so the lookup never repeats.
+//
+// Per draw (objects and parallax): the map goes to sampler s10 and MaterialMap (pixel c152) x to
+// 1; the dynamic environment cube (effects/DynamicCubemaps.h), when there is one, to s11 and
+// MaterialMap y to 1. The engine's highlight passes are muted for such materials (they have no
+// albedo for a metal's F0); the other passes draw the highlight themselves. So are its env map
+// passes (BSSM_ENVMAP .. BSSM_2x_ENVMAP_W, 0x244-0x24A, vanilla shaders): the material reflects
+// its environment itself, and the vanilla cubemap on top would reflect it twice. After the draw
+// everything goes back to empty, so nothing else (tree branches share these shaders) ever sees it.
+namespace MaterialMaps {
+
+    struct TextureEntry {
+        std::string         Path;       // the diffuse path the entry was made for: a freed texture's address can be reused
+        IDirect3DTexture9*  Map;        // nullptr: no companion
+    };
+    static std::unordered_map<const NiSourceTexture*, TextureEntry> sByTexture;
+    static std::unordered_map<std::string, IDirect3DTexture9*> sByPath;   // by companion path, across textures
+    static bool  sBound = false;
+    static bool  sMuted = false;
+    static DWORD sSavedWriteMask = 0xF;
+
+    // The engine's file, read whole through its stream interface, as Font::Load (0xA15320) does:
+    //   FileFinder::GetFile(name, READ_ONLY, 0x4000, ARCHIVE_TYPE_TEXTURES)
+    //   NiFile::m_bGood (+0x2C), BSFile::GetSize (vtable slot 10), NiBinaryStream::m_pfnRead (+0x08,
+    //   __cdecl), Destroy (vtable slot 0).
+    static IDirect3DTexture9* LoadFromGame(const char* Path) {
+        typedef void* (__cdecl* GetFileFn)(const char*, UInt32, UInt32, UInt32);
+        typedef UInt32 (__cdecl* ReadFn)(void*, void*, UInt32, UInt32*, UInt32);
+        void* File = ((GetFileFn)0xAFDF20)(Path, 0, 0x4000, 2);
+        if (!File) return nullptr;
+
+        IDirect3DTexture9* Map = nullptr;
+        UInt32* VTable = *(UInt32**)File;
+        if (*(bool*)((UInt8*)File + 0x2C)) {
+            const UInt32 Size = ThisCall(VTable[10], File);
+            if (Size > 128 && Size < 0x10000000) {
+                std::vector<UInt8> Data(Size);
+                UInt32 ComponentSize = 1;
+                const UInt32 Read = (*(ReadFn*)((UInt8*)File + 0x08))(File, Data.data(), Size, &ComponentSize, 1);
+                if (Read == Size && FAILED(D3DXCreateTextureFromFileInMemory(TheRenderManager->device, Data.data(), Size, &Map)))
+                    Map = nullptr;
+            }
+        }
+        ThisCall(VTable[0], File, true);
+        return Map;
+    }
+
+    // "Data\Textures\Armor\Leather01.dds" -> "textures\armor\leather01_rmaos.dds"
+    static bool CompanionPath(const char* Diffuse, std::string& Out) {
+        std::string Path(Diffuse);
+        for (char& c : Path) c = (c == '/') ? '\\' : (char)tolower((unsigned char)c);
+        const size_t Data = Path.find("data\\");
+        if (Data != std::string::npos) Path.erase(0, Data + 5);
+        if (Path.compare(0, 9, "textures\\") != 0) Path.insert(0, "textures\\");
+        if (Path.size() < 4 || Path.compare(Path.size() - 4, 4, ".dds") != 0) return false;
+        if (Path.size() >= 10 && Path.compare(Path.size() - 10, 10, "_rmaos.dds") == 0) return false;
+        Path.insert(Path.size() - 4, "_rmaos");
+        Out = Path;
+        return true;
+    }
+
+    static IDirect3DTexture9* Find(const NiSourceTexture* Diffuse) {
+        const char* Name = Diffuse->ddsPath1;
+        if (!Name || !*Name) return nullptr;
+
+        auto Known = sByTexture.find(Diffuse);
+        if (Known != sByTexture.end() && Known->second.Path == Name) return Known->second.Map;
+
+        IDirect3DTexture9* Map = nullptr;
+        std::string Companion;
+        if (CompanionPath(Name, Companion)) {
+            auto ByPath = sByPath.find(Companion);
+            if (ByPath != sByPath.end())
+                Map = ByPath->second;
+            else {
+                Map = LoadFromGame(Companion.c_str());
+                if (!Map) Map = LoadFromGame(("data\\" + Companion).c_str());
+                sByPath[Companion] = Map;
+                if (Map) Logger::Log("MaterialMaps: %s", Companion.c_str());
+            }
+        }
+        sByTexture[Diffuse] = { std::string(Name), Map };
+        return Map;
+    }
+
+    static bool Active() {
+        PBRShaders* PBR = TheShaderManager->Shaders.PBR;
+        return TheSettingManager->SettingsMain.Main.RenderEffects && PBR && PBR->Enabled;
+    }
+
+    // The engine's highlight-only passes: objects SLS2047/2049/2051/2053/2055 (not the hair
+    // ones), parallax PAR2024-PAR2028.
+    static bool IsHighlightPass(const NiD3DPixelShaderEx* PixelShader) {
+        if (!PixelShader || !PixelShader->Name) return false;
+        int n = -1;
+        if (!strncmp(PixelShader->Name, "SLS", 3)) {
+            n = atoi(PixelShader->Name + 3);
+            return n >= 2047 && n <= 2056 && (n % 2) == 1;
+        }
+        if (!strncmp(PixelShader->Name, "PAR", 3)) {
+            n = atoi(PixelShader->Name + 3);
+            return n >= 2024 && n <= 2028;
+        }
+        return false;
+    }
+
+    // Before each object or parallax draw. Run before MergedLights::OnDraw.
+    void OnDraw(NiGeometry* Geometry, const NiD3DPixelShaderEx* PixelShader) {
+        if (!Geometry || !Active()) return;
+        const UInt16 PassType = *(UInt16*)0x011F91E4;   // BSShaderManager::eCurrentPass
+        const bool EnvPass = PassType >= 0x244 && PassType <= 0x24A;
+        if (!EnvPass && (!PixelShader || PixelShader->ShaderHandle == PixelShader->ShaderHandleBackup)) return;
+        BSShaderPPLightingProperty* Property = static_cast<BSShaderPPLightingProperty*>(Geometry->GetProperty(NiProperty::kType_Shade));
+        if (!Property || !Property->ppTextures[0] || !Property->ppTextures[0][0]) return;
+        IDirect3DTexture9* Map = Find(Property->ppTextures[0][0]);
+        if (!Map) return;
+
+        IDirect3DDevice9* Device = TheRenderManager->device;
+        if (EnvPass || IsHighlightPass(PixelShader)) {
+            Device->GetRenderState(D3DRS_COLORWRITEENABLE, &sSavedWriteMask);
+            Device->SetRenderState(D3DRS_COLORWRITEENABLE, 0);
+            sMuted = true;
+            return;
+        }
+        Device->SetTexture(10, Map);
+        Device->SetSamplerState(10, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
+        Device->SetSamplerState(10, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
+        Device->SetSamplerState(10, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
+        Device->SetSamplerState(10, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
+        Device->SetSamplerState(10, D3DSAMP_MIPFILTER, D3DTEXF_LINEAR);
+        IDirect3DCubeTexture9* Environment = TheShaderManager->Effects.DynamicCubemaps->GetEnvironment();
+        if (Environment) {
+            Device->SetTexture(11, Environment);
+            Device->SetSamplerState(11, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+            Device->SetSamplerState(11, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+            Device->SetSamplerState(11, D3DSAMP_ADDRESSW, D3DTADDRESS_CLAMP);
+            Device->SetSamplerState(11, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
+            Device->SetSamplerState(11, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
+            Device->SetSamplerState(11, D3DSAMP_MIPFILTER, D3DTEXF_LINEAR);
+            Device->SetSamplerState(11, D3DSAMP_SRGBTEXTURE, FALSE);
+        }
+        const float Flag[4] = { 1.0f, Environment ? 1.0f : 0.0f, 0.0f, 0.0f };
+        Device->SetPixelShaderConstantF(152, Flag, 1);
+        sBound = true;
+    }
+
+    // After the draw. Run after MergedLights::EndDraw.
+    void EndDraw() {
+        IDirect3DDevice9* Device = TheRenderManager->device;
+        if (sBound) {
+            Device->SetTexture(10, NULL);
+            Device->SetTexture(11, NULL);
+            const float Zero[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+            Device->SetPixelShaderConstantF(152, Zero, 1);
+            sBound = false;
+        }
+        if (sMuted) {
+            Device->SetRenderState(D3DRS_COLORWRITEENABLE, sSavedWriteMask);
+            sMuted = false;
+        }
+    }
+}
+
+// --- Merged light passes ---------------------------------------------------------------------
+// With more lamps than its first pass takes, a mesh is lit in several: a light-only pass with the
+// sun and up to two lamps (AD2/AD3), then additive passes of two or three more each
+// (BSSM_DIFFUSEPT2/3, blended ONE/ONE), the texture pass that multiplies the frame by the
+// texture, and, for meshes with the engine's Specular flag, highlight passes for the sun and the
+// lamps (BSSM_2x_SPECULARDIR/PT/PT2/PT3). Each pass encodes its own light, so the frame sums
+// sqrt(a) + sqrt(b) where linear lighting needs sqrt(a + b): a mesh lit in several passes came
+// out brighter than its neighbour lit in one, with a hard edge between them. The highlight passes
+// also fade their layer by its own brightness, so the same mesh shone differently lit in one pass.
+//
+// Here the light-only pass takes all of it: the hook reads the lamps off the mesh's own pass list
+// (BSShaderProperty::pRenderPassArray), uploads them to pixel registers c154-c186
+// (Shaders/Includes/MergedLights.hlsl) and the shader sums them with the rest, highlights
+// included (divided by the texture the texture pass multiplies back in). The additive passes and
+// highlight passes, drawn after every light-only pass (the batch renderer goes by pass type),
+// are then muted: colour writes off, as the skin highlight passes are. A pass is muted only if
+// every one of its lights went into its mesh's first pass; anything else keeps the engine's
+// passes.
+//
+// Covered: objects (ShadowLightShader), hair (HairShader, which uses ShadowLightShader's passes;
+// its own hair highlight passes stay), parallax (ParallaxShader) and skin (SkinShader, whose
+// highlights the skin shader always draws itself), the projected-shadow forms of the lamp passes
+// (NVR's lamp shaders never applied that shadow to lamps), and first-person meshes. Not tree
+// branches: their light-only passes run the SpeedTree vertex shaders, which NVR does not replace,
+// so there is no world frame to light the lamps with.
+//
+// Light constants as vanilla's (BSShaderLightingProperty::SetLight1x2x, 0xB70820, and
+// ShadowLightShader::SetupGeometryConstants_Lights, 0xB78A90): colour = diffuse x dimmer (capped
+// at 1 without HDR) x the property's forced darkness x the light's LOD dimmer, black when the
+// forced darkness is under 1; radius = the light's specular red; position = its world position
+// plus ShadowSceneNode::kLightingOffset, here made camera-relative (minus NiRenderer::kPosAdjust).
+namespace MergedLights {
+
+    struct RenderPassData {                  // BSShaderProperty::RenderPass
+        NiGeometry*         Geometry;        // 00
+        UInt16              PassEnum;        // 04
+        UInt8               AccumulationHint;
+        bool                FirstPass;
+        bool                NoFog;           // 08
+        UInt8               NumLights;
+        UInt8               MaxNumLights;
+        char                LandTexture;
+        ShadowSceneLight**  SceneLights;     // 0C
+    };
+    // The live passes are the first Count. RenderPassArray::Add (0xBA9EE0) reuses the slots past
+    // it on the next rebuild, so up to Size they hold an earlier build's passes: same mesh,
+    // lights that may be gone.
+    struct RenderPassArrayData {             // BSShaderProperty::RenderPassArray
+        void*               _vtbl;
+        RenderPassData**    Base;            // 04
+        UInt16              MaxSize;
+        UInt16              Size;            // 0A slots allocated
+        UInt16              ESize;
+        UInt16              GrowBy;
+        UInt32              Count;           // 10 live passes
+    };
+    static UInt32 LivePasses(const RenderPassArrayData* Passes) {
+        return Passes->Count < Passes->Size ? Passes->Count : Passes->Size;
+    }
+
+    static const UInt32 MaxLights = 16;      // MergedLights.hlsl
+    static const UInt32 MaxBaseLights = 4;   // the light-only pass's own: the sun and up to two lamps
+
+    struct Merged {
+        NiGeometry*         Geometry;
+        UInt32              Count;
+        ShadowSceneLight*   Lights[MaxLights];
+        UInt32              BaseCount;
+        ShadowSceneLight*   BaseLights[MaxBaseLights];
+        bool                Specular;        // the highlight passes went in too
+    };
+    // This frame's, by mesh. A mesh's light-only pass can run more than once a frame (one draw per
+    // skin partition, reflections); the last one stands.
+    static std::unordered_map<NiGeometry*, Merged> sMerged;
+    static bool  sPassMuted = false;
+    static DWORD sSavedWriteMask = 0xF;
+    // Set while a draw has lamps uploaded. The count goes back to 0 after that draw: shaders
+    // these hooks do not cover (tree branches) use the same light-only shaders and must never
+    // read another mesh's lamps.
+    static bool  sLightsUploaded = false;
+    static bool  sViewOverridden = false;   // first person: the viewmodel camera's inverse matrices are in c100-c107
+
+    // BSSM_DIFFUSEPT2/3 and their FaceGen, parallax, skinned and projected-shadow forms. Not the
+    // tree branch ones (Sb).
+    static bool IsMergeableLampPass(UInt16 PassEnum) {
+        return (PassEnum >= 0x132 && PassEnum <= 0x13C && PassEnum != 0x137)    // DIFFUSEPT2 .. _SFgShp, not _Sb
+            || (PassEnum >= 0x13E && PassEnum <= 0x148 && PassEnum != 0x143);   // DIFFUSEPT3 .. _SFgShp, not _Sb
+    }
+
+    // The 2x highlight passes, BSSM_SPECULARDIR (0x154) to BSSM_2x_SPECULARPT3_Sb (0x177).
+    static bool IsSpecularPass(UInt16 PassEnum) {
+        return PassEnum >= 0x154 && PassEnum <= 0x177;
+    }
+
+    // The ones the light-only pass can take: plain, parallax, skinned and projected-shadow. Not
+    // hair (_H), which has its own highlight model, the tree branch ones (_Sb), nor the 1x ones.
+    static bool IsMergeableSpecularPass(UInt16 PassEnum) {
+        switch (PassEnum) {
+            case 0x15A: case 0x15C: case 0x15D: case 0x160: case 0x162: case 0x163:   // 2x_SPECULARDIR, _Px, _S, _Shp, _PxShp, _SShp
+            case 0x166: case 0x168: case 0x169:                                       // 2x_SPECULARPT, _Px, _S
+            case 0x16C: case 0x16E: case 0x16F:                                       // 2x_SPECULARPT2, _Px, _S
+            case 0x172: case 0x174: case 0x175:                                       // 2x_SPECULARPT3, _Px, _S
+                return true;
+        }
+        return false;
+    }
+
+    static bool Contains(ShadowSceneLight* const* Lights, UInt32 Count, const ShadowSceneLight* Light) {
+        for (UInt32 k = 0; k < Count; k++) if (Lights[k] == Light) return true;
+        return false;
+    }
+
+    // "SLS2037.pso" -> 2037 for the given prefix, else -1.
+    static int ShaderNumber(const NiD3DPixelShaderEx* PixelShader, const char* Prefix) {
+        if (!PixelShader || !PixelShader->Name) return -1;
+        const size_t n = strlen(Prefix);
+        if (strncmp(PixelShader->Name, Prefix, n) != 0) return -1;
+        return atoi(PixelShader->Name + n);
+    }
+
+    bool Active(bool Skin) {
+        PBRShaders* PBR = TheShaderManager->Shaders.PBR;
+        if (!TheSettingManager->SettingsMain.Main.RenderEffects || !PBR || !PBR->Enabled) return false;
+        if (!PBR->MaterialSettings.LinearLighting || !PBR->MaterialSettings.MergeLightPasses) return false;
+        return !Skin || (TheShaderManager->Shaders.Skin && TheShaderManager->Shaders.Skin->Enabled);
+    }
+
+    void BeginFrame() {
+        sMerged.clear();
+    }
+
+    // First-person meshes are drawn with the viewmodel camera (its own FOV and near plane), but
+    // the shaders rebuild world positions and directions through TESR_InvProjectionTransform and
+    // TESR_InvViewTransform (c100-c107, Includes/Shadow.hlsl), which are the world camera's: the
+    // world frame and position the merged lamps need come out skewed. For a first-person draw the
+    // inverses of the renderer's matrices at that moment, the viewmodel camera's, go there instead
+    // (NiDX9Renderer::SetCameraData writes them for every camera), and EndDraw puts NVR's back.
+    static void OverrideViewForFirstPerson() {
+        D3DXMATRIX InvProj, InvView;
+        if (!D3DXMatrixInverse(&InvProj, NULL, &TheRenderManager->projMatrix)) return;
+        if (!D3DXMatrixInverse(&InvView, NULL, &TheRenderManager->viewMatrix)) return;
+        TheRenderManager->device->SetVertexShaderConstantF(100, (const float*)&InvProj, 4);
+        TheRenderManager->device->SetVertexShaderConstantF(104, (const float*)&InvView, 4);
+        sViewOverridden = true;
+    }
+
+    // A light-only pass able to take the lamps: collect and upload them (or a count of 0).
+    //   AllowSpecular: the shader can draw the highlight passes' share (objects and parallax; the
+    //   skin shader draws its highlights in every pass anyway)
+    void SetupBasePass(NiGeometry* Geometry, bool Skin, bool AllowSpecular) {
+        if (!Geometry || !Active(Skin)) return;
+        float Data[4 * (1 + 2 * MaxLights)] = {};
+        Merged M = {};
+        M.Geometry = Geometry;
+        BSShaderPPLightingProperty* Property = Geometry ? static_cast<BSShaderPPLightingProperty*>(Geometry->GetProperty(NiProperty::kType_Shade)) : nullptr;
+        const RenderPassArrayData* Passes = Property ? (const RenderPassArrayData*)Property->pRenderPassArray : nullptr;
+        const RenderPassData* Current = *(RenderPassData**)0x011F91E0;              // BSShaderManager::pCurrentRenderPass
+        bool ok = Passes && Passes->Base && Current && Current->Geometry == Geometry;
+
+        // The light-only pass's own lights (the sun first), which its highlight passes also cover.
+        if (ok && Current->SceneLights)
+            for (UInt8 j = 0; j < Current->NumLights && M.BaseCount < MaxBaseLights; j++)
+                if (Current->SceneLights[j]) M.BaseLights[M.BaseCount++] = Current->SceneLights[j];
+
+        // The lamps of the additive passes.
+        const UInt32 Live = ok ? LivePasses(Passes) : 0;
+        for (UInt32 i = 0; ok && i < Live; i++) {
+            const RenderPassData* Pass = Passes->Base[i];
+            if (!Pass || Pass->Geometry != Geometry || !IsMergeableLampPass(Pass->PassEnum) || !Pass->SceneLights) continue;
+            for (UInt8 j = 0; j < Pass->NumLights; j++) {
+                ShadowSceneLight* Light = Pass->SceneLights[j];
+                if (!Light) continue;
+                if (!Light->bPointLight || !Light->sourceLight) { ok = false; break; }
+                if (Contains(M.Lights, M.Count, Light)) continue;
+                if (M.Count == MaxLights) { ok = false; break; }
+                M.Lights[M.Count++] = Light;
+            }
+        }
+
+        // The highlight passes: all of them mergeable and lit by lights the pass now has.
+        bool AnySpecular = false;
+        M.Specular = ok && AllowSpecular;
+        for (UInt32 i = 0; M.Specular && i < Live; i++) {
+            const RenderPassData* Pass = Passes->Base[i];
+            if (!Pass || Pass->Geometry != Geometry || !IsSpecularPass(Pass->PassEnum)) continue;
+            AnySpecular = true;
+            if (!IsMergeableSpecularPass(Pass->PassEnum) || !Pass->SceneLights) { M.Specular = false; break; }
+            for (UInt8 j = 0; j < Pass->NumLights; j++) {
+                const ShadowSceneLight* Light = Pass->SceneLights[j];
+                if (Light && !Contains(M.BaseLights, M.BaseCount, Light) && !Contains(M.Lights, M.Count, Light)) { M.Specular = false; break; }
+            }
+        }
+        M.Specular = M.Specular && AnySpecular;
+
+        if (ok && (M.Count || M.Specular)) {
+            const NiPoint3& PosAdjust = *(NiPoint3*)0x011F474C;                  // NiRenderer::kPosAdjust
+            void* SceneNode = *(void**)0x011F91C8;                               // BSShaderManager::pShadowSceneNode[0]
+            const NiPoint3 Offset = SceneNode ? *(NiPoint3*)((UInt8*)SceneNode + 0x1E4) : NiPoint3(0.0f, 0.0f, 0.0f);   // kLightingOffset
+            const bool HDR = *(bool*)0x011F941E;                                 // BSShaderManager::bHDR
+            const float ForcedDarkness = Property->fUnk06C;                      // BSShaderLightingProperty::fForcedDarkness
+
+            Data[0] = (float)M.Count;
+            Data[1] = M.Specular ? 1.0f : 0.0f;
+            for (UInt32 k = 0; k < M.Count; k++) {
+                const ShadowSceneLight* Light = M.Lights[k];
+                const NiPointLight* Source = Light->sourceLight;
+                const NiPoint3& Position = Source->m_worldTransform.pos;
+                float* P = &Data[4 * (1 + k)];
+                P[0] = Position.x + Offset.x - PosAdjust.x;
+                P[1] = Position.y + Offset.y - PosAdjust.y;
+                P[2] = Position.z + Offset.z - PosAdjust.z;
+                P[3] = Source->Spec.r;
+
+                float Dimmer = Source->Dimmer;
+                if (!HDR && Dimmer > 1.0f) Dimmer = 1.0f;
+                const float Scale = ForcedDarkness < 1.0f ? 0.0f : Dimmer * ForcedDarkness * Light->fLODDimmer;
+                float* C = &Data[4 * (1 + MaxLights + k)];
+                C[0] = Source->Diff.r * Scale;
+                C[1] = Source->Diff.g * Scale;
+                C[2] = Source->Diff.b * Scale;
+                C[3] = 1.0f;
+            }
+            sMerged[Geometry] = M;
+            TheRenderManager->device->SetPixelShaderConstantF(154, Data, 1 + 2 * MaxLights);
+            sLightsUploaded = true;
+            if (Property->ulFlags[1] & 0x40) OverrideViewForFirstPerson();   // BSS2_1st_person
+        }
+        // Otherwise nothing to write: the count is 0 outside a merged draw (EndDraw).
+    }
+
+    // An additive lamp pass or a highlight pass: muted when its mesh's first pass took all its
+    // lights.
+    bool MuteAddPass(NiGeometry* Geometry) {
+        const RenderPassData* Pass = *(RenderPassData**)0x011F91E0;            // BSShaderManager::pCurrentRenderPass
+        if (!Pass || Pass->Geometry != Geometry || !Pass->SceneLights) return false;
+        const bool Lamp = IsMergeableLampPass(Pass->PassEnum);
+        if (!Lamp && !IsMergeableSpecularPass(Pass->PassEnum)) return false;
+        const auto Found = sMerged.find(Geometry);
+        if (Found == sMerged.end()) return false;
+        const Merged* M = &Found->second;
+        if (!Lamp && !M->Specular) return false;
+        for (UInt8 j = 0; j < Pass->NumLights; j++) {
+            const ShadowSceneLight* Light = Pass->SceneLights[j];
+            if (!Light) continue;
+            if (Contains(M->Lights, M->Count, Light)) continue;
+            if (!Lamp && Contains(M->BaseLights, M->BaseCount, Light)) continue;
+            return false;
+        }
+        if (!sPassMuted) {
+            TheRenderManager->device->GetRenderState(D3DRS_COLORWRITEENABLE, &sSavedWriteMask);
+            TheRenderManager->device->SetRenderState(D3DRS_COLORWRITEENABLE, 0);
+            sPassMuted = true;
+        }
+        return true;
+    }
+
+    void EndDraw() {
+        if (sLightsUploaded) {
+            const float Zero[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+            TheRenderManager->device->SetPixelShaderConstantF(154, Zero, 1);
+            sLightsUploaded = false;
+        }
+        if (sViewOverridden) {
+            TheRenderManager->device->SetVertexShaderConstantF(100, (const float*)&TheRenderManager->InvProjMatrix, 4);
+            TheRenderManager->device->SetVertexShaderConstantF(104, (const float*)&TheRenderManager->InvViewMatrix, 4);
+            sViewOverridden = false;
+        }
+        if (sPassMuted) {
+            TheRenderManager->device->SetRenderState(D3DRS_COLORWRITEENABLE, sSavedWriteMask);
+            sPassMuted = false;
+        }
+    }
+
+    // Per draw, for the object (and hair), parallax and skin shaders.
+    //   objects:  light-only SLS2037-SLS2044, additive SLS2045/SLS2046, highlights SLS2047-SLS2056
+    //   parallax: light-only PAR2013-PAR2020, additive PAR2021/PAR2022, highlights PAR2024-PAR2028
+    //   skin:     light-only SKIN2004-SKIN2007, additive SKIN2008/SKIN2009
+    // Returns true when the draw is muted.
+    bool OnDraw(NiGeometry* Geometry, const NiD3DPixelShaderEx* PixelShader) {
+        if (!PixelShader || PixelShader->ShaderHandle == PixelShader->ShaderHandleBackup) return false;   // vanilla shader
+        int n = ShaderNumber(PixelShader, "SLS");
+        if (n >= 2037 && n <= 2044) { SetupBasePass(Geometry, false, true); return false; }
+        if (n >= 2045 && n <= 2056) return MuteAddPass(Geometry);
+        n = ShaderNumber(PixelShader, "PAR");
+        if (n >= 2013 && n <= 2020) { SetupBasePass(Geometry, false, true); return false; }
+        if ((n >= 2021 && n <= 2022) || (n >= 2024 && n <= 2028)) return MuteAddPass(Geometry);
+        n = ShaderNumber(PixelShader, "SKIN");
+        if (n >= 2004 && n <= 2007) { SetupBasePass(Geometry, true, false); return false; }
+        if (n == 2008 || n == 2009) return MuteAddPass(Geometry);
+        return false;
+    }
+}
+
+// ShadowLightShader's per-geometry virtuals (vtable 0x10AF2F8): the same two functions as
+// SkinShader's slots 27 and 35, hooked in this shader's own vtable, for the merged light passes.
+VirtFuncDetour kLightPrepareGeometryDetour;
+VirtFuncDetour kLightPostGeometryDetour;
+
+void* __fastcall ShadowLightShader__PrepareGeometryForRendering(void* apThis, void*, void* apGeometry, void* apPartition, void* apRendererData, void* apState) {
+    void* Result = (void*)ThisCall(kLightPrepareGeometryDetour.GetOverwrittenAddr(), apThis, apGeometry, apPartition, apRendererData, apState);
+    WriteObjectMaterial((NiGeometry*)apGeometry);
+    NiD3DPass* Pass = *(NiD3DPass**)0x0126F74C;   // NiD3DShader::m_pCurrentPass
+    NiD3DPixelShaderEx* PixelShader = Pass ? (NiD3DPixelShaderEx*)Pass->PixelShader : nullptr;
+    MaterialMaps::OnDraw((NiGeometry*)apGeometry, PixelShader);
+    MergedLights::OnDraw((NiGeometry*)apGeometry, PixelShader);
+    return Result;
+}
+
+void __fastcall ShadowLightShader__PostGeometry(void* apThis, void*, void* apProperties) {
+    ThisCall(kLightPostGeometryDetour.GetOverwrittenAddr(), apThis, apProperties);
+    MergedLights::EndDraw();
+    MaterialMaps::EndDraw();
+}
+
+// ParallaxShader's (vtable 0x10BB7A8): the same two functions again, in its own vtable.
+VirtFuncDetour kParallaxPrepareGeometryDetour;
+VirtFuncDetour kParallaxPostGeometryDetour;
+
+void* __fastcall ParallaxShader__PrepareGeometryForRendering(void* apThis, void*, void* apGeometry, void* apPartition, void* apRendererData, void* apState) {
+    void* Result = (void*)ThisCall(kParallaxPrepareGeometryDetour.GetOverwrittenAddr(), apThis, apGeometry, apPartition, apRendererData, apState);
+    WriteObjectMaterial((NiGeometry*)apGeometry);
+    NiD3DPass* Pass = *(NiD3DPass**)0x0126F74C;   // NiD3DShader::m_pCurrentPass
+    NiD3DPixelShaderEx* PixelShader = Pass ? (NiD3DPixelShaderEx*)Pass->PixelShader : nullptr;
+    MaterialMaps::OnDraw((NiGeometry*)apGeometry, PixelShader);
+    MergedLights::OnDraw((NiGeometry*)apGeometry, PixelShader);
+    return Result;
+}
+
+void __fastcall ParallaxShader__PostGeometry(void* apThis, void*, void* apProperties) {
+    ThisCall(kParallaxPostGeometryDetour.GetOverwrittenAddr(), apThis, apProperties);
+    MergedLights::EndDraw();
+    MaterialMaps::EndDraw();
+}
+
+// HairShader's (vtable 0x10BBB50): ShadowLightShader's passes and per-geometry functions, in its
+// own vtable.
+VirtFuncDetour kHairPrepareGeometryDetour;
+VirtFuncDetour kHairPostGeometryDetour;
+
+void* __fastcall HairShader__PrepareGeometryForRendering(void* apThis, void*, void* apGeometry, void* apPartition, void* apRendererData, void* apState) {
+    void* Result = (void*)ThisCall(kHairPrepareGeometryDetour.GetOverwrittenAddr(), apThis, apGeometry, apPartition, apRendererData, apState);
+    WriteObjectMaterial((NiGeometry*)apGeometry);
+    NiD3DPass* Pass = *(NiD3DPass**)0x0126F74C;   // NiD3DShader::m_pCurrentPass
+    MergedLights::OnDraw((NiGeometry*)apGeometry, Pass ? (NiD3DPixelShaderEx*)Pass->PixelShader : nullptr);
+    return Result;
+}
+
+void __fastcall HairShader__PostGeometry(void* apThis, void*, void* apProperties) {
+    ThisCall(kHairPostGeometryDetour.GetOverwrittenAddr(), apThis, apProperties);
+    MergedLights::EndDraw();
+}
+
 // SkinShader's per-geometry virtuals (vtable 0x10BB980), bracketing every skin draw on both of
 // the batch renderer's paths (BSBatchRenderer::RenderPassImmediately_Standard and _Skinned):
 // slot 27 PrepareGeometryForRendering (NiD3DShader, 0xE812F0) runs just before the draw, slot 35
@@ -28,6 +580,35 @@ VirtFuncDetour kSkinPostGeometryDetour;
 // of highlights, and the screen-space scattering blurred the second as if it were diffuse light.
 static bool  sSkinHighlightMuted = false;
 static DWORD sSkinSavedWriteMask = 0xF;
+
+// FaceGen faces in the light-only passes (AD2/AD3: SKIN2004-SKIN2007). The engine multiplies the
+// frame by the face's colour afterwards in BSSM_TEXTURE_SFg (SLS1005: the base texture with both
+// FaceGen maps, 2((2(fg0 - 0.5) + base) 2 fg1), the same blend as the full pass), but binds only
+// the base texture to these passes (SkinShader::SetupGeometryTextures, 0xBD02E0), so the skin
+// shader divided its highlights, and wrote the scattering effect's albedo and brightness, with
+// the bare base texture: off by the FaceGen tint, which showed as tinted lips, brows and eyelids
+// and threw the scattering's skin test. The FaceGen maps go to stages 2 and 3, as the full pass
+// has them (texture 1 of the diffuse and normal sets); stage 3 is the glow map here, which the
+// skin shader does not read and the engine sets again for every draw. Stage 2 is otherwise empty
+// in these passes and is emptied again after the draw (ApplyTextureStages binds only stages with
+// a texture), so nothing later binds a stale texture through it.
+static void* sFaceGenStage2 = nullptr;   // the stage whose texture PostGeometry clears
+
+static bool BindFaceGenMaps(void* apThis, NiGeometry* Geometry, NiD3DPass* Pass) {
+    if (!Geometry || !Pass || Pass->StageCount < 4) return false;
+    BSShaderPPLightingProperty* Property = static_cast<BSShaderPPLightingProperty*>(Geometry->GetProperty(NiProperty::kType_Shade));
+    if (!Property || !Property->GetFlag(BSSP_FACEGEN)) return false;
+    if (!Property->ppTextures[0] || !Property->ppTextures[0][1]) return false;
+
+    void** Stages = *(void***)((UInt8*)Pass + 0x24);   // NiD3DPass::m_kStages.m_pBase
+    if (!Stages || !Stages[2] || !Stages[3]) return false;
+
+    ThisCall(0xB7C0A0, apThis, Property, 2, 1);   // ShadowLightShader::SetDiffuseMap: FaceGenMap0
+    ThisCall(0xB7C0E0, apThis, Property, 3, 1);   // ShadowLightShader::SetNormalMap: FaceGenMap1
+    ThisCall(0xBE2170, apThis);                   // BSShader::ApplyTextureStages
+    sFaceGenStage2 = Stages[2];
+    return true;
+}
 
 void* __fastcall SkinShader__PrepareGeometryForRendering(void* apThis, void*, void* apGeometry, void* apPartition, void* apRendererData, void* apState) {
     void* Result = (void*)ThisCall(kSkinPrepareGeometryDetour.GetOverwrittenAddr(), apThis, apGeometry, apPartition, apRendererData, apState);
@@ -47,9 +628,19 @@ void* __fastcall SkinShader__PrepareGeometryForRendering(void* apThis, void*, vo
 
     // The scattering targets only for NVR's own skin pixel shaders, not the highlight or fog
     // passes the engine also draws with this shader.
+    // Merged light passes: the lamps of the additive passes go into the light-only pass, and
+    // those passes are muted (MergedLights above). A muted pass writes nothing, the scattering
+    // target included.
+    const bool MergedMuted = SkinPixelShader && MergedLights::OnDraw((NiGeometry*)apGeometry, PixelShader);
+
     SkinScatteringEffect* Scattering = TheShaderManager->Effects.SkinScattering;
-    if (Scattering && SkinPixelShader)
+    if (Scattering && SkinPixelShader && !MergedMuted)
         Scattering->BindForSkinDraw(PixelShader);
+
+    // The light-only passes: SKIN2004-SKIN2007.
+    bool FaceGenBound = false;
+    if (NVRSkin && SkinPixelShader && !memcmp(PixelShader->Name, "SKIN200", 7) && PixelShader->Name[7] >= '4' && PixelShader->Name[7] <= '7')
+        FaceGenBound = BindFaceGenMaps(apThis, (NiGeometry*)apGeometry, Pass);
 
     // Develop.DebugMode + the TraceShaders key: what this hook did for every skin draw that frame.
     if (TheSettingManager->SettingsMain.Develop.DebugMode && Global->OnKeyDown(TheSettingManager->SettingsMain.Develop.TraceShaders)) {
@@ -59,9 +650,10 @@ void* __fastcall SkinShader__PrepareGeometryForRendering(void* apThis, void*, vo
             sSkinHighlightMuted ? 1 : 0, (Scattering && Scattering->Bound) ? 1 : 0);
     }
 
-    // SkinScreenSpaceScatter (Includes/SkinLighting.hlsl), every skin draw: 1 while the target is
-    // bound, so the shader leaves diffusion to the screen-space blur.
-    const float ScreenSpace[4] = { (Scattering && Scattering->Bound) ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f };
+    // SkinScreenSpaceScatter (Includes/SkinLighting.hlsl), every skin draw: x 1 while the target is
+    // bound, so the shader leaves diffusion to the screen-space blur; y 1 while the FaceGen maps
+    // are bound to a light-only pass.
+    const float ScreenSpace[4] = { (Scattering && Scattering->Bound) ? 1.0f : 0.0f, FaceGenBound ? 1.0f : 0.0f, 0.0f, 0.0f };
     TheRenderManager->device->SetPixelShaderConstantF(147, ScreenSpace, 1);
     return Result;
 }
@@ -69,8 +661,50 @@ void* __fastcall SkinShader__PrepareGeometryForRendering(void* apThis, void*, vo
 void __fastcall SkinShader__PostGeometry(void* apThis, void*, void* apProperties) {
     ThisCall(kSkinPostGeometryDetour.GetOverwrittenAddr(), apThis, apProperties);
     if (TheShaderManager->Effects.SkinScattering) TheShaderManager->Effects.SkinScattering->Unbind();
+    MergedLights::EndDraw();
+    if (sFaceGenStage2) {
+        *(void**)((UInt8*)sFaceGenStage2 + 0x08) = nullptr;   // NiD3DTextureStage::m_pkTexture
+        sFaceGenStage2 = nullptr;
+    }
     if (sSkinHighlightMuted) {
         TheRenderManager->device->SetRenderState(D3DRS_COLORWRITEENABLE, sSkinSavedWriteMask);
         sSkinHighlightMuted = false;
     }
+}
+
+// Interior faces. BSShaderPPLightingProperty::GetRenderPasses_2x (0xBDF790) builds every lit
+// mesh's pass list, and for FaceGen geometry in interiors it skips the passes SkinShader draws
+// itself (ADT/ADT2 and AD2/AD3: the two `!bIsFaceGen || !BSShaderManager::bInterior` tests). An
+// interior face got the generic ones instead, traced in game:
+//   BSSM_AMBIENT_S (SLS1000) + BSSM_DIFFUSEDIR_S (SLS1002): ambient and the main light, vanilla
+//   BSSM_DIFFUSEPT2/3_SFg (SKIN2008/9): additive point-light passes, the only NVR skin
+//   BSSM_TEXTURE_SFg (SLS1005): the FaceGen texture multiplied in
+// So indoors the skin shader lit only the lamps, the highlights of the main light were gone (its
+// specular pass is muted while NVR skin is on) and the screen-space scattering never ran: only
+// an opaque skin pass writes the depth and albedo it needs to find skin.
+//
+// Both tests read bInterior from one load, `mov al, [BSShaderManager::bInterior]` at 0xBE018B
+// (A0 27 94 1F 01; the third way into the second test, from 0xBE01B4, reuses al too). The patch
+// points that load at FaceGenInteriorFlag: 0 while NVR's skin shader is on, so interior faces
+// take the exterior route (one ADT pass, or AD + point-light + texture passes, all SkinShader's
+// own); the real bInterior when it is off, which keeps vanilla's behaviour. Nothing else reads
+// it: bInterior's other test in that function (no projected actor shadows indoors) is a separate
+// load and untouched.
+static UInt8 FaceGenInteriorFlag = 0;
+
+void InstallFaceGenInteriorPatch() {
+    static const UInt8 Expected[5] = { 0xA0, 0x27, 0x94, 0x1F, 0x01 };
+    if (memcmp((const void*)0xBE018B, Expected, sizeof(Expected)) != 0) {
+        Logger::Log("[WARNING] Skin: unexpected code at 0xBE018B; interior faces keep vanilla's passes");
+        return;
+    }
+    SafeWrite32(0xBE018C, (UInt32)&FaceGenInteriorFlag);
+}
+
+// Every frame, before the scene's pass lists are built (RenderHook).
+void UpdateFaceGenInteriorFlag() {
+    MergedLights::BeginFrame();
+    const UInt8 Interior = *(UInt8*)0x011F9427;   // BSShaderManager::bInterior
+    const bool NVRSkin = TheShaderManager->Shaders.Skin && TheShaderManager->Shaders.Skin->Enabled && TheSettingManager->SettingsMain.Main.RenderEffects;
+    FaceGenInteriorFlag = NVRSkin ? 0 : Interior;
 }

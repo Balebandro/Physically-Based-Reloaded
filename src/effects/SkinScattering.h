@@ -52,6 +52,7 @@ public:
 	ProfileStruct	InteriorProfile = {};         // [Shaders.Skin.Interiors]
 	bool			ProfileIsInterior = false;
 	bool			KernelDirty = true;
+	bool			SkinShaderDebug = false;   // a [Shaders.Skin.Debug] view the skin shaders draw (1-7): no blur
 	bool			ScreenSpace = true;     // the profile in use's ScreenSpace
 
 	// The second render target. Texture is what the effect samples; Surface is what skin draws

@@ -26,7 +26,7 @@
 
 float4 TESR_SkinScatterData;                 // x game units per kernel unit, y depth follow, z distance tolerance, w albedo detail
 float4 TESR_SkinScatterKernel[SAMPLES];      // rgb weight, a offset; [0] is the centre
-float4 TESR_SkinScatterDebug;                // x DebugView: 1 the skin test, 2 scene / drawn brightness
+float4 TESR_SkinScatterDebug;                // x [Shaders.Skin.Debug] DebugView 8-10 as 1-3: the skin test, scene / drawn brightness, what the blur changed
 
 sampler2D TESR_RenderedBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
 sampler2D TESR_DepthBuffer : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
@@ -112,7 +112,8 @@ float4 SkinBlur(float2 uv, float2 dir, bool firstPass) {
     //   1: green skin, red distance mismatch, blue colour mismatch
     //   2: the scene's brightness over the skin pass's own: green equal, red brighter, blue
     //      darker, full colour at 20% either way
-    if (!firstPass && TESR_SkinScatterDebug.x > 0.0f && scatterM.a > 0.0f) {
+    //   3: (at the end) how much the blur changed each pixel
+    if (!firstPass && TESR_SkinScatterDebug.x > 0.0f && TESR_SkinScatterDebug.x < 2.5f && scatterM.a > 0.0f) {
         float3 tint;
         if (TESR_SkinScatterDebug.x > 1.5f) {
             float ratio = luma(sceneM.rgb) / max(albedoM.a, 1e-3f);
@@ -165,7 +166,18 @@ float4 SkinBlur(float2 uv, float2 dir, bool firstPass) {
     float3 participation = Participation(albedo);
     float3 light = blurred * AlbedoFactor(albedo) * participation
                  + Decode(max(original.rgb - scatterM.rgb, 0.0f)) * (1.0f - participation * participation);
-    return float4(Encode(light) + scatterM.rgb, original.a);
+    float3 result = Encode(light) + scatterM.rgb;
+
+    // View 3, on skin (everything else is left as it is): the change, x8, over the dimmed scene:
+    // dark where the blur did nothing, bright where it moved the colour by an eighth or more. Red
+    // where it brightened, blue where it darkened.
+    if (TESR_SkinScatterDebug.x > 2.5f) {
+        float change = luma(result) - luma(original.rgb);
+        float3 tint = change > 0.0f ? float3(1.0f, 0.35f, 0.25f) : float3(0.25f, 0.45f, 1.0f);
+        float amount = saturate(length(result - original.rgb) * 8.0f);
+        return float4(luma(original.rgb) * 0.25f + tint * amount, original.a);
+    }
+    return float4(result, original.a);
 }
 
 float4 BlurHorizontal(VSOUT IN) : COLOR0 {

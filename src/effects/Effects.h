@@ -24,6 +24,7 @@
 #include "Rain.h"
 #include "Sharpening.h"
 #include "SkinScattering.h"
+#include "DynamicCubemaps.h"
 #include "SunShadows.h"
 #include "PointShadows.h"
 #include "PointShadows2.h"

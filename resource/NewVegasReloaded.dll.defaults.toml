@@ -574,68 +574,35 @@ Enabled = false                      # Blur in direction of the camera when turn
 LightingScale = 0.725              # Sun and point light strength.
 AmbientScale = 1.0                 # Weather ambient light strength.
 SkylightingScale = 0.5             # Sky-colour ambient light. 0 disables it.
-Saturation = 1.0                   # Colour saturation of lit surfaces.
-RoughnessScale = 1.0               # Scales every surface's roughness. Below 1 is glossier (wet look), above 1 more matte.
-LinearLighting = true                # Light in linear space (correct falloff and light sums) instead of the game's gamma space. Objects and terrain.
-SpecularStrength = 1.0               # Strength of highlights and reflections on all surfaces.
-VanillaMatchedHighlights = 1.0       # 1 makes each material's highlight as strong as vanilla intended for its specular mask and glossiness (keeping the PBR shape); 0 is physically based (much duller on FNV assets). Objects; terrain has its own.
-SpecularOnAll = true                 # Give every surface a highlight, not only meshes the game flags as specular.
-DefaultRoughness = 0.6               # Roughness for surfaces without gloss data (SpecularOnAll). Lower is shinier and tighter. 0.05-1.
-SkyReflectionScale = 1.0             # Sky reflections on objects (sheen at glancing angles). 0 disables. Exteriors only. Terrain has its own.
-SpecularOcclusion = true             # Fade reflections that a normal map tilts below the surface.
-AmbientNormalDetail = 1.0            # How much the normal map shapes sky light and reflections on objects (detail out of direct light). 0 is flat, as before. Terrain has its own.
-DebugView = 0                        # Material debug: 0 off, 1 roughness, 2 highlight strength, 3 flags (R specular flag, G distance fade, B added highlight; terrain dark blue), 4 ambient normal (white faces the sky). Objects and terrain.
+LinearLighting = true                # Light in linear space (correct falloff and light sums) instead of the game's gamma space, as Community Shaders' linear lighting. Objects and terrain.
+MergeLightPasses = true              # With LinearLighting: lamps and highlights the game would add in extra passes are lit in the mesh's first pass instead, so they sum in linear space like the rest. Removes the brightness seams between meshes lit in one pass and meshes lit in several. Objects, hair, parallax, skin and first person (not tree branches).
+DebugView = 0                        # Material debug: 0 off, 1 roughness (authored maps; vanilla materials show their glossiness), 2 metalness, 3 flags (R the game's specular flag, G an authored _rmaos map, B specular distance fade), 4 ambient normal (white faces the sky), 5 the dynamic environment cube along the normal (authored materials; black when DynamicCubemaps is off).
 
 [_Shaders.PBR.Rain]
 LightingScale = 1.0                # Sun and point light strength.
 AmbientScale = 1.0                 # Weather ambient light strength.
 SkylightingScale = 0.5             # Sky-colour ambient light. 0 disables it.
-Saturation = 1.0                   # Colour saturation of lit surfaces.
-RoughnessScale = 0.75              # Scales every surface's roughness. Below 1 is glossier (wet look), above 1 more matte.
-SpecularStrength = 1.25              # Strength of highlights and reflections on all surfaces.
-VanillaMatchedHighlights = 1.0       # 1 makes each material's highlight as strong as vanilla intended for its mask and glossiness (PBR shape kept); 0 is physically based.
-DefaultRoughness = 0.45              # Roughness for surfaces without gloss data (SpecularOnAll). Lower is shinier and tighter. 0.05-1.
-SkyReflectionScale = 1.5             # Sky reflections on objects (sheen at glancing angles). 0 disables. Always off indoors.
-AmbientNormalDetail = 1.0            # How much the normal map shapes sky light and reflections (detail out of direct light). 0 is flat.
 
 [_Shaders.PBR.Night]
 LightingScale = 1.0                # Sun and point light strength.
 AmbientScale = 1.0                 # Weather ambient light strength.
 SkylightingScale = 0.5             # Sky-colour ambient light. 0 disables it.
-Saturation = 1.0                   # Colour saturation of lit surfaces.
-RoughnessScale = 1.0               # Scales every surface's roughness. Below 1 is glossier (wet look), above 1 more matte.
-SpecularStrength = 1.0               # Strength of highlights and reflections on all surfaces.
-VanillaMatchedHighlights = 1.0       # 1 makes each material's highlight as strong as vanilla intended for its mask and glossiness (PBR shape kept); 0 is physically based.
-DefaultRoughness = 0.6               # Roughness for surfaces without gloss data (SpecularOnAll). Lower is shinier and tighter. 0.05-1.
-SkyReflectionScale = 1.0             # Sky reflections on objects (sheen at glancing angles). 0 disables. Always off indoors.
-AmbientNormalDetail = 1.0            # How much the normal map shapes sky light and reflections (detail out of direct light). 0 is flat.
 
 [_Shaders.PBR.NightRain]
 LightingScale = 1.0                # Sun and point light strength.
 AmbientScale = 1.0                 # Weather ambient light strength.
 SkylightingScale = 0.5             # Sky-colour ambient light. 0 disables it.
-Saturation = 1.0                   # Colour saturation of lit surfaces.
-RoughnessScale = 0.75              # Scales every surface's roughness. Below 1 is glossier (wet look), above 1 more matte.
-SpecularStrength = 1.25              # Strength of highlights and reflections on all surfaces.
-VanillaMatchedHighlights = 1.0       # 1 makes each material's highlight as strong as vanilla intended for its mask and glossiness (PBR shape kept); 0 is physically based.
-DefaultRoughness = 0.45              # Roughness for surfaces without gloss data (SpecularOnAll). Lower is shinier and tighter. 0.05-1.
-SkyReflectionScale = 1.5             # Sky reflections on objects (sheen at glancing angles). 0 disables. Always off indoors.
-AmbientNormalDetail = 1.0            # How much the normal map shapes sky light and reflections (detail out of direct light). 0 is flat.
 
 [_Shaders.PBR.Interiors]
 LightingScale = 1.0                # Sun and point light strength.
 AmbientScale = 1.0                 # Weather ambient light strength.
 SkylightingScale = 0.0             # Sky-colour ambient light. 0 disables it.
-Saturation = 1.0                   # Colour saturation of lit surfaces.
-RoughnessScale = 1.0               # Scales every surface's roughness. Below 1 is glossier (wet look), above 1 more matte.
-SpecularStrength = 1.0               # Strength of highlights and reflections on all surfaces.
-VanillaMatchedHighlights = 1.0       # 1 makes each material's highlight as strong as vanilla intended for its mask and glossiness (PBR shape kept); 0 is physically based.
-DefaultRoughness = 0.6               # Roughness for surfaces without gloss data (SpecularOnAll). Lower is shinier and tighter. 0.05-1.
-SkyReflectionScale = 0.0             # Sky reflections on objects (sheen at glancing angles). 0 disables. Always off indoors.
-AmbientNormalDetail = 1.0            # How much the normal map shapes sky light and reflections (detail out of direct light). 0 is flat.
 
 [_Shaders.PBR.Status]
-Enabled = true                       # Adds PBR specular formula to object shaders
+Enabled = true                       # Object lighting as Community Shaders: true PBR for materials with an authored _rmaos map (R roughness, G metalness, B AO, A specular, next to the diffuse texture), vanilla shading for the rest.
+
+[_Shaders.DynamicCubemaps.Status]
+Enabled = true                       # What authored PBR materials (_rmaos) reflect, as Community Shaders' Dynamic Cubemaps: every frame the screen is projected into a cubemap around the camera, which fills in as you look around, and is blurred into one level per roughness. Directions never seen show the sky outdoors and the room's light indoors. Off, they reflect only the sky outdoors and the ambient light indoors. Costs well under a millisecond (128 px cubes). The vanilla env map pass is never drawn on authored materials.
 
 [_Shaders.POM.Main]
 HeightMapScale = 0.4                 # Parallax mapping scale. Keep 0.4 for a widely working value.
@@ -849,7 +816,6 @@ FalloffRed = 1.0                    # How wide each colour spreads within the bl
 FalloffGreen = 0.37
 FalloffBlue = 0.3
 PerPixelWidth = 1.0                 # Per-pixel diffusion from curvature, used only where the screen-space blur cannot reach (first-person arms, reflections, fading actors) or when ScreenSpace is off. 0 is plain shading.
-DebugView = 0                       # 1 tints skin by the screen-space test: green blurred, red rejected by distance, blue rejected by colour (something drawn over it). 2 shows scene brightness against the skin's own pass: green equal, red brighter, blue darker.
 
 [_Shaders.Skin.Interiors]
 SpecularStrength = 1.0              # Indoors: skin highlight strength.
@@ -868,6 +834,9 @@ FalloffRed = 1.0                    # Indoors: how wide each colour spreads with
 FalloffGreen = 0.37
 FalloffBlue = 0.3
 PerPixelWidth = 1.0                 # Indoors: per-pixel diffusion where the screen-space blur cannot reach.
+
+[_Shaders.Skin.Debug]
+DebugView = 0                       # Skin diagnostics, indoors and out. 0 off. 1 which pass drew the skin: green one full pass, cyan one full pass with several lamps, yellow a light-only pass the game multiplies by the texture afterwards, red added for every extra lamp pass on top (indoors skin usually goes yellow + red). 2 which settings are in use: blue Interiors, orange outdoors; bright where the screen-space blur takes the skin, dark where per-pixel diffusion stands in. 3 direct light (sun and lamps) on white skin. 4 ambient and sky light on white skin. 5 highlights alone. 6 material: red roughness, green highlight strength, blue the VanillaMatchedHighlights boost. 7 curvature: red per-pixel diffusion (PerPixelWidth), green thin features for Translucency. 8 the screen-space blur's skin test: green blurred, red rejected by distance, blue rejected by colour. 9 scene brightness against the skin's own pass: green equal, red brighter (extra lamp passes), blue darker. 10 what the blur changed: dark nothing, bright a lot.
 
 [_Shaders.Skin.Status]
 Enabled = true                      # NVR's skin shader: subsurface scattering, translucency, physically based highlights and sky light. Overrides other skin shader mods.

@@ -174,3 +174,162 @@ float3 PBRSun(float metallicness, float roughness, float3 albedo, float3 normal,
     return PBRDiffuse(metallicness, roughness, albedo, normal, eyeDir, lightDir, lightColor)
          + PBRSunSpecular(metallicness, roughness, albedo, normal, eyeDir, lightDir, lightColor, specScale);
 }
+
+// --- Community Shaders TruePBR ----------------------------------------------------------------
+// The BRDF of Community Shaders' TruePBR (package/Shaders/Common/BRDF.hlsli, PBRMath.hlsli,
+// PBR.hlsli and Shading.hlsli; GPL-3.0-or-later), for materials with authored _rmaos maps. The
+// object shaders use it through Object.hlsl; the skin and terrain shaders still use the functions
+// above.
+
+// [Walter et al. 2007, "Microfacet models for refraction through rough surfaces"]
+float CS_D_GGX(float roughness, float NdotH) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float d = NdotH * NdotH * (a2 - 1.0f) + 1.0f;
+    return a2 / (PI * d * d);
+}
+
+// Approximation of the joint Smith term for GGX, with the 1 / (4 N.L N.V) folded in.
+// [Heitz 2014, "Understanding the Masking-Shadowing Function in Microfacet-Based BRDFs"]
+float CS_Vis_SmithJointApprox(float roughness, float NdotV, float NdotL) {
+    float a = roughness * roughness;
+    float visV = NdotL * (NdotV * (1.0f + a) + a);
+    float visL = NdotV * (NdotL * (1.0f + a) + a);
+    return 0.5f / max(visV + visL, 1e-5f);
+}
+
+// [Schlick 1994, "An Inexpensive BRDF Model for Physically-Based Rendering"]
+float3 CS_F_Schlick(float3 f0, float VdotH) {
+    float fc = pow(1.0f - VdotH, 5.0f);
+    return fc + (1.0f - fc) * f0;
+}
+
+// Split-sum environment BRDF (x scales F0, y is added).
+// [Lazarov 2013, "Getting More Physical in Call of Duty: Black Ops II"]
+float2 CS_EnvBRDF(float roughness, float NdotV) {
+    const float4 c0 = float4(-1.0f, -0.0275f, -0.572f, 0.022f);
+    const float4 c1 = float4(1.0f, 0.0425f, 1.04f, -0.04f);
+    float4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28f * NdotV)) * r.x + r.y;
+    return float2(-1.04f, 1.04f) * a004 + r.zw;
+}
+
+// Ambient occlusion with interreflections. [Jimenez et al. 2016, "Practical Realtime Strategies
+// for Accurate Indirect Occlusion"]
+float3 CS_MultiBounceAO(float3 baseColor, float ao) {
+    float3 a = 2.0404f * baseColor - 0.3324f;
+    float3 b = -4.7951f * baseColor + 0.6417f;
+    float3 c = 2.7552f * baseColor + 0.6903f;
+    return max(ao, ((ao * a + b) * ao + c) * ao);
+}
+
+// [Lagarde et al. 2014, "Moving Frostbite to Physically Based Rendering 3.0"]
+float CS_SpecularOcclusion(float NdotV, float alpha, float occlusion) {
+    return saturate(pow(abs(NdotV + occlusion), alpha) - 1.0f + occlusion);
+}
+
+// One light, CS's GetDirectLightInput: GGX x Smith x Schlick specular and Lambert diffuse scaled
+// by (1 - F). In NVR's units, with PI folded in: a white Lambertian surface lit head-on returns
+// the light. diffuseAlbedo is the base colour x (1 - metalness).
+void CS_DirectLight(float3 N, float3 V, float3 L, float3 light, float roughness, float3 f0, float3 diffuseAlbedo, out float3 diffuse, out float3 specular) {
+    float3 H = normalize(V + L);
+    float NdotL = clamp(dot(N, L), 1e-4f, 1.0f);
+    float NdotV = saturate(abs(dot(N, V)) + 1e-4f);
+    float NdotH = saturate(dot(N, H));
+    float VdotH = saturate(dot(V, H));
+
+    float3 F = CS_F_Schlick(f0, VdotH);
+    float3 Fr = CS_D_GGX(roughness, NdotH) * CS_Vis_SmithJointApprox(roughness, NdotV, NdotL) * F;
+    diffuse = diffuseAlbedo * (1.0f - F) * NdotL * light;
+    specular = Fr * (PI * NdotL) * light;
+}
+
+// --- OpenPBR Surface --------------------------------------------------------------------------
+// The base substrate of the OpenPBR Surface specification (Academy Software Foundation,
+// https://github.com/AcademySoftwareFoundation/OpenPBR), for materials with authored _rmaos maps:
+//   R  specular_roughness   (GGX, alpha = r^2)
+//   G  base_metalness       (statistical mix of the dielectric base and the metal)
+//   B  ambient occlusion    (not an OpenPBR parameter: a renderer term)
+//   A  specular_weight      (default 1: the dielectric reflectivity of specular_ior 1.5, F0 0.04)
+// Everything else at the specification's defaults: base_weight 1, specular_color white,
+// specular_ior 1.5, base_diffuse_roughness 0 (Lambertian), no anisotropy, coat, fuzz, thin film,
+// transmission or subsurface. GGX, Smith masking and the split-sum environment term are the CS_
+// functions above.
+
+#define OPENPBR_SPECULAR_IOR 1.5f
+
+// The IOR ratio after specular_weight modulates the reflectivity at normal incidence
+// ("Base Substrate", modulated_ior): F_s = ((1 - eta) / (1 + eta))^2, eps = sqrt(weight F_s),
+// eta' = (1 + eps) / (1 - eps). A weight of 0 gives eta' = 1: no reflection.
+float OpenPBR_ModulatedIOR(float specularWeight) {
+    float Fs = (OPENPBR_SPECULAR_IOR - 1.0f) / (OPENPBR_SPECULAR_IOR + 1.0f);
+    Fs *= Fs;
+    float eps = sqrt(saturate(specularWeight * Fs));
+    return (1.0f + eps) / max(1.0f - eps, 1e-4f);
+}
+
+// Exact unpolarised dielectric Fresnel reflectance for an IOR ratio eta >= 1 at incidence cosine c.
+float OpenPBR_FresnelDielectric(float c, float eta) {
+    float g2 = eta * eta - 1.0f + c * c;
+    float g = sqrt(max(g2, 0.0f));
+    float a = (g - c) / max(g + c, 1e-5f);
+    float b = (c * (g + c) - 1.0f) / (c * (g - c) + 1.0f);
+    return 0.5f * a * a * (1.0f + b * b);
+}
+
+// The dielectric's reflectivity at normal incidence, for the split-sum terms.
+float OpenPBR_DielectricF0(float eta) {
+    float f = (eta - 1.0f) / (eta + 1.0f);
+    return f * f;
+}
+
+// Multiple scattering between microfacets, which the single-scattering lobe loses (the
+// specification asks implementations to account for it): 1 + F0 (1 / E_ss - 1), with E_ss the
+// lobe's directional albedo for a white F0, A + B of the split-sum fit.
+float3 OpenPBR_EnergyCompensation(float3 f0, float2 envBRDF) {
+    return 1.0f + f0 * (1.0f / max(envBRDF.x + envBRDF.y, 1e-3f) - 1.0f);
+}
+
+// One light on the base substrate. In NVR's units, with PI folded in: a white Lambertian surface
+// lit head-on returns the light. albedo is base_color in the lighting space (decoded); in a
+// light-only pass it is 1 for the diffuse (the texture pass multiplies it in) while metalF0 keeps
+// the real colour for the metal's Fresnel.
+//   specular: (1 - M) f_dielectric + M f_metal, f_metal = specular_weight x Schlick(base_color)
+//             (the F82-tint model at its default white edge tint reduces to Schlick)
+//   diffuse:  (1 - M) base_color (1 - E_dielectric(view)) / PI, the albedo-scaling form of the
+//             glossy-diffuse slab with a Lambertian base
+void OpenPBR_DirectLight(float3 N, float3 V, float3 L, float3 light, float roughness, float metalness, float specularWeight, float eta,
+                         float3 albedo, float3 metalF0, out float3 diffuse, out float3 specular) {
+    float3 H = normalize(V + L);
+    float NdotL = clamp(dot(N, L), 1e-4f, 1.0f);
+    float NdotV = saturate(abs(dot(N, V)) + 1e-4f);
+    float NdotH = saturate(dot(N, H));
+    float VdotH = saturate(dot(V, H));
+
+    float DV = CS_D_GGX(roughness, NdotH) * CS_Vis_SmithJointApprox(roughness, NdotV, NdotL);
+    float2 envBRDF = CS_EnvBRDF(roughness, NdotV);
+    float dielectricF0 = OpenPBR_DielectricF0(eta);
+
+    float3 Fmetal = specularWeight * CS_F_Schlick(metalF0, VdotH);
+    float  Fdielectric = OpenPBR_FresnelDielectric(VdotH, eta);
+    float3 F = lerp(Fdielectric.xxx, Fmetal, metalness);
+    float3 f0 = lerp(dielectricF0.xxx, specularWeight * metalF0, metalness);
+
+    specular = DV * F * OpenPBR_EnergyCompensation(f0, envBRDF) * (PI * NdotL) * light;
+
+    float Edielectric = dielectricF0 * envBRDF.x + envBRDF.y;
+    diffuse = albedo * ((1.0f - metalness) * (1.0f - Edielectric) * NdotL) * light;
+}
+
+// The environment lobes of the same substrate (split sum), for the ambient: x the specular lobe
+// weight (multiplies the environment radiance), and the share the diffuse ambient keeps.
+void OpenPBR_EnvironmentWeights(float NdotV, float roughness, float metalness, float specularWeight, float eta, float3 metalF0,
+                                out float3 specularWeightOut, out float diffuseShare) {
+    float2 envBRDF = CS_EnvBRDF(roughness, NdotV);
+    float dielectricF0 = OpenPBR_DielectricF0(eta);
+    float  Edielectric = dielectricF0 * envBRDF.x + envBRDF.y;
+    float3 Emetal = specularWeight * (metalF0 * envBRDF.x + envBRDF.y);
+    float3 f0 = lerp(dielectricF0.xxx, specularWeight * metalF0, metalness);
+    specularWeightOut = lerp(Edielectric.xxx, Emetal, metalness) * OpenPBR_EnergyCompensation(f0, envBRDF);
+    diffuseShare = (1.0f - metalness) * (1.0f - Edielectric);
+}

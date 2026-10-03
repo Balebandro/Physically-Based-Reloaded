@@ -36,9 +36,20 @@ float4 TESR_SkinExtraData : register(c146);  // x SkyReflectionScale (0 indoors)
 
 // Set per draw by the SkinShader hook (NewVegas/Hooks/Shaders.cpp), not a TESR_ constant: x is 1
 // when the skin scattering effect's target is bound for this draw, i.e. the screen-space blur
-// will diffuse this skin. The per-pixel curvature diffusion then steps aside: doing both doubled
+// will diffuse this skin; y is 1 when the hook has bound the FaceGen maps to a light-only pass
+// (SkinTemplate.hlsl, ONLY_LIGHT). The per-pixel curvature diffusion then steps aside: doing both doubled
 // the scattering and lit eyelid and lip creases, where the curvature estimate peaks, orange.
 float4 SkinScreenSpaceScatter : register(c147);
+
+// [Shaders.Skin.Debug]: x the skin shader's own DebugView (1-7, 0 off or a scattering view),
+// y 1 while the Interiors settings are in use. See SkinDebugView in SkinTemplate.hlsl.
+float4 TESR_SkinDebugData : register(c152);
+
+#if defined(__INTELLISENSE__)
+    #include "MergedLights.hlsl"
+#else
+    #include "Includes/MergedLights.hlsl"
+#endif
 
 #define SKIN_F0 0.028f
 #define SKIN_LOBE0_ROUGHNESS 0.75f      // sharp lobe, x the material roughness
@@ -193,6 +204,17 @@ float3 SkinLight(float3 albedo, float3 N, float3 Nsoft, float3 geometricNormal, 
 
     specular = SkinSpecular(N, V, L, light, sun) * shadow;
     return (diffuse + transmitted) * light;
+}
+
+// A lamp merged into a light-only pass (Includes/MergedLights.hlsl): SkinLight for a point light
+// without the transmission term, which does not fit in ps_3_0's temporaries inside the merged
+// loop. For a lamp the rest is the same: with no shadow map, the direct and wrapped parts both
+// reach the surface whole.
+float3 SkinLampLight(float3 albedo, float3 N, float3 Nsoft, float3 V, float3 L, float3 lightColor, out float3 specular) {
+    float3 light = decodeColor(lightColor) * TESR_PBRData.z;
+    L = normalize(L);
+    specular = SkinSpecular(N, V, L, light, false);
+    return albedo * SkinDiffusion(N, Nsoft, L) * light;
 }
 
 // Sky reflection off both lobes. Sets skyReflectedFraction, so call it BEFORE SkinAmbient.

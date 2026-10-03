@@ -46,6 +46,7 @@ void ShaderManager::Initialize() {
 	TheShaderManager->RegisterEffect<AvgLumaEffect>(&TheShaderManager->Effects.AvgLuma);
 	TheShaderManager->RegisterEffect<AmbientOcclusionEffect>(&TheShaderManager->Effects.AmbientOcclusion);
 	TheShaderManager->RegisterEffect<SkinScatteringEffect>(&TheShaderManager->Effects.SkinScattering);
+	TheShaderManager->RegisterEffect<DynamicCubemapsEffect>(&TheShaderManager->Effects.DynamicCubemaps);
 	TheShaderManager->RegisterEffect<BloodLensEffect>(&TheShaderManager->Effects.BloodLens);
 	TheShaderManager->RegisterEffect<BloomEffect>(&TheShaderManager->Effects.Bloom);
 	TheShaderManager->RegisterEffect<BloomLegacyEffect>(&TheShaderManager->Effects.BloomLegacy);
@@ -828,6 +829,10 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 	// colour the skin shader wrote, which any effect before it would change. Screen-space shadows
 	// and AO then darken the scattered skin like everything else.
 	Effects.SkinScattering->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);   // pass 2 reads the unblurred scene
+
+	// The environment the PBR materials reflect next frame, from the scene as drawn (skin
+	// scattering only blurs skin; RenderedSurface holds its result).
+	Effects.DynamicCubemaps->RenderCubemaps(Device, RenderTarget);
 
 	if (GameState.isExterior) 
 		Effects.ShadowsExteriors->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);

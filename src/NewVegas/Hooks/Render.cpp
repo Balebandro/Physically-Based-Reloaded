@@ -20,6 +20,7 @@ void __fastcall RenderHook(Main* This, UInt32 edx, BSRenderedTexture* RenderedTe
 
 	// The skin scattering target is cleared on the frame's first skin draw.
 	if (TheShaderManager->Effects.SkinScattering) TheShaderManager->Effects.SkinScattering->BeginFrame();
+	UpdateFaceGenInteriorFlag();
 
 	//if (SettingsMain->Develop.TraceShaders && InterfaceManager->IsActive(Menu::MenuType::kMenuType_None) && Global->OnKeyDown(SettingsMain->Develop.TraceShaders) && DWNode::Get() == NULL) DWNode::Create();
 	(*Render)(This, RenderedTexture, Arg2, Arg3);
@@ -70,20 +71,9 @@ void __fastcall SetShadersHook(BSShader* This, UInt32 edx, UInt32 PassIndex) {
 	//   y = the engine's specular distance fade, BSShaderPPLightingProperty::GetSpecularLODFade
 	//       (0xB66B80): 1 up to fSpecularLODStartFade, 0 from fSpecularLODEnd on, where the game
 	//       stops drawing the specular pass. Vanilla fades the highlight with it so it does not pop.
-	float ObjectMaterial[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
-	if (Geometry) {
-		BSShaderProperty* ShaderProperty = static_cast<BSShaderProperty*>(Geometry->GetProperty(NiProperty::kType_Shade));
-		if (ShaderProperty && ShaderProperty->GetFlag(BSSP_SPECULAR)) {
-			ObjectMaterial[0] = 1.0f;
-			const float StartFade = *(float*)0x011F9454;   // BSShaderManager::fSpecularLODStartFade
-			const float End = *(float*)0x011F9458;         // BSShaderManager::fSpecularLODEnd
-			const float Distance = ShaderProperty->fLODFade;   // fCameraDistance in the engine's own layout (0x34)
-			const bool Stinger = (ShaderProperty->ulFlags[1] & BSShaderProperty::stinger_prop) != 0;
-			if (End > 0.0f && !Stinger && Distance > StartFade)
-				ObjectMaterial[1] = Distance >= End ? 0.0f : 1.0f - (Distance - StartFade) / max(End - StartFade, 1e-3f);
-		}
-	}
-	TheRenderManager->device->SetPixelShaderConstantF(150, ObjectMaterial, 1);
+	// This runs once per batch; the ShadowLightShader, HairShader and ParallaxShader per-geometry
+	// hooks (Hooks/Shaders.cpp) write it again for every draw.
+	WriteObjectMaterial(Geometry);
 
 }
 

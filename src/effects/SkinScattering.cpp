@@ -49,7 +49,10 @@ static void ReadProfile(SkinScatteringEffect::ProfileStruct* Profile, const char
 void SkinScatteringEffect::UpdateSettings() {
 	ReadProfile(&ExteriorProfile, "Shaders.Skin.Scattering");
 	ReadProfile(&InteriorProfile, "Shaders.Skin.Interiors");
-	Constants.Debug.x = (float)std::clamp(TheSettingManager->GetSettingI("Shaders.Skin.Scattering", "DebugView"), 0, 2);
+	// [Shaders.Skin.Debug] DebugView 8-10 are this effect's (its views 1-3); see SkinShaders.
+	const int DebugView = std::clamp(TheSettingManager->GetSettingI("Shaders.Skin.Debug", "DebugView"), 0, SkinShaders::DebugViewCount);
+	Constants.Debug.x = DebugView >= SkinShaders::FirstScatteringDebugView ? (float)(DebugView - SkinShaders::FirstScatteringDebugView + 1) : 0.0f;
+	SkinShaderDebug = DebugView > 0 && DebugView < SkinShaders::FirstScatteringDebugView;
 	KernelDirty = true;
 }
 
@@ -321,6 +324,9 @@ void SkinScatteringEffect::Unbind() {
 
 bool SkinScatteringEffect::ShouldRender() {
 	if (!ScreenSpace || !SkinDrawn || !Texture || !TextureSurface || !AlbedoTextureSurface) return false;
+	// The skin shaders' debug views: shown as drawn, not blurred. The target stays bound during
+	// skin draws, so the views still show which skin the blur would take.
+	if (SkinShaderDebug) return false;
 	if (MSAASurface) TheRenderManager->device->StretchRect(MSAASurface, NULL, TextureSurface, NULL, D3DTEXF_NONE);
 	if (AlbedoMSAASurface) TheRenderManager->device->StretchRect(AlbedoMSAASurface, NULL, AlbedoTextureSurface, NULL, D3DTEXF_NONE);
 	return true;

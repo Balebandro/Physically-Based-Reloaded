@@ -102,10 +102,32 @@
     #define NO_VERTEX_COLOR
 #endif
 
+// The light-only (AD) passes take the lamps and highlights of the mesh's other passes, as in
+// ObjectTemplate.hlsl (Includes/MergedLights.hlsl): the world normal and tangent ride in the two
+// colour interpolators these passes leave free. With three lamps and the projected shadow nine of
+// ps_3_0's ten input registers are already taken, so there the frame is packed (MERGED_PACKED):
+// the normal and the tangent's x in COLOR0, the tangent's y and z in the light2Att and light3Att
+// .w channels (constant 0.5 in vanilla, rebuilt in the pixel shader) and the handedness in
+// lightDir.w (the sun's, unused by the light-only pass).
+#if defined(AD)
+    #define MERGED_LIGHTS
+    #if LIGHTS > 2 && defined(PROJ_SHADOW)
+        #define MERGED_PACKED
+    #endif
+#endif
+#ifdef MERGED_PACKED
+    #define ATTENUATION_UV2(a) float2((a).z, 0.5f)
+#else
+    #define ATTENUATION_UV2(a) (a).zw
+#endif
+
 #include "includes/Helpers.hlsl"
 #include "includes/Parallax.hlsl"
 #include "includes/Object.hlsl"
 #include "includes/Shadow.hlsl"
+#ifdef MERGED_LIGHTS
+    #include "includes/MergedLights.hlsl"
+#endif
 
 // Forward sun shadows -- see ObjectTemplate.hlsl. PAR shaders do full sun lighting but had
 // no shadow term at all, so every parallax-material object rendered fully sunlit once the
@@ -160,6 +182,12 @@ struct VS_OUTPUT
 
     // TEXCOORD0-8 are taken by this template; 9 is the first free slot.
     float4 shadowWorldPos : TEXCOORD9;
+#ifdef MERGED_PACKED
+    float4 worldNormal : COLOR0;    // xyz the world normal x 0.5 + 0.5, w the world tangent's x x 0.5 + 0.5
+#elif defined(MERGED_LIGHTS)
+    float4 worldNormal : COLOR0;    // xyz the world normal x 0.5 + 0.5, w 1 for a right-handed frame, 0 mirrored
+    float4 worldTangent : COLOR1;   // xyz the world tangent x 0.5 + 0.5
+#endif
 };
 
 #ifdef VS
@@ -192,9 +220,20 @@ VS_OUTPUT main(VS_INPUT IN)
 
     // World up in the normal map's tangent space through the engine's own frame, for the
     // normal-mapped ambient; see ObjectTemplate.hlsl. No channel is spare for z: rebuilt in the PS.
-    float2 upTS = float2(normalize(GetShadowWorldDir(mul(ModelViewProj, float4(tbn[0], 0.0f)))).z,
-                         normalize(GetShadowWorldDir(mul(ModelViewProj, float4(tbn[1], 0.0f)))).z);
+    float3 worldTangent = normalize(GetShadowWorldDir(mul(ModelViewProj, float4(tbn[0], 0.0f))));
+    float3 worldBinormal = normalize(GetShadowWorldDir(mul(ModelViewProj, float4(tbn[1], 0.0f))));
+    float2 upTS = float2(worldTangent.z, worldBinormal.z);
     OUT.uv = float4(IN.uv.xy, upTS);
+    #ifdef MERGED_LIGHTS
+        float3 worldNormal = normalize(GetShadowWorldDir(mul(ModelViewProj, float4(tbn[2], 0.0f))));
+        float handedness = dot(cross(worldNormal, worldTangent), worldBinormal) >= 0.0f ? 1.0f : 0.0f;
+        #ifdef MERGED_PACKED
+            OUT.worldNormal = float4(worldNormal * 0.5f + 0.5f, worldTangent.x * 0.5f + 0.5f);
+        #else
+            OUT.worldNormal = float4(worldNormal * 0.5f + 0.5f, handedness);
+            OUT.worldTangent = float4(worldTangent * 0.5f + 0.5f, 0.0f);
+        #endif
+    #endif
 
     float3 eye = EyePosition.xyz - IN.position.xyz;
     OUT.viewDir.xyz = mul(tbn, eye);
@@ -241,6 +280,12 @@ VS_OUTPUT main(VS_INPUT IN)
                 OUT.light3Dir.xyz = mul(tbn, LightData[2].xyz - IN.position.xyz);
             #endif
         #endif
+    #endif
+
+    #ifdef MERGED_PACKED
+        OUT.light2Att.w = worldTangent.y;
+        OUT.light3Att.w = worldTangent.z;
+        OUT.lightDir.w = handedness;
     #endif
 
     #ifndef NO_FOG
@@ -304,6 +349,12 @@ struct PS_INPUT
 #endif
     float4 viewDir : TEXCOORD7_centroid;
     float4 shadowWorldPos : TEXCOORD9;
+#ifdef MERGED_PACKED
+    float4 worldNormal : COLOR0;
+#elif defined(MERGED_LIGHTS)
+    float4 worldNormal : COLOR0;
+    float4 worldTangent : COLOR1;
+#endif
 };
 
 struct PS_OUTPUT {
@@ -375,6 +426,36 @@ float4 EmittanceColor : register(c2);
 #endif
 
 #define	uvtile(w)		(((w) * 0.04) - 0.02)
+
+#ifdef MERGED_LIGHTS
+// The merged lamps (MERGED_LIGHTS above), as the additive DIFFUSE passes would have lit them, in
+// world space: the normal map's normal (at the parallax offset) through the world frame the vertex
+// shader sent. The vanilla fallback (TESR_ParallaxData.y off) lights them the vanilla way, as the
+// passes it replaces did.
+float3 getMergedPointLights(float3 worldNormal, float3 worldTangent, float handedness, float4 normalTS, float3 worldPos, float3 albedo, float roughness) {
+    float3 total = 0.0f;
+    [branch] if (TESR_MergedLightCount.x > 0.0f) {
+        float3 N = normalize(worldNormal);
+        float3 T = normalize(worldTangent - N * dot(worldTangent, N));
+        float3 B = cross(N, T) * (handedness > 0.5f ? 1.0f : -1.0f);
+        float3 n = normalize(normalTS.x * T + normalTS.y * B + normalTS.z * N);
+        float3 V = -worldPos;
+
+        [loop] for (int i = 0; i < MERGED_MAX_LIGHTS; i++) {
+            if (i >= TESR_MergedLightCount.x) break;
+            float3 L = TESR_MergedLightPosition[i].xyz - worldPos;
+            float att = vanillaAttSq(dot(L, L), TESR_MergedLightPosition[i].w);
+            [branch] if (att > 0.0f) {
+                if (TESR_ParallaxData.y)
+                    total += getPointLightLightingAtt(L, att, TESR_MergedLightColor[i].rgb, V, n, albedo, roughness);
+                else
+                    total += getVanillaLightingAtt(L, att, TESR_MergedLightColor[i].rgb, V, n, albedo, normalTS.a, glossPower);
+            }
+        }
+    }
+    return total;
+}
+#endif
 
 PS_OUTPUT main(PS_INPUT IN)
 {
@@ -461,20 +542,29 @@ PS_OUTPUT main(PS_INPUT IN)
         float4 normal = tex2D(NormalMap, offsetUV.xy);
         normal.xyz = normalize(expand(normal.xyz));
 
-        // Material, as in ObjectTemplate.hlsl: the mesh's glossiness gives the roughness, the normal
-        // map alpha is the specular mask. OPT variants carry no Toggles (glossPower is a dummy 1
-        // there), so they take the engine's default glossiness. SpecularAA at top level.
+        // Material, as in ObjectTemplate.hlsl (Object.hlsl setupMaterial), at the parallax offset.
+        // OPT variants carry no Toggles (glossPower is a dummy 1 there), so they take the engine's
+        // default glossiness. roughness is only the debug view's.
         #ifndef OPT
-            float materialRoughness = getMaterialRoughness(glossPower);
+            float shine = glossPower;
         #else
-            float materialRoughness = getMaterialRoughness(30.0f);
+            float shine = 30.0f;
         #endif
-        float roughness = SpecularAA(normal.xyz, materialRoughness);
-        setupMaterial(normal.a, SpecularAA(normal.xyz, DEFAULT_ROUGHNESS), materialRoughness);
+        #if !defined(DIFFUSE) && !defined(ONLY_SPECULAR)
+            float3 materialAlbedo = adAlbedo;
+        #else
+            float3 materialAlbedo = 1.0f;
+        #endif
+        setupMaterial(normal.a, shine, normal.xyz, offsetUV.xy, materialAlbedo);
+        float roughness = getMaterialRoughness(shine);
         // The vanilla lighting fallback stays in gamma space, exactly as before.
         if (!TESR_ParallaxData.y) linearLighting = false;
         #if !defined(DIFFUSE) && !defined(ONLY_SPECULAR)
             setupADCompensation(adAlbedo);
+        #endif
+        #ifdef MERGED_LIGHTS
+            // The highlight passes merged in (Includes/MergedLights.hlsl): only flagged materials have them.
+            mergedSpecular = TESR_MergedLightCount.y > 0.0f && ObjectMaterial.x >= 0.5f;
         #endif
         baseColor.rgb = decodeColor(baseColor.rgb);
 
@@ -519,7 +609,7 @@ PS_OUTPUT main(PS_INPUT IN)
 
         // Other light sources.
         #if LIGHTS > 1
-            finalAtt = saturate(1 - tex2D(AttenuationMap, IN.light2Att.xy).x - tex2D(AttenuationMap, IN.light2Att.zw).x);
+            finalAtt = saturate(1 - tex2D(AttenuationMap, IN.light2Att.xy).x - tex2D(AttenuationMap, ATTENUATION_UV2(IN.light2Att)).x);
 
             if (TESR_ParallaxData.y)
                 lighting += getPointLightLightingAtt(IN.light2Dir.xyz, finalAtt, PSLightColor[1].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
@@ -528,7 +618,7 @@ PS_OUTPUT main(PS_INPUT IN)
         #endif
 
         #if LIGHTS > 2
-            finalAtt = saturate(1 - tex2D(AttenuationMap, IN.light3Att.xy).x - tex2D(AttenuationMap, IN.light3Att.zw).x);
+            finalAtt = saturate(1 - tex2D(AttenuationMap, IN.light3Att.xy).x - tex2D(AttenuationMap, ATTENUATION_UV2(IN.light3Att)).x);
 
             if (TESR_ParallaxData.y)
                 lighting += getPointLightLightingAtt(IN.light3Dir.xyz, finalAtt, PSLightColor[2].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
@@ -548,6 +638,13 @@ PS_OUTPUT main(PS_INPUT IN)
                 lighting += getPointLightLighting(IN.light3Dir.xyz, IN.light3Dir.w, PSLightColor[2].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
             else
                 lighting += getVanillaLighting(IN.light3Dir.xyz, IN.light3Dir.w, PSLightColor[2].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, normal.a, glossPower);
+        #endif
+
+        // The lamps of this mesh's additive passes (MERGED_LIGHTS above); those passes are muted.
+        #ifdef MERGED_PACKED
+            lighting += getMergedPointLights(IN.worldNormal.xyz * 2.0f - 1.0f, float3(IN.worldNormal.w * 2.0f - 1.0f, IN.light2Att.w, IN.light3Att.w), IN.lightDir.w, normal, IN.shadowWorldPos.xyz, baseColor.rgb, roughness);
+        #elif defined(MERGED_LIGHTS)
+            lighting += getMergedPointLights(IN.worldNormal.xyz * 2.0f - 1.0f, IN.worldTangent.xyz * 2.0f - 1.0f, IN.worldNormal.w, normal, IN.shadowWorldPos.xyz, baseColor.rgb, roughness);
         #endif
     #endif
 

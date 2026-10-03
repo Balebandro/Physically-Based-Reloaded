@@ -80,6 +80,7 @@ public:
 	struct	EffectsStruct {
 		AmbientOcclusionEffect*	AmbientOcclusion;
 		SkinScatteringEffect*	SkinScattering;
+		DynamicCubemapsEffect*	DynamicCubemaps;
 		AvgLumaEffect*			AvgLuma;
 		BloodLensEffect*		BloodLens;
 		BloomEffect*			Bloom;

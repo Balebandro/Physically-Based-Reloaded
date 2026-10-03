@@ -5,6 +5,7 @@
 void SkinShaders::RegisterConstants() {
 	TheShaderManager->RegisterConstant("TESR_SkinData", &Constants.Data);
 	TheShaderManager->RegisterConstant("TESR_SkinExtraData", &Constants.ExtraData);
+	TheShaderManager->RegisterConstant("TESR_SkinDebugData", &Constants.DebugData);
 }
 
 void SkinShaders::UpdateConstants() {
@@ -24,6 +25,10 @@ void SkinShaders::UpdateConstants() {
 	// Rain wets skin: smoother and shinier. Same rain/puddle factor the PBR and terrain shaders use.
 	float rainFactor = max(TheShaderManager->Effects.WetWorld->Constants.Data.x, TheShaderManager->Effects.WetWorld->Constants.Data.z);
 	Constants.ExtraData.y = isExterior ? std::clamp(rainFactor * RainWetness, 0.0f, 1.0f) : 0.0f;
+
+	// The shader's own views only; the scattering effect's views leave the skin drawn normally.
+	Constants.DebugData.x = DebugView < FirstScatteringDebugView ? (float)DebugView : 0.0f;
+	Constants.DebugData.y = isExterior ? 0.0f : 1.0f;
 }
 
 static void ReadMaterial(SkinShaders::MaterialStruct* Material, const char* Section, const char* ScatteringSection) {
@@ -40,4 +45,5 @@ void SkinShaders::UpdateSettings() {
 	ReadMaterial(&Interior, "Shaders.Skin.Interiors", "Shaders.Skin.Interiors");
 	SkyReflectionScale = max(0.0f, TheSettingManager->GetSettingF("Shaders.Skin.Main", "SkyReflectionScale"));
 	RainWetness = std::clamp(TheSettingManager->GetSettingF("Shaders.Skin.Main", "RainWetness"), 0.0f, 1.0f);
+	DebugView = std::clamp(TheSettingManager->GetSettingI("Shaders.Skin.Debug", "DebugView"), 0, DebugViewCount);
 }

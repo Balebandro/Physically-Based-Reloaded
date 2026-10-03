@@ -41,6 +41,13 @@ void AttachHooks() {
 	kSkyShaderConstantsDetour.ReplaceVirtualFunc(0x10AFE94, SkyShader__UpdateConstants);
 	kSkinPrepareGeometryDetour.ReplaceVirtualFunc(0x10BB980 + 27 * 4, SkinShader__PrepareGeometryForRendering);
 	kSkinPostGeometryDetour.ReplaceVirtualFunc(0x10BB980 + 35 * 4, SkinShader__PostGeometry);
+	InstallFaceGenInteriorPatch();   // interior faces get SkinShader's own passes (Hooks/Shaders.cpp)
+	kLightPrepareGeometryDetour.ReplaceVirtualFunc(0x10AF2F8 + 27 * 4, ShadowLightShader__PrepareGeometryForRendering);
+	kLightPostGeometryDetour.ReplaceVirtualFunc(0x10AF2F8 + 35 * 4, ShadowLightShader__PostGeometry);
+	kParallaxPrepareGeometryDetour.ReplaceVirtualFunc(0x10BB7A8 + 27 * 4, ParallaxShader__PrepareGeometryForRendering);
+	kParallaxPostGeometryDetour.ReplaceVirtualFunc(0x10BB7A8 + 35 * 4, ParallaxShader__PostGeometry);
+	kHairPrepareGeometryDetour.ReplaceVirtualFunc(0x10BBB50 + 27 * 4, HairShader__PrepareGeometryForRendering);
+	kHairPostGeometryDetour.ReplaceVirtualFunc(0x10BBB50 + 35 * 4, HairShader__PostGeometry);
 
 	WriteRelCall(0xBE0B73, NiD3DVertexShaderEx::Free);
 	WriteRelCall(0xBE0AF3, NiD3DPixelShaderEx::Free);

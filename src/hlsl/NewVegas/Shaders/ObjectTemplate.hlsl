@@ -148,9 +148,19 @@
     #define NO_VERTEX_COLOR
 #endif
 
+// The light-only passes take the lamps of the mesh's additive passes (Includes/MergedLights.hlsl).
+// They light those in world space, so the vertex shader sends the world normal and tangent in the
+// two colour interpolators these passes leave free (no fog, no vertex colour).
+#if defined(ONLY_LIGHT) && !defined(DIFFUSE) && !defined(ONLY_SPECULAR) && (!defined(LIGHTS) || LIGHTS < 4)
+    #define MERGED_LIGHTS
+#endif
+
 #include "includes/Helpers.hlsl"
 #include "includes/Object.hlsl"
 #include "includes/Shadow.hlsl"
+#ifdef MERGED_LIGHTS
+    #include "includes/MergedLights.hlsl"
+#endif
 
 // Forward sun shadows. Enabled at COMPILE TIME via FORWARD_SHADOWS in Includes/Shadow.hlsl,
 // deliberately not via a runtime constant -- see the note there.
@@ -214,6 +224,10 @@ struct VS_OUTPUT {
 
 #ifdef PROJ_SHADOW
     float4 shadowUVs : TEXCOORD7;
+#endif
+#ifdef MERGED_LIGHTS
+    float4 worldNormal : COLOR0;    // xyz the world normal x 0.5 + 0.5, w 1 for a right-handed frame, 0 mirrored
+    float4 worldTangent : COLOR1;   // xyz the world tangent x 0.5 + 0.5
 #endif
 };
 
@@ -287,11 +301,16 @@ VS_OUTPUT main(VS_INPUT IN) {
     #else
         #define OBJECT_TO_CLIP SkinModelViewProj
     #endif
-    float3 upTS = float3(normalize(GetShadowWorldDir(mul(OBJECT_TO_CLIP, float4(tbn[0], 0.0f)))).z,
-                         normalize(GetShadowWorldDir(mul(OBJECT_TO_CLIP, float4(tbn[1], 0.0f)))).z,
-                         normalize(GetShadowWorldDir(mul(OBJECT_TO_CLIP, float4(tbn[2], 0.0f)))).z);
+    float3 worldTangent = normalize(GetShadowWorldDir(mul(OBJECT_TO_CLIP, float4(tbn[0], 0.0f))));
+    float3 worldBinormal = normalize(GetShadowWorldDir(mul(OBJECT_TO_CLIP, float4(tbn[1], 0.0f))));
+    float3 worldNormal = normalize(GetShadowWorldDir(mul(OBJECT_TO_CLIP, float4(tbn[2], 0.0f))));
+    float3 upTS = float3(worldTangent.z, worldBinormal.z, worldNormal.z);
     OUT.uv = float4(IN.uv.xy, upTS.xy);
     OUT.viewDir.w = upTS.z;
+    #ifdef MERGED_LIGHTS
+        OUT.worldNormal = float4(worldNormal * 0.5f + 0.5f, dot(cross(worldNormal, worldTangent), worldBinormal) >= 0.0f ? 1.0f : 0.0f);
+        OUT.worldTangent = float4(worldTangent * 0.5f + 0.5f, 0.0f);
+    #endif
 
     #if LIGHTS > 1 || NUM_PT_LIGHTS > 1
         light = LightData[1].xyz - position.xyz;
@@ -534,7 +553,37 @@ struct PS_INPUT {
 #ifdef PROJ_SHADOW
     float4 shadowUVs : TEXCOORD7;
 #endif
+#ifdef MERGED_LIGHTS
+    float4 worldNormal : COLOR0;
+    float4 worldTangent : COLOR1;
+#endif
 };
+
+#ifdef MERGED_LIGHTS
+// The merged lamps, as the additive DIFFUSE passes would have lit them (getPointLightLightingAtt,
+// vanilla's attenuation), in world space: the normal map's normal through the world frame the
+// vertex shader sent.
+float3 getMergedPointLights(float4 encodedNormal, float4 encodedTangent, float3 normalTS, float3 worldPos, float3 albedo, float roughness) {
+    float3 total = 0.0f;
+    [branch] if (TESR_MergedLightCount.x > 0.0f) {
+        float3 N = normalize(encodedNormal.xyz * 2.0f - 1.0f);
+        float3 T = encodedTangent.xyz * 2.0f - 1.0f;
+        T = normalize(T - N * dot(T, N));
+        float3 B = cross(N, T) * (encodedNormal.w > 0.5f ? 1.0f : -1.0f);
+        float3 n = normalize(normalTS.x * T + normalTS.y * B + normalTS.z * N);
+        float3 V = -worldPos;
+
+        [loop] for (int i = 0; i < MERGED_MAX_LIGHTS; i++) {
+            if (i >= TESR_MergedLightCount.x) break;
+            float3 L = TESR_MergedLightPosition[i].xyz - worldPos;
+            float att = vanillaAttSq(dot(L, L), TESR_MergedLightPosition[i].w);
+            [branch] if (att > 0.0f)
+                total += getPointLightLightingAtt(L, att, TESR_MergedLightColor[i].rgb, V, n, albedo, roughness);
+        }
+    }
+    return total;
+}
+#endif
 
 struct PS_OUTPUT {
     float4 color : COLOR0;
@@ -601,24 +650,27 @@ PS_OUTPUT main(PS_INPUT IN) {
     float4 normal = tex2D(NormalMap, IN.uv.xy);
     normal.xyz = normalize(expand(normal.xyz));
 
-    // Material: the mesh's glossiness exponent gives the roughness and the normal map alpha is
-    // the specular mask, see the Material notes in Object.hlsl. Hair keeps the old mapping.
-    #if defined(HAIR)
-        float roughness = getRoughness(normal.a);
-    #elif !defined(OPT)
-        float roughness = getMaterialRoughness(glossPower);
+    // Material (Object.hlsl): vanilla's specular mask (the normal map alpha) and glossiness, and
+    // the authored _rmaos map where there is one. OPT variants carry no Toggles: the engine's
+    // default glossiness of 30. roughness is only the debug view's.
+    #if !defined(OPT)
+        float shine = glossPower;
     #else
-        float roughness = getMaterialRoughness(30.0f);   // OPT variants carry no Toggles: the engine's default
+        float shine = 30.0f;
     #endif
-
-    // Geometric specular AA -- see the comment on SpecularAA itself. Unconditional: this is a
-    // quality fix for high-frequency normal maps (hair chief among them), not a debug toggle,
-    // and ddx/ddy have to run here at top level regardless of anything below.
-    float materialRoughness = roughness;
-    roughness = SpecularAA(normal.xyz, roughness);
-    setupMaterial(normal.a, SpecularAA(normal.xyz, DEFAULT_ROUGHNESS), materialRoughness);
+    #if !defined(DIFFUSE) && !defined(ONLY_SPECULAR)
+        float3 materialAlbedo = adAlbedo;
+    #else
+        float3 materialAlbedo = 1.0f;
+    #endif
+    setupMaterial(normal.a, shine, normal.xyz, IN.uv.xy, materialAlbedo);
+    float roughness = getMaterialRoughness(shine);
     #if !defined(DIFFUSE) && !defined(ONLY_SPECULAR)
         setupADCompensation(adAlbedo);
+    #endif
+    #ifdef MERGED_LIGHTS
+        // The highlight passes merged in (Includes/MergedLights.hlsl): only flagged materials have them.
+        mergedSpecular = TESR_MergedLightCount.y > 0.0f && ObjectMaterial.x >= 0.5f;
     #endif
 
     //if (TESR_DebugVar.y > 0.0) {
@@ -713,6 +765,11 @@ PS_OUTPUT main(PS_INPUT IN) {
     #if LIGHTS > 2 || NUM_PT_LIGHTS > 2
         float att3 = vanillaAttSq(IN.lightDistSq.z, IN.light3Dir.w);
         lighting += getPointLightLightingAtt(IN.light3Dir.xyz, att3, PSLightColor[2].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
+    #endif
+
+    // The lamps of this mesh's additive passes (MERGED_LIGHTS above); those passes are muted.
+    #ifdef MERGED_LIGHTS
+        lighting += getMergedPointLights(IN.worldNormal, IN.worldTangent, normal.xyz, IN.shadowWorldPos.xyz, baseColor.rgb, roughness);
     #endif
 
     float3 finalColor = encodeColor(lighting.rgb);   // back to the game's gamma space, before fog
@@ -868,15 +925,14 @@ PS_OUTPUT main(PS_INPUT IN) {
     // ShadowLightShader::SetupGeometryOpt_LightsSpecular writes m_fShine there); the other OPT
     // variants get the light count there instead, so they take the engine's default of 30.
     #if !defined(OPT)
-        float roughness = getMaterialRoughness(glossPower);
+        float shine = glossPower;
     #elif defined(SPECULAR)
-        float roughness = getMaterialRoughness(glossPow);
+        float shine = glossPow;
     #else
-        float roughness = getMaterialRoughness(30.0f);
+        float shine = 30.0f;
     #endif
-    float materialRoughness = roughness;
-    roughness = SpecularAA(normal.xyz, roughness);
-    setupMaterial(normal.a, SpecularAA(normal.xyz, DEFAULT_ROUGHNESS), materialRoughness);
+    setupMaterial(normal.a, shine, normal.xyz, IN.uv.xy, baseColor.rgb);
+    float roughness = getMaterialRoughness(shine);
     baseColor.rgb = decodeColor(baseColor.rgb);
 
     // Lighting.
