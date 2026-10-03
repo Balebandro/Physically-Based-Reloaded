@@ -509,6 +509,57 @@ namespace MergedLights {
     }
 }
 
+// --- Decals keep the game's shaders ------------------------------------------------------------
+// Decals (blood, bullet holes, impact marks and NIF decal meshes) lie on the surface they mark and
+// stay in front of it only through the game's depth bias. Drawn with NVR's object shaders, which
+// compute positions and lighting differently from the wall underneath, they flickered in interiors.
+// Every decal draw therefore runs on the game's own vertex and pixel shader pair, and skips NVR's
+// per-draw extras (merged lamps, material maps), so its additive light passes stay as the game
+// built them.
+//
+// The batch hook (SetShadersHook) binds shaders once per batch, and a batch mixes decals with
+// other meshes, so the swap is per draw: the game's pair goes on the device for the decal, and
+// PostGeometry puts back the pair the render state has cached, which the next draw expects.
+namespace VanillaDecals {
+
+    static bool sSwapped = false;
+
+    bool IsDecalProperty(const BSShaderProperty* Property) {
+        return Property && (Property->GetFlag(BSSP_DECAL) || Property->GetFlag(BSSP_DYNAMIC_DECAL) || Property->GetFlag(BSSP_ALPHA_DECAL));
+    }
+
+    bool IsDecal(NiGeometry* Geometry) {
+        return Geometry && IsDecalProperty(static_cast<BSShaderProperty*>(Geometry->GetProperty(NiProperty::kType_Shade)));
+    }
+
+    // Before a draw: true when the geometry is a decal (it is then drawn with the game's shaders).
+    bool OnDraw(NiGeometry* Geometry, NiD3DPass* Pass) {
+        if (!IsDecal(Geometry)) return false;
+        NiD3DVertexShaderEx* VertexShader = Pass ? (NiD3DVertexShaderEx*)Pass->VertexShader : nullptr;
+        NiD3DPixelShaderEx* PixelShader = Pass ? (NiD3DPixelShaderEx*)Pass->PixelShader : nullptr;
+        if (!VertexShader || !PixelShader || !VertexShader->ShaderHandleBackup || !PixelShader->ShaderHandleBackup) return true;
+        const bool NVRVertex = VertexShader->ShaderHandle != VertexShader->ShaderHandleBackup;
+        const bool NVRPixel = PixelShader->ShaderHandle != PixelShader->ShaderHandleBackup;
+        if (!NVRVertex && !NVRPixel) return true;   // already the game's pair
+
+        // Both sides together: the game's shaders are a matched pair, and a 3.0 shader cannot pair with a 2.x one.
+        IDirect3DDevice9* Device = TheRenderManager->device;
+        Device->SetVertexShader((IDirect3DVertexShader9*)VertexShader->ShaderHandleBackup);
+        Device->SetPixelShader((IDirect3DPixelShader9*)PixelShader->ShaderHandleBackup);
+        sSwapped = true;
+        return true;
+    }
+
+    // After the draw: the shaders the render state believes are bound go back on the device.
+    void EndDraw() {
+        if (!sSwapped) return;
+        IDirect3DDevice9* Device = TheRenderManager->device;
+        Device->SetVertexShader(TheRenderManager->renderState->GetVertexShader());
+        Device->SetPixelShader(TheRenderManager->renderState->GetPixelShader());
+        sSwapped = false;
+    }
+}
+
 // ShadowLightShader's per-geometry virtuals (vtable 0x10AF2F8): the same two functions as
 // SkinShader's slots 27 and 35, hooked in this shader's own vtable, for the merged light passes.
 VirtFuncDetour kLightPrepareGeometryDetour;
@@ -516,8 +567,9 @@ VirtFuncDetour kLightPostGeometryDetour;
 
 void* __fastcall ShadowLightShader__PrepareGeometryForRendering(void* apThis, void*, void* apGeometry, void* apPartition, void* apRendererData, void* apState) {
     void* Result = (void*)ThisCall(kLightPrepareGeometryDetour.GetOverwrittenAddr(), apThis, apGeometry, apPartition, apRendererData, apState);
-    WriteObjectMaterial((NiGeometry*)apGeometry);
     NiD3DPass* Pass = *(NiD3DPass**)0x0126F74C;   // NiD3DShader::m_pCurrentPass
+    if (VanillaDecals::OnDraw((NiGeometry*)apGeometry, Pass)) return Result;
+    WriteObjectMaterial((NiGeometry*)apGeometry);
     NiD3DPixelShaderEx* PixelShader = Pass ? (NiD3DPixelShaderEx*)Pass->PixelShader : nullptr;
     MaterialMaps::OnDraw((NiGeometry*)apGeometry, PixelShader);
     MergedLights::OnDraw((NiGeometry*)apGeometry, PixelShader);
@@ -528,6 +580,7 @@ void __fastcall ShadowLightShader__PostGeometry(void* apThis, void*, void* apPro
     ThisCall(kLightPostGeometryDetour.GetOverwrittenAddr(), apThis, apProperties);
     MergedLights::EndDraw();
     MaterialMaps::EndDraw();
+    VanillaDecals::EndDraw();
 }
 
 // ParallaxShader's (vtable 0x10BB7A8): the same two functions again, in its own vtable.
@@ -536,8 +589,9 @@ VirtFuncDetour kParallaxPostGeometryDetour;
 
 void* __fastcall ParallaxShader__PrepareGeometryForRendering(void* apThis, void*, void* apGeometry, void* apPartition, void* apRendererData, void* apState) {
     void* Result = (void*)ThisCall(kParallaxPrepareGeometryDetour.GetOverwrittenAddr(), apThis, apGeometry, apPartition, apRendererData, apState);
-    WriteObjectMaterial((NiGeometry*)apGeometry);
     NiD3DPass* Pass = *(NiD3DPass**)0x0126F74C;   // NiD3DShader::m_pCurrentPass
+    if (VanillaDecals::OnDraw((NiGeometry*)apGeometry, Pass)) return Result;
+    WriteObjectMaterial((NiGeometry*)apGeometry);
     NiD3DPixelShaderEx* PixelShader = Pass ? (NiD3DPixelShaderEx*)Pass->PixelShader : nullptr;
     MaterialMaps::OnDraw((NiGeometry*)apGeometry, PixelShader);
     MergedLights::OnDraw((NiGeometry*)apGeometry, PixelShader);
@@ -548,6 +602,7 @@ void __fastcall ParallaxShader__PostGeometry(void* apThis, void*, void* apProper
     ThisCall(kParallaxPostGeometryDetour.GetOverwrittenAddr(), apThis, apProperties);
     MergedLights::EndDraw();
     MaterialMaps::EndDraw();
+    VanillaDecals::EndDraw();
 }
 
 // HairShader's (vtable 0x10BBB50): ShadowLightShader's passes and per-geometry functions, in its
@@ -756,7 +811,8 @@ namespace Lighting30Route {
     }
 
     void* __fastcall Hook(void* Property, void*, NiGeometry* Geometry, int a, int b) {
-        if (!Enabled()) return ClarifyShader(Property, Geometry, a, b);
+        // Decals (case 2, and decal NIFs) stay on the game's own route and shaders: see VanillaDecals.
+        if (!Enabled() || VanillaDecals::IsDecalProperty((BSShaderProperty*)Property)) return ClarifyShader(Property, Geometry, a, b);
         if (*(UInt32*)Property != Lighting30VTable) return ClarifyWithoutLighting30(Property, Geometry, a, b);
 
         void* Copy = ((void* (__cdecl*)())0xB68D50)();   // BSShaderPPLightingProperty::CreateObject

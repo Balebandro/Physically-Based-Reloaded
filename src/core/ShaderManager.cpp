@@ -523,6 +523,9 @@ ShaderCollection* ShaderManager::GetShaderCollection(const char* Name) {
 	if (!memcmp(Name, "SKIN", 4)) return Shaders.Skin;
 	// Hair (BSSM_3XLIGHTING_*) lives in the SM3 family, not HAIR*. Only SM3003 has a
 	// replacement on disk; the rest resolve to no file and fall through to vanilla.
+	// The decal shaders (SM3004.vso, SM3005/SM3007.pso: blood, bullet holes) stay the game's own,
+	// as every decal does (VanillaDecals, Hooks/Shaders.cpp): replaced, they flickered in interiors.
+	if (!memcmp(Name, "SM3004", 6) || !memcmp(Name, "SM3005", 6) || !memcmp(Name, "SM3007", 6)) return NULL;
 	if (!memcmp(Name, "SM3", 3)) return Shaders.PBR;
 	// SpeedTree leaves. STLEAF001/003.vso are vs_3_0 replacements, so every leaf PS must have
 	// a ps_3_0 replacement too: D3D9 rejects a 2.x VS paired with a 3.0 PS.
