@@ -621,7 +621,6 @@ bool ShaderManager::LoadShader(NiD3DPixelShader* Shader) {
 
 
 void ShaderManager::GetNearbyLights(ShadowSceneLight* ShadowLightsList[], NiPointLight* LightsList[], NiSpotLight* SpotLightList[]) {
-	D3DXVECTOR4 PlayerPosition = Player->pos.toD3DXVEC4();
 	//Logger::Log(" ==== Getting lights ====");
 	auto timer = TimeLogger();
 
@@ -644,14 +643,19 @@ void ShaderManager::GetNearbyLights(ShadowSceneLight* ShadowLightsList[], NiPoin
 			continue;
 		}
 
-		D3DXVECTOR4 LightVector = LightPosition - PlayerPosition;
-		D3DXVec4Normalize(&LightVector, &LightVector);
-		bool inFront = D3DXVec4Dot(&LightVector, &TheRenderManager->CameraForward) > 0;
 		float Distance = Light->GetDistance(&Player->pos);
 		float radius = Light->Spec.r * Settings->LightRadiusMult;
 
-		// select lights that will be tracked by removing culled lights and lights behind the player further away than their radius
-		// TODO: handle using frustum check
+		// Drop only lights whose whole sphere is behind the camera: nothing on screen can be lit by
+		// them. This used to test the light's CENTRE against the camera's facing, from the player's
+		// position, so a lamp just behind or beside the camera that still lit the walls in view was
+		// dropped as the view turned, and its light and highlights vanished at once.
+		const D3DXVECTOR3 CameraToLight(LightPosition.x - TheRenderManager->CameraPosition.x,
+			LightPosition.y - TheRenderManager->CameraPosition.y, LightPosition.z - TheRenderManager->CameraPosition.z);
+		const D3DXVECTOR3 Forward(TheRenderManager->CameraForward.x, TheRenderManager->CameraForward.y, TheRenderManager->CameraForward.z);
+		bool inFront = D3DXVec3Dot(&CameraToLight, &Forward) > -radius;
+
+		// select lights that will be tracked by removing culled lights and lights entirely behind the camera
 		float drawDistance = 8000;//TheShaderManager->GameState.isExterior ? TheSettingManager->SettingsShadows.Exteriors.ShadowMapRadius[TheShadowManager->ShadowMapTypeEnum::MapLod] : TheSettingManager->SettingsShadows.Interiors.DrawDistance;
 		if ((inFront || Distance < radius) && (Distance + radius) < drawDistance) {
 			SceneLights[(int)(Distance * 10000)] = Entry->data; // multiplying distance (used as key) before conversion to avoid overwriting in case of similar values
