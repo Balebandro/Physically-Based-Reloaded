@@ -346,9 +346,12 @@ namespace MergedLights {
     // First-person meshes are drawn with the viewmodel camera (its own FOV and near plane), but
     // the shaders rebuild world positions and directions through TESR_InvProjectionTransform and
     // TESR_InvViewTransform (vertex c240-c247, Includes/Shadow.hlsl), which are the world camera's: the
-    // world frame and position the merged lamps need come out skewed. For a first-person draw the
-    // inverses of the renderer's matrices at that moment, the viewmodel camera's, go there instead
-    // (NiDX9Renderer::SetCameraData writes them for every camera), and EndDraw puts NVR's back.
+    // world frame and position the merged lamps need come out skewed, and so do the forward sun
+    // shadow lookup and the ambient normal (the weapon read the shadow maps at the wrong place, in
+    // patches per triangle, since the lookup's normal comes from the position's derivatives). For
+    // every first-person draw (OnDraw) the inverses of the renderer's matrices at that moment, the
+    // viewmodel camera's, go there instead (NiDX9Renderer::SetCameraData writes them for every
+    // camera), and EndDraw puts NVR's back.
     static void OverrideViewForFirstPerson() {
         D3DXMATRIX InvProj, InvView;
         if (!D3DXMatrixInverse(&InvProj, NULL, &TheRenderManager->projMatrix)) return;
@@ -437,7 +440,6 @@ namespace MergedLights {
             sMerged[Geometry] = M;
             TheRenderManager->device->SetPixelShaderConstantF(154, Data, 1 + 2 * MaxLights);
             sLightsUploaded = true;
-            if (Property->ulFlags[1] & 0x40) OverrideViewForFirstPerson();   // BSS2_1st_person
         }
         // Otherwise nothing to write: the count is 0 outside a merged draw (EndDraw).
     }
@@ -492,6 +494,8 @@ namespace MergedLights {
     // Returns true when the draw is muted.
     bool OnDraw(NiGeometry* Geometry, const NiD3DPixelShaderEx* PixelShader) {
         if (!PixelShader || PixelShader->ShaderHandle == PixelShader->ShaderHandleBackup) return false;   // vanilla shader
+        BSShaderPPLightingProperty* Property = Geometry ? static_cast<BSShaderPPLightingProperty*>(Geometry->GetProperty(NiProperty::kType_Shade)) : nullptr;
+        if (Property && (Property->ulFlags[1] & 0x40)) OverrideViewForFirstPerson();   // BSS2_1st_person: every pass, merged or not
         int n = ShaderNumber(PixelShader, "SLS");
         if (n >= 2037 && n <= 2044) { SetupBasePass(Geometry, false, true); return false; }
         if (n >= 2045 && n <= 2056) return MuteAddPass(Geometry);
