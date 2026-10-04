@@ -137,8 +137,6 @@ public:
 		bool  VanillaEnvMapOnPBR;  // authored (_rmaos) materials keep the game's env map passes, drawn over the PBR result (Hooks/Shaders.cpp, MaterialMaps)
 		float PBRLinearLighting;   // 0-1: how linearly authored (_rmaos) materials are lit, whatever LinearLighting says (Shaders/Includes/Object.hlsl)
 		int   LightingModel;       // authored (_rmaos) materials: 0 OpenPBR, 1 S.T.A.L.K.E.R. Anomaly (Shaders/Includes/PBR.hlsl)
-		float VanillaSpecularSoftness; // 0-1: the game's highlight on non-_rmaos materials, widened and softened (Object.hlsl vanillaSpecular)
-		float VanillaSpecularStrength; // scales that highlight; softness 0 and strength 1 are vanilla's
 		int   DebugView;
 	};
 	PBRMaterialSettings MaterialSettings;
