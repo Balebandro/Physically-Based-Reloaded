@@ -383,22 +383,11 @@ namespace MergedLights {
         return !Skin || (TheShaderManager->Shaders.Skin && TheShaderManager->Shaders.Skin->Enabled);
     }
 
-    // Develop.DebugMode + the TraceShaders key: every merge decision of that frame goes to the log.
-    static bool sTrace = false;
-
-    static const char* GeometryName(NiGeometry* Geometry) {
-        return (Geometry && Geometry->m_pcName) ? Geometry->m_pcName : "(unnamed)";
-    }
-
     void EndDraw();
 
     void BeginFrame() {
         EndDraw();   // nothing a draw set may carry into a new frame (see OnDraw)
         sMerged.clear();
-        sTrace = TheSettingManager->SettingsMain.Develop.DebugMode && Global->OnKeyDown(TheSettingManager->SettingsMain.Develop.TraceShaders);
-        if (sTrace) Logger::Log("MergedLights trace: camera (%.0f, %.0f, %.0f) forward (%.2f, %.2f, %.2f)",
-            TheRenderManager->CameraPosition.x, TheRenderManager->CameraPosition.y, TheRenderManager->CameraPosition.z,
-            TheRenderManager->CameraForward.x, TheRenderManager->CameraForward.y, TheRenderManager->CameraForward.z);
     }
 
     // First-person meshes are drawn with the viewmodel camera (its own FOV and near plane), but
@@ -431,21 +420,6 @@ namespace MergedLights {
         // merged pass writes the world camera's matrices itself; first-person draws already have the
         // viewmodel camera's (OverrideViewForFirstPerson).
         if (!sViewOverridden) {
-            static int sStaleLogged = 0;
-            if (sStaleLogged < 20 || sTrace) {
-                D3DXMATRIX Current[2];
-                if (SUCCEEDED(TheRenderManager->device->GetVertexShaderConstantF(240, (float*)Current, 8))) {
-                    const bool Stale = memcmp(&Current[0], &TheRenderManager->InvProjMatrix, sizeof(D3DXMATRIX)) != 0 ||
-                        memcmp(&Current[1], &TheRenderManager->InvViewMatrix, sizeof(D3DXMATRIX)) != 0;
-                    if (Stale || sTrace) {
-                        Logger::Log("MergedLights: vertex c240-c247 %s before the merged draw of %s (inverse view row 3 %.1f %.1f %.1f, expected %.1f %.1f %.1f)",
-                            Stale ? "STALE" : "current", GeometryName(Geometry), Current[1]._41, Current[1]._42, Current[1]._43,
-                            TheRenderManager->InvViewMatrix._41, TheRenderManager->InvViewMatrix._42, TheRenderManager->InvViewMatrix._43);
-                        if (Stale) sStaleLogged++;
-                    }
-                }
-                else if (sStaleLogged == 0) { Logger::Log("MergedLights: vertex c240-c247 not readable on this device"); sStaleLogged = 20; }
-            }
             TheRenderManager->device->SetVertexShaderConstantF(240, (const float*)&TheRenderManager->InvProjMatrix, 4);
             TheRenderManager->device->SetVertexShaderConstantF(244, (const float*)&TheRenderManager->InvViewMatrix, 4);
         }
@@ -492,31 +466,6 @@ namespace MergedLights {
         }
         M.Specular = M.Specular && AnySpecular;
 
-        if (sTrace) {
-            Logger::Log("MergedLights base %s (%p) pass 0x%X: ok %d, base lights %u, merged lamps %u, highlights merged %d (any %d, allowed %d), live passes %u",
-                GeometryName(Geometry), Geometry, Current ? (UInt32)Current->PassEnum : 0, ok ? 1 : 0, M.BaseCount, M.Count,
-                M.Specular ? 1 : 0, AnySpecular ? 1 : 0, AllowSpecular ? 1 : 0, Live);
-            if (Property) Logger::Log("    material: specular flag %d, camera distance %.0f (highlight fade %.0f-%.0f)",
-                Property->GetFlag(BSSP_SPECULAR) ? 1 : 0, Property->fLODFade, *(float*)0x011F9454, *(float*)0x011F9458);
-            for (UInt32 i = 0; Passes && Passes->Base && i < LivePasses(Passes); i++) {
-                const RenderPassData* Pass = Passes->Base[i];
-                if (!Pass) continue;
-                char Lights[256] = "";
-                for (UInt8 j = 0; Pass->SceneLights && j < Pass->NumLights && strlen(Lights) < 200; j++) {
-                    const ShadowSceneLight* Light = Pass->SceneLights[j];
-                    char One[48];
-                    if (Light && Light->sourceLight) {
-                        const NiPoint3& P = Light->sourceLight->m_worldTransform.pos;
-                        sprintf(One, " %p(%.0f,%.0f,%.0f r%.0f)", Light, P.x, P.y, P.z, Light->sourceLight->Spec.r);
-                    }
-                    else sprintf(One, " %p", Light);
-                    strcat(Lights, One);
-                }
-                Logger::Log("    pass %u: 0x%X geometry %s, %u lights:%s", i, (UInt32)Pass->PassEnum,
-                    Pass->Geometry == Geometry ? "this" : "OTHER", (UInt32)Pass->NumLights, Lights);
-            }
-        }
-
         if (ok && (M.Count || M.Specular)) {
             const NiPoint3& PosAdjust = *(NiPoint3*)0x011F474C;                  // NiRenderer::kPosAdjust
             void* SceneNode = *(void**)0x011F91C8;                               // BSShaderManager::pShadowSceneNode[0]
@@ -545,20 +494,6 @@ namespace MergedLights {
                 C[2] = Source->Diff.b * Scale;
                 C[3] = 1.0f;
             }
-            if (sTrace) {
-                Logger::Log("    uploaded: count %.0f, highlights %.0f, forced darkness %.2f, HDR %d, offset (%.1f, %.1f, %.1f), pos adjust (%.0f, %.0f, %.0f)",
-                    Data[0], Data[1], ForcedDarkness, HDR ? 1 : 0, Offset.x, Offset.y, Offset.z, PosAdjust.x, PosAdjust.y, PosAdjust.z);
-                for (UInt32 k = 0; k < M.Count; k++) {
-                    const ShadowSceneLight* Light = M.Lights[k];
-                    const NiPointLight* Source = Light->sourceLight;
-                    const float* P = &Data[4 * (1 + k)];
-                    const float* C = &Data[4 * (1 + MaxLights + k)];
-                    Logger::Log("    lamp %u %p '%s': rel (%.0f, %.0f, %.0f) radius %.0f, colour (%.3f, %.3f, %.3f) = diffuse (%.2f, %.2f, %.2f) x dimmer %.2f x LOD dimmer %.2f, fade %.2f, culled %d",
-                        k, Light, Source->m_pcName ? Source->m_pcName : "", P[0], P[1], P[2], P[3], C[0], C[1], C[2],
-                        Source->Diff.r, Source->Diff.g, Source->Diff.b, Source->Dimmer, Light->fLODDimmer, Light->fFade,
-                        (Source->m_flags & NiAVObject::NiFlags::APP_CULLED) ? 1 : 0);
-                }
-            }
             sMerged[Geometry] = M;
             TheRenderManager->device->SetPixelShaderConstantF(154, Data, 1 + 2 * MaxLights);
             sLightsUploaded = true;
@@ -568,29 +503,22 @@ namespace MergedLights {
 
     // An additive lamp pass or a highlight pass: muted when its mesh's first pass took all its
     // lights.
-    static bool TraceAdd(NiGeometry* Geometry, const RenderPassData* Pass, bool Muted, const char* Why) {
-        if (sTrace) Logger::Log("MergedLights add %s (%p) pass 0x%X: %s (%s)", GeometryName(Geometry), Geometry,
-            Pass ? (UInt32)Pass->PassEnum : 0, Muted ? "MUTED" : "drawn", Why);
-        return Muted;
-    }
-
     bool MuteAddPass(NiGeometry* Geometry) {
         const RenderPassData* Pass = *(RenderPassData**)0x011F91E0;            // BSShaderManager::pCurrentRenderPass
-        if (!Pass || Pass->Geometry != Geometry || !Pass->SceneLights) return TraceAdd(Geometry, Pass, false, "no current pass for this geometry");
+        if (!Pass || Pass->Geometry != Geometry || !Pass->SceneLights) return false;
         const bool Lamp = IsMergeableLampPass(Pass->PassEnum);
-        if (!Lamp && !IsMergeableSpecularPass(Pass->PassEnum)) return TraceAdd(Geometry, Pass, false, "not a mergeable pass");
+        if (!Lamp && !IsMergeableSpecularPass(Pass->PassEnum)) return false;
         const auto Found = sMerged.find(Geometry);
-        if (Found == sMerged.end()) return TraceAdd(Geometry, Pass, false, "first pass not merged this frame");
+        if (Found == sMerged.end()) return false;                             // first pass not merged this frame
         const Merged* M = &Found->second;
-        if (!Lamp && !M->Specular) return TraceAdd(Geometry, Pass, false, "highlights not merged");
+        if (!Lamp && !M->Specular) return false;
         for (UInt8 j = 0; j < Pass->NumLights; j++) {
             const ShadowSceneLight* Light = Pass->SceneLights[j];
             if (!Light) continue;
             if (Contains(M->Lights, M->Count, Light)) continue;
             if (!Lamp && Contains(M->BaseLights, M->BaseCount, Light)) continue;
-            return TraceAdd(Geometry, Pass, false, "a light missing from the first pass");
+            return false;                                                     // a light missing from the first pass
         }
-        TraceAdd(Geometry, Pass, true, Lamp ? "lamp pass" : "highlight pass");
         if (!sPassMuted) {
             TheRenderManager->device->GetRenderState(D3DRS_COLORWRITEENABLE, &sSavedWriteMask);
             TheRenderManager->device->SetRenderState(D3DRS_COLORWRITEENABLE, 0);
@@ -628,23 +556,10 @@ namespace MergedLights {
         // weapons) before PostGeometry runs, so a first-person draw's viewmodel camera matrices could stay in
         // c240-c247 into the following draws and the next frame: world meshes then placed their merged lamps
         // through the wrong camera, and lamps switched off depending on the view.
-        if (sPassMuted || sLightsUploaded || sViewOverridden) {
-            static int sLeakLogged = 0;
-            if (sLeakLogged++ < 20 || sTrace)
-                Logger::Log("MergedLights: state left over from the previous draw (muted %d, lamps %d, viewmodel camera %d) before %s",
-                    sPassMuted ? 1 : 0, sLightsUploaded ? 1 : 0, sViewOverridden ? 1 : 0, GeometryName(Geometry));
-            EndDraw();
-        }
+        if (sPassMuted || sLightsUploaded || sViewOverridden) EndDraw();
         if (!PixelShader || PixelShader->ShaderHandle == PixelShader->ShaderHandleBackup) return false;   // vanilla shader
         BSShaderPPLightingProperty* Property = Geometry ? static_cast<BSShaderPPLightingProperty*>(Geometry->GetProperty(NiProperty::kType_Shade)) : nullptr;
         if (Property && (Property->ulFlags[1] & 0x40)) OverrideViewForFirstPerson();   // BSS2_1st_person: every pass, merged or not
-        if (sTrace) {
-            const NiD3DPass* Pass = *(NiD3DPass**)0x0126F74C;   // NiD3DShader::m_pCurrentPass
-            const NiD3DVertexShaderEx* VertexShader = Pass ? (const NiD3DVertexShaderEx*)Pass->VertexShader : nullptr;
-            Logger::Log("MergedLights draw %s (%p): %s with %s%s", GeometryName(Geometry), Geometry, PixelShader->Name,
-                (VertexShader && VertexShader->Name) ? VertexShader->Name : "(no vertex shader)",
-                (VertexShader && VertexShader->ShaderHandle == VertexShader->ShaderHandleBackup) ? " (VANILLA vertex shader)" : "");
-        }
         int n = ShaderNumber(PixelShader, "SLS");
         if (n >= 2037 && n <= 2044) { SetupBasePass(Geometry, false, true); return false; }
         if (n >= 2045 && n <= 2056) return MuteAddPass(Geometry);
