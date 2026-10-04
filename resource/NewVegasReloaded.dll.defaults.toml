@@ -73,7 +73,6 @@ ForceReflections = true     # Always render the full world in reflection for HD 
 RemoveUnderwater = false    # Disables fog underwater. Not compatible with custom underwater shader.
 
 [_Main.Main.ReducedQuality]
-ParallaxLite = true          # Cheaper parallax (the fake 3D bumps) on the ground and on objects that have it (rocks, cliffs, walls): at most 8 search steps and one quick correction instead of up to 16 plus a fine search. The ground's bumps also stop at 1024 units at 1440p (768 at 1080p, 1536 at 4K), where they are only a few pixels tall. The bumps can sit very slightly differently, mostly at grazing angles. Overrides Terrain > Parallax > HighQuality while on. From NVR UNOFFICIAL Optimized.
 CheapUnderwaterTerrain = true # Ground below the water surface (lake and river beds, and everything when you are underwater) is drawn without terrain parallax and its small shadows: you see it through moving, murky water. Dry ground keeps full parallax. Removes most of the frame-rate drop when wading or swimming. From NVR UNOFFICIAL Optimized.
 CheapReflections = true      # The water reflection is drawn without NVR's sun shadows and without terrain parallax, like the game's own reflections. Objects and ground seen in the water lose their sun shadows and bumps; the game blurs the reflection, so the difference is usually small. Only where water is in view. From NVR UNOFFICIAL Optimized.
 

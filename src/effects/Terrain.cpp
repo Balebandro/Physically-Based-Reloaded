@@ -63,7 +63,6 @@ void TerrainShaders::UpdateSettings() {
 	ParallaxSettings.MaxDistance = TheSettingManager->GetSettingF("Shaders.Terrain.Parallax", "MaxDistance");
 	ParallaxSettings.Height = TheSettingManager->GetSettingF("Shaders.Terrain.Parallax", "Height");
 	ParallaxSettings.ShadowsIntensity = TheSettingManager->GetSettingF("Shaders.Terrain.Parallax", "ShadowsIntensity");
-	ParallaxSettings.Lite = TheSettingManager->GetSettingI("Main.Main.ReducedQuality", "ParallaxLite");
 	ParallaxSettings.CheapUnderwater = TheSettingManager->GetSettingI("Main.Main.ReducedQuality", "CheapUnderwaterTerrain");
 
 	// [Shaders.PBR.Main] LinearLighting, shared with the object shaders so both light the same way
@@ -124,16 +123,10 @@ void TerrainShaders::UpdateConstants() {
 	ParallaxConstants.Data.x = ParallaxSettings.Enabled;
 	ParallaxConstants.Data.y = ParallaxSettings.Shadows;
 	ParallaxConstants.Data.z = ParallaxSettings.HeightBlend;
-	// .w: 0 = 8 steps, 1 = 16 (HighQuality), 2 = [Main.Main.ReducedQuality] ParallaxLite (TerrainParallax.hlsl),
-	// which replaces both. Ported from NVR UNOFFICIAL Optimized (P60-P61).
-	ParallaxConstants.Data.w = ParallaxSettings.Lite ? 2.0f : (float)ParallaxSettings.HighQuality;
+	ParallaxConstants.Data.w = ParallaxSettings.HighQuality;
 
-	// ParallaxLite also caps how far the terrain parallax and its shadows reach: 1024 units at 1440p, scaled with the
-	// screen height (a bump's size on screen goes with screen height / distance): 768 at 1080p, 1536 at 4K. A lower
-	// MaxDistance still applies.
-	float maxDistance = ParallaxSettings.MaxDistance;
-	if (ParallaxSettings.Lite) maxDistance = min(maxDistance, 1024.0f * TheRenderManager->height / 1440.0f);
-	ParallaxConstants.ExtraData.x = maxDistance;
+	ParallaxConstants.ExtraData.x = ParallaxSettings.MaxDistance;
+
 
 	// [Main.Main.ReducedQuality] CheapUnderwaterTerrain: ground below the water surface skips parallax and its shadows
 	// (TerrainTemplate.hlsl). .w is the camera-relative height below which terrain counts as under water: the level of

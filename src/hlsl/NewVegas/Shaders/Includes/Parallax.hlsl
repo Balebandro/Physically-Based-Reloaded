@@ -4,15 +4,7 @@ float4 TESR_TerrainParallaxExtraData : register(c92);
 #else
 // Pinned past the game's own registers (it was c35, inside the range the game writes for its shaders;
 // see TESR_PBRData in Object.hlsl).
-float4 TESR_ParallaxData : register(c188);   // w: 1 for ParallaxLite (POM.cpp)
-#endif
-
-// ParallaxLite's secant steps (terrain and objects). Measured with tests/game_shaders.cpp on a GTX 1070
-// (full-screen terrain, 2560x1440), against the defaults: 0 steps -23..-37% time but four times HighQuality-off's
-// picture difference; 1 step -17..-31% at about 1.5 times it; 2 steps -16..-22% at about the same; 3 steps no faster
-// than HighQuality off.
-#ifndef LITE_SECANT_STEPS
-#define LITE_SECANT_STEPS 1
+float4 TESR_ParallaxData : register(c188);
 #endif
 
 #ifdef TERRAIN
@@ -40,77 +32,6 @@ float getTerrainHeight(float2 coords, float2 dx, float2 dy, float blendFactor, i
     }
     
     return pow(total, rcp(blendPower));
-}
-#endif
-
-// Ported from NVR UNOFFICIAL Optimized (P61).
-#ifndef TERRAIN
-// ReducedQuality ParallaxLite on objects (TESR_ParallaxData.w = 1): getParallaxCoords' search for objects with a height map,
-// cut down as ParallaxLite cuts the terrain's: up to 8 steps in batches of four, then LITE_SECANT_STEPS secant
-// steps in place of the contact refinement. Same start offset, bounds and final interpolation as getParallaxCoords.
-float2 getParallaxCoordsObjectLite(float distance, float2 coords, float2 dx, float2 dy, float3 viewDirTS, sampler2D heightMap) {
-    float distanceBlend = saturate(distance / 2048.0f);
-    if (distanceBlend >= 1.0) return coords;
-
-    viewDirTS = normalize(viewDirTS);
-    float maxHeight = 0.1 * TESR_ParallaxData.x;
-    float minHeight = maxHeight * 0.5;
-
-    int numSteps = int((8.0f * (1.0 - distanceBlend)) + 0.5);
-    numSteps = clamp(((numSteps + 3) / 4) * 4, 4, 8);
-    float stepSize = rcp((float) numSteps);
-    float2 offsetPerStep = viewDirTS.xy * maxHeight * stepSize;
-    float2 prevOffset = viewDirTS.xy * minHeight + coords.xy;
-    float prevBound = 1.0;
-    float prevHeight = 1.0;
-    float2 pt1 = 0;
-    float2 pt2 = 0;
-    bool hit = false;
-
-    [loop] while (numSteps > 0 && !hit) {
-        float4 currentOffset[2];
-        currentOffset[0] = prevOffset.xyxy - float4(1, 1, 2, 2) * offsetPerStep.xyxy;
-        currentOffset[1] = prevOffset.xyxy - float4(3, 3, 4, 4) * offsetPerStep.xyxy;
-        float4 currentBound = prevBound.xxxx - float4(1, 2, 3, 4) * stepSize;
-        float4 currHeight;
-        currHeight.x = tex2Dgrad(heightMap, currentOffset[0].xy, dx, dy).r;
-        currHeight.y = tex2Dgrad(heightMap, currentOffset[0].zw, dx, dy).r;
-        currHeight.z = tex2Dgrad(heightMap, currentOffset[1].xy, dx, dy).r;
-        currHeight.w = tex2Dgrad(heightMap, currentOffset[1].zw, dx, dy).r;
-        bool4 testResult = currHeight >= currentBound;
-        [branch] if (any(testResult)) {
-            [flatten] if (testResult.w) { pt1 = float2(currentBound.w, currHeight.w); pt2 = float2(currentBound.z, currHeight.z); }
-            [flatten] if (testResult.z) { pt1 = float2(currentBound.z, currHeight.z); pt2 = float2(currentBound.y, currHeight.y); }
-            [flatten] if (testResult.y) { pt1 = float2(currentBound.y, currHeight.y); pt2 = float2(currentBound.x, currHeight.x); }
-            [flatten] if (testResult.x) { pt1 = float2(currentBound.x, currHeight.x); pt2 = float2(prevBound, prevHeight); }
-            hit = true;
-        }
-        else {
-            prevOffset = currentOffset[1].zw;
-            prevBound = currentBound.w;
-            prevHeight = currHeight.w;
-            numSteps -= 4;
-        }
-    }
-
-    [branch] if (hit) {
-        [loop] for (int r = 0; r < LITE_SECANT_STEPS; r++) {
-            float secant2 = pt2.x - pt2.y;
-            float secant1 = pt1.x - pt1.y;
-            float secantDenominator = secant2 - secant1;
-            float bound = secantDenominator == 0.0 ? pt1.x : (pt1.x * secant2 - pt2.x * secant1) / secantDenominator;
-            float secantHeight = tex2Dgrad(heightMap, viewDirTS.xy * ((1.0 - bound) * -maxHeight + minHeight) + coords.xy, dx, dy).r;
-            if (secantHeight >= bound) pt1 = float2(bound, secantHeight);
-            else pt2 = float2(bound, secantHeight);
-        }
-    }
-
-    float delta2 = pt2.x - pt2.y;
-    float delta1 = pt1.x - pt1.y;
-    float denominator = delta2 - delta1;
-    float parallaxAmount = denominator == 0.0 ? 0.0 : (pt1.x * delta2 - pt2.x * delta1) / denominator;
-    float offset = (1.0 - parallaxAmount) * -maxHeight + minHeight;
-    return lerp(viewDirTS.xy * offset + coords.xy, coords, distanceBlend * distanceBlend);
 }
 #endif
 
@@ -142,9 +63,6 @@ float2 getParallaxCoords(float distance, float2 coords, float2 dx, float2 dy, fl
         float maxDistance = TESR_TerrainParallaxExtraData.x;
         float height = TESR_TerrainParallaxExtraData.y;
     #else
-        // ParallaxLite: a separate function, so this path compiles exactly as before.
-        [branch] if (TESR_ParallaxData.w > 0.5f) return getParallaxCoordsObjectLite(distance, coords, dx, dy, viewDirTS, heightMap);
-
         static const float maxSteps = 16.0f;
         float maxDistance = 2048;
         float height = 0.1 * TESR_ParallaxData.x;
