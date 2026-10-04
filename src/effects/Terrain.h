@@ -62,6 +62,8 @@ public:
 		float MaxDistance;
 		float Height;
 		float ShadowsIntensity;
+		bool Lite;              // [Main.Main.ReducedQuality] ParallaxLite
+		bool CheapUnderwater;   // [Main.Main.ReducedQuality] CheapUnderwaterTerrain
 	};
 	struct LODSettingsStruct {
 		float NoiseScale;

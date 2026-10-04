@@ -101,13 +101,21 @@ float4 ScreenSpaceShadow(VSOUT IN) : COLOR0
 	// the whole march on roughly every surface in the sun's shade. The buffer holds view-space
 	// normals, the space TESR_ViewSpaceLightDir is in.
 	float3 viewNormal = tex2Dlod(TESR_NormalsBuffer, float4(uv, 0.0f, 0.0f)).xyz * 2.0f - 1.0f;
-	if (dot(viewNormal, TESR_ViewSpaceLightDir.xyz) <= 0.0f) return float4(1.0, color.g, 0, 1);
+	float NdotL = dot(viewNormal, TESR_ViewSpaceLightDir.xyz);
+	if (NdotL <= 0.0f) return float4(1.0, color.g, 0, 1);
+	// Near the terminator the march runs almost along the receiving surface, and bilinear depth
+	// reads there are slightly off its true plane, an error that cycles with the sub-pixel sample
+	// phase: a small fixed bias flips the test on and off in bands across the ray (horizontal black
+	// lines on sun-lit surfaces under a high sun). Fade the term in as the surface turns toward the
+	// sun (ported from NVR UNOFFICIAL Optimized, P8-P26).
+	float facing = saturate(NdotL * 8.0f);
 
 	// The ray grows a little with distance so it keeps a usable size on screen, up to a cap.
 	float scale = min(1.0f + origin.z * CONTACT_GROWTH, CONTACT_MAX_SCALE);
 	float3 contactStep = TESR_ViewSpaceLightDir.xyz * (TESR_ShadowContactData.y * scale / CONTACT_STEPNUM);
 	float contactThickness = TESR_ShadowContactData.z * scale;
-	float contactBias = contactThickness * 0.05f;
+	// The self-intersection bias also grows with distance (same port), so grazing lit faces far off do not band.
+	float contactBias = max(contactThickness * 0.05f, origin.z * 0.002f);
 
 	// Marched in clip space. Projection is linear in homogeneous coordinates, so a view-space
 	// ray maps to a straight line there: project the start and one step once, then each sample
@@ -138,7 +146,7 @@ float4 ScreenSpaceShadow(VSOUT IN) : COLOR0
 	}
 
 	float fade = 1.0f - smoothstep(TESR_ShadowContactData.w * 0.8f, TESR_ShadowContactData.w, origin.z);
-	color.r = 1.0f - saturate(contact * TESR_ShadowContactData.x * fade);
+	color.r = 1.0f - saturate(contact * TESR_ShadowContactData.x * fade * facing);
 	return color;
 }
 

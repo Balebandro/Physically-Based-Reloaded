@@ -28,9 +28,7 @@ void AttachHooks() {
 	DetourAttach(&(PVOID&)TestFrustumCull, &TestFrustumCullHook);   // lamps not culled by the view (Hooks/Shaders.cpp)
 
 	DetourAttach(&(PVOID&)GetWaterHeightLOD, &GetWaterHeightLODHook);
-	if (SettingsMain->Main.ForceReflections) {
-		DetourAttach(&(PVOID&)RenderReflections, &RenderReflectionsHook);
-	}
+	DetourAttach(&(PVOID&)RenderReflections, &RenderReflectionsHook);   // always: ForceReflections, CheapReflections, CheapUnderwaterTerrain
 
 	DetourAttach(&(PVOID&)RenderPipboy, &RenderPipboyHook);
 	DetourAttach(&(PVOID&)ShowDetectorWindow, &ShowDetectorWindowHook);

@@ -1,4 +1,8 @@
 #pragma once
+#include <cfloat>
+
+// See ReflectionPassScope: the next shader bind re-uploads NVR's constants.
+static bool ForcePixelConstants = false;
 
 void (__thiscall* Render)(Main*, BSRenderedTexture*, int, int) = (void (__thiscall*)(Main*, BSRenderedTexture*, int, int))Hooks::Render;
 void __fastcall RenderHook(Main* This, UInt32 edx, BSRenderedTexture* RenderedTexture, int Arg2, int Arg3) {
@@ -45,7 +49,8 @@ void __fastcall SetShadersHook(BSShader* This, UInt32 edx, UInt32 PassIndex) {
 		Logger::Log("Error getting vertex shader for pass %s", Pointers::Functions::GetPassDescription(PassIndex));
 	}
 	if (PixelShader) {
-		PixelShader->SetupShader(PixelShader2);
+		PixelShader->SetupShader(ForcePixelConstants ? nullptr : PixelShader2);   // see ForcePixelConstants
+		ForcePixelConstants = false;
 	}
 	else {
 		Logger::Log("Error getting pixel shader for pass %s", Pointers::Functions::GetPassDescription(PassIndex));
@@ -144,27 +149,65 @@ void __fastcall RenderFirstPersonHook(Main* This, UInt32 edx, NiDX9Renderer* Ren
 	TheRenderManager->ResolveDepthBuffer(TheTextureManager->DepthTextureViewModel);
 }
 
+// Set when NVR changes, mid-frame, a TESR_ constant that game shaders read (the water reflection pass).
+// Constants reach a game shader only in ShaderRecord::SetCT, which runs when the pixel shader CHANGES, so
+// the next bind is told that no pixel shader is bound: an NVR shader then uploads even if the game keeps
+// the one already bound (SetShadersHook). Ported from NVR UNOFFICIAL Optimized (P40).
+
+// What the water reflection map is drawn with, restored when the pass ends:
+//   [Main.Main.Water] ForceReflections: the old path's TESR_ShadowData.x = -1 and no terrain parallax.
+//   [Main.Main.ReducedQuality] CheapReflections: no forward sun shadows (TESR_ShadowForwardData.x = 1, also
+//     written to c133, which ShadowsExteriorEffect binds directly once per frame) and no terrain parallax or
+//     parallax shadows, like the game's own reflections.
+//   [Main.Main.ReducedQuality] CheapUnderwaterTerrain: its water-line test reconstructs positions with the
+//     main camera's matrices, meaningless under the mirrored reflection camera, so it is off for the pass.
+// Ported from NVR UNOFFICIAL Optimized (P40, P48).
+class ReflectionPassScope {
+public:
+	ReflectionPassScope() {
+		ShadowsExteriorEffect* shadows = TheShaderManager->Effects.ShadowsExteriors;
+		TerrainShaders* terrain = TheShaderManager->Shaders.Terrain;
+		if (!shadows || !terrain) return;
+		const bool force = TheSettingManager->SettingsMain.Main.ForceReflections;
+		const bool cheap = TheSettingManager->GetSettingI("Main.Main.ReducedQuality", "CheapReflections") != 0;
+		const bool underwater = TheSettingManager->GetSettingI("Main.Main.ReducedQuality", "CheapUnderwaterTerrain") != 0;
+		Shadows = shadows; Terrain = terrain;
+		Saved[0] = shadows->Constants.Data.x;
+		Saved[1] = shadows->Constants.ForwardData.x;
+		Saved[2] = terrain->ParallaxConstants.Data.x;
+		Saved[3] = terrain->ParallaxConstants.Data.y;
+		Saved[4] = terrain->ParallaxConstants.ExtraData.w;
+		if (force) shadows->Constants.Data.x = -1.0f;
+		if (force || cheap) { terrain->ParallaxConstants.Data.x = 0.0f; terrain->ParallaxConstants.Data.y = 0.0f; }
+		if (cheap) {
+			shadows->Constants.ForwardData.x = 1.0f;
+			TheRenderManager->device->SetPixelShaderConstantF(133, (const float*)&shadows->Constants.ForwardData, 1);
+		}
+		if (underwater) terrain->ParallaxConstants.ExtraData.w = -FLT_MAX;
+		ForcePixelConstants = true;
+	}
+	~ReflectionPassScope() {
+		if (!Shadows) return;
+		Shadows->Constants.Data.x = Saved[0];
+		Shadows->Constants.ForwardData.x = Saved[1];
+		Terrain->ParallaxConstants.Data.x = Saved[2];
+		Terrain->ParallaxConstants.Data.y = Saved[3];
+		Terrain->ParallaxConstants.ExtraData.w = Saved[4];
+		TheRenderManager->device->SetPixelShaderConstantF(133, (const float*)&Shadows->Constants.ForwardData, 1);
+		ForcePixelConstants = true;
+	}
+private:
+	ShadowsExteriorEffect* Shadows = nullptr;
+	TerrainShaders* Terrain = nullptr;
+	float Saved[5] = {};
+};
 void (__thiscall* RenderReflections)(WaterManager*, NiCamera*, ShadowSceneNode*) = (void (__thiscall*)(WaterManager*, NiCamera*, ShadowSceneNode*))Hooks::RenderReflections;
 void __fastcall RenderReflectionsHook(WaterManager* This, UInt32 edx, NiCamera* Camera, ShadowSceneNode* SceneNode) {
-	
-	D3DXVECTOR4* ShadowData = &TheShaderManager->Effects.ShadowsExteriors->Constants.Data;
-	float ShadowDataBackup = ShadowData->x;
-
-	D3DXVECTOR4* TerrainParallaxData = &TheShaderManager->Shaders.Terrain->ParallaxConstants.Data;
-	float TerrainParallaxBackup = TerrainParallaxData->x;
-	float TerrainParallaxShadowsBackup = TerrainParallaxData->y;   // parallax shadows have their own switch
-
+	ReflectionPassScope scope;
 	if (DWNode::Get()) DWNode::AddNode("BEGIN REFLECTIONS RENDERING", NULL, NULL);
-	ShadowData->x = -1.0f; // Disables the shadows rendering for water reflections (the geo is rendered with the same shaders used in the normal scene!)
-	TerrainParallaxData->x = 0;
-	TerrainParallaxData->y = 0;
 	(*RenderReflections)(This, Camera, SceneNode);
-	ShadowData->x = ShadowDataBackup;
-	TerrainParallaxData->x = TerrainParallaxBackup;
-	TerrainParallaxData->y = TerrainParallaxShadowsBackup;
 	if (DWNode::Get()) DWNode::AddNode("END REFLECTIONS RENDERING", NULL, NULL);
 }
-
 void (__thiscall* RenderPipboy)(Main*, NiGeometry*, NiDX9Renderer*) = (void (__thiscall*)(Main*, NiGeometry*, NiDX9Renderer*))Hooks::RenderPipboy;
 void __fastcall RenderPipboyHook(Main* This, UInt32 edx, NiGeometry* Geo, NiDX9Renderer* Renderer) {
 	WorldSceneGraph->UpdateParticleShaderFoV(Player->firstPersonFoV);

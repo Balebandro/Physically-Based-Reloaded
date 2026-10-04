@@ -1,3 +1,4 @@
+#include <cfloat>
 #include <algorithm>
 
 #include "Terrain.h"
@@ -62,6 +63,8 @@ void TerrainShaders::UpdateSettings() {
 	ParallaxSettings.MaxDistance = TheSettingManager->GetSettingF("Shaders.Terrain.Parallax", "MaxDistance");
 	ParallaxSettings.Height = TheSettingManager->GetSettingF("Shaders.Terrain.Parallax", "Height");
 	ParallaxSettings.ShadowsIntensity = TheSettingManager->GetSettingF("Shaders.Terrain.Parallax", "ShadowsIntensity");
+	ParallaxSettings.Lite = TheSettingManager->GetSettingI("Main.Main.ReducedQuality", "ParallaxLite");
+	ParallaxSettings.CheapUnderwater = TheSettingManager->GetSettingI("Main.Main.ReducedQuality", "CheapUnderwaterTerrain");
 
 	// [Shaders.PBR.Main] LinearLighting, shared with the object shaders so both light the same way
 	// (two lighting spaces would show where terrain meets objects).
@@ -121,9 +124,29 @@ void TerrainShaders::UpdateConstants() {
 	ParallaxConstants.Data.x = ParallaxSettings.Enabled;
 	ParallaxConstants.Data.y = ParallaxSettings.Shadows;
 	ParallaxConstants.Data.z = ParallaxSettings.HeightBlend;
-	ParallaxConstants.Data.w = ParallaxSettings.HighQuality;
+	// .w: 0 = 8 steps, 1 = 16 (HighQuality), 2 = [Main.Main.ReducedQuality] ParallaxLite (TerrainParallax.hlsl),
+	// which replaces both. Ported from NVR UNOFFICIAL Optimized (P60-P61).
+	ParallaxConstants.Data.w = ParallaxSettings.Lite ? 2.0f : (float)ParallaxSettings.HighQuality;
 
-	ParallaxConstants.ExtraData.x = ParallaxSettings.MaxDistance;
+	// ParallaxLite also caps how far the terrain parallax and its shadows reach: 1024 units at 1440p, scaled with the
+	// screen height (a bump's size on screen goes with screen height / distance): 768 at 1080p, 1536 at 4K. A lower
+	// MaxDistance still applies.
+	float maxDistance = ParallaxSettings.MaxDistance;
+	if (ParallaxSettings.Lite) maxDistance = min(maxDistance, 1024.0f * TheRenderManager->height / 1440.0f);
+	ParallaxConstants.ExtraData.x = maxDistance;
+
+	// [Main.Main.ReducedQuality] CheapUnderwaterTerrain: ground below the water surface skips parallax and its shadows
+	// (TerrainTemplate.hlsl). .w is the camera-relative height below which terrain counts as under water: the level of
+	// the water the player is in or looking at, a little lower so the shoreline keeps its parallax. Only while a water
+	// plane is loaded nearby (the cell's default water level could lie above dry ground). -FLT_MAX = off. The
+	// reflection pass switches it off too (ReflectionPassScope). Ported from NVR UNOFFICIAL Optimized (P48).
+	static const float WaterlineMargin = 10.0f;   // game units, about 14 cm
+	ParallaxConstants.ExtraData.w = -FLT_MAX;
+	if (ParallaxSettings.CheapUnderwater && Tes && Tes->waterManager && Tes->waterManager->waterGroups.count && Player && Player->parentCell && WorldSceneGraph) {
+		TESWaterForm* water = nullptr;
+		const float height = Tes->GetWaterHeight(Player, WorldSceneGraph, &water);
+		if (water) ParallaxConstants.ExtraData.w = height - WaterlineMargin - TheRenderManager->CameraPosition.z;
+	}
 	ParallaxConstants.ExtraData.y = ParallaxSettings.Height;
 	ParallaxConstants.ExtraData.z = ParallaxSettings.ShadowsIntensity;
 };

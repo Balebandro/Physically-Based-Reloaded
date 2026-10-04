@@ -147,7 +147,19 @@ PS_OUTPUT main(PS_INPUT IN) {
     // strongest layers that have a height map.
     float heightLayers[7];
     pickHeightLayers(blends, heightStatus, heightLayers);
-    float2 offsetUV = getTerrainParallaxCoords(dist, IN.uv.xy, dx, dy, eyeDir, BaseMap, heightLayers);
+
+    // Camera-relative world position, for the forward sun shadows below and, first, for
+    // [Main.Main.ReducedQuality] CheapUnderwaterTerrain: ground below the water line
+    // (TESR_TerrainParallaxExtraData.w, -FLT_MAX when off) skips the parallax and its shadows, as it
+    // is seen through moving, murky water anyway. Ported from NVR UNOFFICIAL Optimized (P48).
+    // ddx/ddy must stay at top level, outside dynamic flow control.
+    float3 shadowWorldPos = GetShadowWorldPos(IN.projectionPosition);
+    float3 shadowNormal = GetShadowGeometricNormal(shadowWorldPos);
+    bool underwater = shadowWorldPos.z < TESR_TerrainParallaxExtraData.w;
+
+    float2 offsetUV = IN.uv.xy;
+    [branch] if (!underwater)
+        offsetUV = getTerrainParallaxCoords(dist, IN.uv.xy, dx, dy, eyeDir, BaseMap, heightLayers);
 
     float gloss = 0.0f;
     float specExponent = 0.0f;
@@ -160,16 +172,16 @@ PS_OUTPUT main(PS_INPUT IN) {
     baseColor = decodeColor(baseColor);
 
     float3 lightTS = mul(tbn, SunDir.xyz);
-    float parallaxShadowMultiplier = getTerrainParallaxShadow(dist, offsetUV, dx, dy, lightTS, BaseMap, heightLayers);
+    float parallaxShadowMultiplier = 1.0f;
+    [branch] if (!underwater)
+        parallaxShadowMultiplier = getTerrainParallaxShadow(dist, offsetUV, dx, dy, lightTS, BaseMap, heightLayers);
 
     // Forward sun shadows. Folded into parallaxShadowMultiplier, which getSunLighting
     // applies to the sun colour only -- ambient is added afterwards and stays untouched.
     //
     // No extra interpolator needed: projectionPosition is already the clip-space position,
     // and clip position is affine in object space, so it interpolates exactly.
-    // ddx/ddy must stay at top level, outside dynamic flow control.
-    float3 shadowWorldPos = GetShadowWorldPos(IN.projectionPosition);
-    float3 shadowNormal = GetShadowGeometricNormal(shadowWorldPos);
+    // (shadowWorldPos and shadowNormal are computed above, before the parallax.)
     #if FORWARD_SHADOWS
     parallaxShadowMultiplier *= GetSunShadow(shadowWorldPos, shadowNormal);
     #endif

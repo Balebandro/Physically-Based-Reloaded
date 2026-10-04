@@ -24,8 +24,8 @@
 // LandHeight (c34/c35) says per layer whether its diffuse alpha holds a height map; Vanilla Plus
 // Terrain fills it. A layer without one takes no part in the march.
 
-float4 TESR_TerrainParallaxData : register(c91);      // x: enabled, y: shadows, z: height blend, w: high quality
-float4 TESR_TerrainParallaxExtraData : register(c92); // x: max distance, y: height, z: shadows intensity
+float4 TESR_TerrainParallaxData : register(c91);      // x: enabled, y: shadows, z: height blend, w: 0 normal, 1 high quality, 2 ParallaxLite
+float4 TESR_TerrainParallaxExtraData : register(c92); // x: max distance, y: height, z: shadows intensity, w: camera-relative water line (CheapUnderwaterTerrain, -FLT_MAX off)
 
 // The two strongest layers that carry a height map, renormalised. All zero when none do.
 void pickHeightLayers(float blends[7], float status[7], out float active[7]) {
@@ -82,7 +82,10 @@ float2 getTerrainParallaxCoords(float distance, float2 coords, float2 dx, float2
     float shiftPixels = length(shift) / uvPerPixel * (1.0f - distanceBlend);
     if (shiftPixels < 0.5f)
         return coords;
-    float maxSteps = TESR_TerrainParallaxData.w ? 16.0f : 8.0f;
+    // [Main.Main.ReducedQuality] ParallaxLite (w 2, ported from NVR UNOFFICIAL Optimized): at most 8 steps, and the
+    // secant alone without the refinement sample after it.
+    bool lite = TESR_TerrainParallaxData.w > 1.5f;
+    float maxSteps = (TESR_TerrainParallaxData.w > 0.5f && !lite) ? 16.0f : 8.0f;
     float numSteps = clamp(ceil(shiftPixels), 4.0f, maxSteps);
     float stepSize = rcp(numSteps);
 
@@ -110,10 +113,12 @@ float2 getTerrainParallaxCoords(float distance, float2 coords, float2 dx, float2
         }
     }
 
-    // Secant between the last miss and the hit, then one refinement sample at that guess.
+    // Secant between the last miss and the hit, then one refinement sample at that guess (not with ParallaxLite).
     float t = hitT;
     if (found && hitT > 0.0f) {
         t = lerp(prevT, hitT, saturate(prevDiff / (prevDiff - hitDiff)));
+    }
+    [branch] if (found && hitT > 0.0f && !lite) {
         float diff = sampleTerrainHeight(start - shift * t, dx, dy, tex, active) - (1.0f - t);
         if (diff >= 0.0f) { hitT = t; hitDiff = diff; }
         else { prevT = t; prevDiff = diff; }
