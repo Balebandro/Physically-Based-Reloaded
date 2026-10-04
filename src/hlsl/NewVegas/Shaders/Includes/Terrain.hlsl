@@ -61,61 +61,119 @@ float3 getVanillaLightingAtt(float3 lightDir, float att, float3 lightColor, floa
     lightDir = normalize(lightDir);
     viewDir = normalize(viewDir);
     float3 halfwayDir = normalize(lightDir + viewDir);
-    
+
     float NdotL = shades(normal.xyz, lightDir.xyz);
-    
+
     float specStrength = gloss * pow(abs(shades(normal.xyz, halfwayDir.xyz)), glossPower);
     float3 lighting = albedo.rgb * NdotL * lightColor.rgb * att;
     lighting += saturate(((0.2 >= NdotL ? (specStrength * saturate(NdotL + 0.5)) : specStrength) * lightColor.rgb) * att);
-    
+
     return lighting;
 }
 
-float3 getPointLightLighting(float3 lightDir, float att, float3 lightColor, float3 eyeDir, float3 normal, float3 albedo, float gloss = 0.0, float glossPower = 0.0, float metallicness = 1.0) {
-    float3 pointlightColor = lightColor * TESR_TerrainData.z;
+// PBR material for terrain, as for objects (see the Material notes in Object.hlsl): a layer's
+// specular exponent gives the roughness and its normal map alpha (gloss) is the specular mask.
+// The old code read gloss as roughness and gave every layer a full-strength highlight.
+// Terrain is never metal: the metallicness parameters below are ignored (the old
+// [Shaders.Terrain.*] Metallicness slider only darkened the ground and tinted its highlights).
+float getTerrainRoughness(float glossPower) {
+    return clamp(shineToRoughness(glossPower) * TESR_TerrainData.y, 0.04f, 1.0f);
+}
 
+// x SkyReflectionScale, y AmbientNormalDetail, z SpecularOcclusion ([Shaders.Terrain.Main]),
+// w DebugView ([Shaders.PBR.Main]). TESR_TerrainData.x is [Shaders.Terrain.Main] SpecularStrength. c134 is clear on this side, see the
+// note on TESR_TerrainSkyData.
+float4 TESR_TerrainPBRData : register(c134);
+
+// Normal-mapped ambient for land: the sky term follows the per-pixel world normal (normal map
+// included), blended toward the geometric normal by AmbientNormalDetail, as for objects.
+float3 getTerrainAmbientNormal(float3 shadingNormal, float3 geometricNormal) {
+    return normalize(lerp(geometricNormal, shadingNormal, saturate(TESR_TerrainPBRData.y)));
+}
+
+// Sky reflection on land, as getSkyReflection in Object.hlsl: worldPos camera-relative, normal
+// the ambient normal, strength the layer specular mask. Linear radiance, encoded for gamma
+// lighting. Exteriors only, which is all terrain is.
+float3 getTerrainSkyReflection(float3 worldPos, float3 geometricNormal, float3 normal, float roughness, float strength) {
+    float3 v = -normalize(worldPos);
+    float3 r = reflect(-v, normal);
+    float3 radiance = SkyReflectionRadiance(r, roughness);
+    float NdotV = saturate(dot(normal, v));
+    float horizon = 1.0f;
+    [flatten] if (TESR_TerrainPBRData.z > 0.0f) {
+        horizon = saturate(1.0f + 1.2f * dot(r, geometricNormal));
+        horizon *= horizon;
+    }
+    float3 sky = linearLighting ? radiance : sqrt(radiance);
+    float3 reflected = EnvBRDFApprox(float(0.04f).rrr, roughness, NdotV) * horizon * strength * TESR_TerrainData.x * TESR_TerrainPBRData.x;
+    skyReflectedFraction = saturate(reflected);   // see SkyAmbient.hlsl
+    return sky * reflected;
+}
+
+// DebugView for land: 1 roughness, 2 highlight strength / 4, 3 dark blue (land has no
+// Specular flag or distance fade), 4 ambient normal up (white faces the sky).
+float3 getTerrainDebug(float mode, float roughness, float specularScale, float3 ambientNormal) {
+    if (mode < 1.5f) return roughness.xxx;
+    if (mode < 2.5f) return saturate(specularScale * 0.25f).xxx;
+    if (mode < 3.5f) return float3(0.0f, 0.0f, 0.5f);
+    return (ambientNormal.z * 0.5f + 0.5f).xxx;
+}
+
+// Land highlight strength: the layer mask x [Shaders.Terrain.Main] SpecularStrength (TerrainData.x)
+// x its VanillaMatchedHighlights (TerrainSkyData.w); see vanillaMatchFactor in Object.hlsl.
+float getTerrainSpecularScale(float gloss, float roughness) {
+    roughness = saturate(roughness / max(TESR_TerrainData.y, 0.01f));   // before RoughnessScale, as for objects
+    float alpha = roughness * roughness;
+    float matched = clamp(4.0f * alpha * alpha / 0.04f, 1.0f, 12.0f);
+    return gloss * TESR_TerrainData.x * lerp(1.0f, matched, saturate(TESR_TerrainSkyData.w));
+}
+
+float3 getPointLightLighting(float3 lightDir, float att, float3 lightColor, float3 eyeDir, float3 normal, float3 albedo, float gloss = 0.0, float glossPower = 0.0, float metallicness = 1.0) {
     [branch]
     if (TESR_TerrainExtraData.x){
-        // PBR. 
-        float roughness = saturate((1 - gloss) * TESR_TerrainData.y);
-        float3 lighting = PBR(saturate(metallicness * TESR_TerrainData.x), roughness, albedo, normal, eyeDir, lightDir, pointlightColor);
-        
-        return max(0, lighting * att);
+        // PBR. Attenuation inside the decode keeps the vanilla falloff, as for objects.
+        float3 pointlightColor = decodeColor(lightColor * att) * TESR_TerrainData.z;
+        float roughness = getTerrainRoughness(glossPower);
+        float3 lighting = PBR(0, roughness, albedo, normal, eyeDir, lightDir, pointlightColor, getTerrainSpecularScale(gloss, roughness));
+
+        return max(0, lighting);
     } else {
         // Vanilla.    
         lightDir = normalize(lightDir);
-        
+
         float3 lighting = getVanillaLightingAtt(lightDir, att, lightColor, eyeDir, normal, albedo, gloss, glossPower);
-        
+
         return lighting;
     }
 }
 
 float3 getSunLighting(float3 lightDir, float3 sunColor, float3 eyeDir, float3 normal, float3 AmbientColor, float3 albedo, float gloss = 0.0, float glossPower = 0.0, float metallicness = 1.0, float parallaxMultiplier = 1.0, float3 worldNormal = float3(0.0f, 0.0f, 1.0f)) {
-    float3 lightColor = sunColor * TESR_TerrainData.z * parallaxMultiplier;
-    float3 ambientColor = AmbientColor * TESR_TerrainData.w;
+    // Decoded for linear lighting before the visibility (parallax self-shadow and forward sun
+    // shadow) and before anything is summed; see "Lighting space" in PBR.hlsl.
+    float3 lightColor = decodeColor(sunColor) * TESR_TerrainData.z * parallaxMultiplier;
+    float3 ambientColor = decodeColor(AmbientColor) * TESR_TerrainData.w;
 
     // Hemisphere skylight, matching getAmbientLighting in Object.hlsl. worldNormal is the
-    // geometric world normal, not the tangent-space shading normal used above. AmbientScale
+    // world-space ambient normal (getTerrainAmbientNormal: normal-mapped, or the geometric normal
+    // at AmbientNormalDetail 0), not the tangent-space shading normal used above. AmbientScale
     // (TESR_TerrainData.w) scales the weather ambient above but not this: the sky is a second,
     // independent light source, so SkylightingScale is its only strength knob and it survives
     // AmbientScale = 0.
-    // This build's SkyAmbientRadiance is the SH sky light, the default SKYLIGHTING_MODE 0 path, which never
-    // used the directionality argument (TESR_TerrainSkyData.y); it takes the normal alone.
-    ambientColor += SkyAmbientRadiance(worldNormal) * SKY_AMBIENT_STRENGTH;
+    ambientColor += decodeColor(SkyAmbientRadiance(worldNormal)) * SKY_AMBIENT_STRENGTH;
     float3 color = albedo;
     color = lerp(luma(albedo), color, TESR_TerrainExtraData.y);
 
     [branch]
     if (TESR_TerrainExtraData.x) {
         // PBR.
-        float roughness = saturate((1 - gloss) * TESR_TerrainData.y);
-        float3 lighting = PBRSun(saturate(metallicness * TESR_TerrainData.x), roughness, color, normal, eyeDir, lightDir, lightColor);
-        return max(0, lighting + ambientColor * color);
+        float roughness = getTerrainRoughness(glossPower);
+        float3 lighting = PBRSun(0, roughness, color, normal, eyeDir, lightDir, lightColor, getTerrainSpecularScale(gloss, roughness));
+        // (1 - skyReflectedFraction): the energy balance with the sky reflection, evaluated first.
+        return max(0, lighting + ambientColor * color * (1.0f - skyReflectedFraction));
     } else {
         // Vanilla, no specular.
         float3 lighting = getVanillaLightingAtt(lightDir, 1.0, sunColor, eyeDir, normal, albedo, gloss, glossPower);
-        
+
         return lighting + ambientColor * color;
     }
 }
