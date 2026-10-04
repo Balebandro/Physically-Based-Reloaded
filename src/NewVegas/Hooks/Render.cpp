@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <cfloat>
 
 // See ReflectionPassScope: the next shader bind re-uploads NVR's constants.
@@ -159,9 +159,7 @@ void __fastcall RenderFirstPersonHook(Main* This, UInt32 edx, NiDX9Renderer* Ren
 //   [Main.Main.ReducedQuality] CheapReflections: no forward sun shadows (TESR_ShadowForwardData.x = 1, also
 //     written to c133, which ShadowsExteriorEffect binds directly once per frame) and no terrain parallax or
 //     parallax shadows, like the game's own reflections.
-//   [Main.Main.ReducedQuality] CheapUnderwaterTerrain: its water-line test reconstructs positions with the
-//     main camera's matrices, meaningless under the mirrored reflection camera, so it is off for the pass.
-// Ported from NVR UNOFFICIAL Optimized (P40, P48).
+// Ported from NVR UNOFFICIAL Optimized (P40).
 class ReflectionPassScope {
 public:
 	ReflectionPassScope() {
@@ -170,20 +168,17 @@ public:
 		if (!shadows || !terrain) return;
 		const bool force = TheSettingManager->SettingsMain.Main.ForceReflections;
 		const bool cheap = TheSettingManager->GetSettingI("Main.Main.ReducedQuality", "CheapReflections") != 0;
-		const bool underwater = TheSettingManager->GetSettingI("Main.Main.ReducedQuality", "CheapUnderwaterTerrain") != 0;
 		Shadows = shadows; Terrain = terrain;
 		Saved[0] = shadows->Constants.Data.x;
 		Saved[1] = shadows->Constants.ForwardData.x;
 		Saved[2] = terrain->ParallaxConstants.Data.x;
 		Saved[3] = terrain->ParallaxConstants.Data.y;
-		Saved[4] = terrain->ParallaxConstants.ExtraData.w;
 		if (force) shadows->Constants.Data.x = -1.0f;
 		if (force || cheap) { terrain->ParallaxConstants.Data.x = 0.0f; terrain->ParallaxConstants.Data.y = 0.0f; }
 		if (cheap) {
 			shadows->Constants.ForwardData.x = 1.0f;
 			TheRenderManager->device->SetPixelShaderConstantF(133, (const float*)&shadows->Constants.ForwardData, 1);
 		}
-		if (underwater) terrain->ParallaxConstants.ExtraData.w = -FLT_MAX;
 		ForcePixelConstants = true;
 	}
 	~ReflectionPassScope() {
@@ -192,14 +187,13 @@ public:
 		Shadows->Constants.ForwardData.x = Saved[1];
 		Terrain->ParallaxConstants.Data.x = Saved[2];
 		Terrain->ParallaxConstants.Data.y = Saved[3];
-		Terrain->ParallaxConstants.ExtraData.w = Saved[4];
 		TheRenderManager->device->SetPixelShaderConstantF(133, (const float*)&Shadows->Constants.ForwardData, 1);
 		ForcePixelConstants = true;
 	}
 private:
 	ShadowsExteriorEffect* Shadows = nullptr;
 	TerrainShaders* Terrain = nullptr;
-	float Saved[5] = {};
+	float Saved[4] = {};
 };
 void (__thiscall* RenderReflections)(WaterManager*, NiCamera*, ShadowSceneNode*) = (void (__thiscall*)(WaterManager*, NiCamera*, ShadowSceneNode*))Hooks::RenderReflections;
 void __fastcall RenderReflectionsHook(WaterManager* This, UInt32 edx, NiCamera* Camera, ShadowSceneNode* SceneNode) {

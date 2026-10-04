@@ -73,7 +73,6 @@ ForceReflections = true     # Always render the full world in reflection for HD 
 RemoveUnderwater = false    # Disables fog underwater. Not compatible with custom underwater shader.
 
 [_Main.Main.ReducedQuality]
-CheapUnderwaterTerrain = true # Ground below the water surface (lake and river beds, and everything when you are underwater) is drawn without terrain parallax and its small shadows: you see it through moving, murky water. Dry ground keeps full parallax. Removes most of the frame-rate drop when wading or swimming. From NVR UNOFFICIAL Optimized.
 CheapReflections = true      # The water reflection is drawn without NVR's sun shadows and without terrain parallax, like the game's own reflections. Objects and ground seen in the water lose their sun shadows and bumps; the game blurs the reflection, so the difference is usually small. Only where water is in view. From NVR UNOFFICIAL Optimized.
 
 [_Main.Menu.Keys]
@@ -904,49 +903,40 @@ Enabled = false                      # Snow accumulation on the floor during sno
 
 [_Shaders.Terrain.Main]
 UsePBR = true                       # Use PBR lighting, disable to use vanilla.
-RoughnessScale = 1.0               # Scales terrain roughness. Below 1 is glossier (wet look), above 1 more matte.
+Roughness = 1.0                     # Scale texture roughness, higher roughness decreases specular.
+Metallicness = 0.0                  # Add metallicness.
 AmbientScale = 0.5                  # Scale ambient lighting.
 SkylightingScale = 0.5              # Sky-colour ambient boost. 0 disables it.
+SkylightingDirectionality = 0.6      # Mode 1 only: 0 samples straight up, 1 along the normal.
 LightingScale = 0.725               # Scale non-ambient lighting (sun or spotlights).
 TerrainSaturation = 1.0             # Control terrain saturation.
-SpecularStrength = 0.5              # Strength of land highlights and sky reflections (x each layer's specular mask).
-VanillaMatchedHighlights = 0.0      # 1 makes land highlights as strong as vanilla's glossiness implies; 0 is physically based. High values blow out paths against a low sun.
-SkyReflectionScale = 0.5            # Sky reflections on land (sheen at glancing angles). 0 disables.
-AmbientNormalDetail = 1.0           # How much the normal maps shape sky light and reflections on land (detail out of direct sun). 0 is flat.
-SpecularOcclusion = true            # Fade land reflections that a normal map tilts below the surface.
 
 [_Shaders.Terrain.Rain]
-RoughnessScale = 0.7               # Scales terrain roughness. Below 1 is glossier (wet look), above 1 more matte.
+Roughness = 0.7                     # Scale texture roughness, higher roughness decreases specular.
+Metallicness = 0.0                  # Add metallicness.
 AmbientScale = 0.5                  # Scale ambient lighting.
 SkylightingScale = 0.5              # Sky-colour ambient boost. 0 disables it.
+SkylightingDirectionality = 0.6      # Mode 1 only: 0 samples straight up, 1 along the normal.
 LightingScale = 1.0                 # Scale non-ambient lighting (sun or spotlights).
 TerrainSaturation = 1.0             # Control terrain saturation.
-SpecularStrength = 0.8               # Strength of land highlights and sky reflections (x each layer's specular mask).
-VanillaMatchedHighlights = 0.0       # 1 makes land highlights as strong as vanilla's glossiness implies; 0 is physically based. High values blow out paths against a low sun.
-SkyReflectionScale = 1.0             # Sky reflections on land (sheen at glancing angles). 0 disables.
-AmbientNormalDetail = 1.0            # How much the normal maps shape sky light and reflections on land (detail out of direct sun). 0 is flat.
 
 [_Shaders.Terrain.Night]
-RoughnessScale = 1.0               # Scales terrain roughness. Below 1 is glossier (wet look), above 1 more matte.
+Roughness = 1.0                     # Scale texture roughness, higher roughness decreases specular.
+Metallicness = 0.0                  # Add metallicness.
 AmbientScale = 0.5                  # Scale ambient lighting.
 SkylightingScale = 0.5              # Sky-colour ambient boost. 0 disables it.
+SkylightingDirectionality = 0.6      # Mode 1 only: 0 samples straight up, 1 along the normal.
 LightingScale = 1.0                 # Scale non-ambient lighting (sun or spotlights).
 TerrainSaturation = 1.0             # Control terrain saturation.
-SpecularStrength = 0.5               # Strength of land highlights and sky reflections (x each layer's specular mask).
-VanillaMatchedHighlights = 0.0       # 1 makes land highlights as strong as vanilla's glossiness implies; 0 is physically based. High values blow out paths against a low sun.
-SkyReflectionScale = 0.5             # Sky reflections on land (sheen at glancing angles). 0 disables.
-AmbientNormalDetail = 1.0            # How much the normal maps shape sky light and reflections on land (detail out of direct sun). 0 is flat.
 
 [_Shaders.Terrain.NightRain]
-RoughnessScale = 0.6               # Scales terrain roughness. Below 1 is glossier (wet look), above 1 more matte.
+Roughness = 0.6                     # Scale texture roughness, higher roughness decreases specular.
+Metallicness = 0.0                  # Add metallicness.
 AmbientScale = 0.5                  # Scale ambient lighting.
 SkylightingScale = 0.5              # Sky-colour ambient boost. 0 disables it.
+SkylightingDirectionality = 0.6      # Mode 1 only: 0 samples straight up, 1 along the normal.
 LightingScale = 1.0                 # Scale non-ambient lighting (sun or spotlights).
 TerrainSaturation = 1.0             # Control terrain saturation.
-SpecularStrength = 0.8               # Strength of land highlights and sky reflections (x each layer's specular mask).
-VanillaMatchedHighlights = 0.0       # 1 makes land highlights as strong as vanilla's glossiness implies; 0 is physically based. High values blow out paths against a low sun.
-SkyReflectionScale = 1.0             # Sky reflections on land (sheen at glancing angles). 0 disables.
-AmbientNormalDetail = 1.0            # How much the normal maps shape sky light and reflections on land (detail out of direct sun). 0 is flat.
 
 [_Shaders.Terrain.Parallax]
 Enabled = true                      # Turn on parallax occlusion mapping for terrain.

@@ -19,7 +19,7 @@
 
 #include "includes/Helpers.hlsl"
 #include "includes/Terrain.hlsl"
-#include "includes/TerrainParallax.hlsl"
+#include "includes/Parallax.hlsl"
 
 // BaseMap[7] holds s0-s6 and NormalMap[7] holds s7-s13, so the atlas cannot use the s9
 // default. s14/s15 are the only free sampler slots in ps_3_0 here.
@@ -67,7 +67,7 @@ VS_OUTPUT main(VS_INPUT IN) {
 
     OUT.blend_0 = IN.blend_0;
     OUT.blend_1 = IN.blend_1;
-
+    
     OUT.sPosition.xyzw = posPS;
     OUT.uv.xy = IN.uv.xy;
     OUT.vertex_color.xyz = clamp(IN.vertex_color.rgb, 0.0f, 1.0f);
@@ -125,7 +125,7 @@ float PointLightCount : register(c88);
 
 PS_OUTPUT main(PS_INPUT IN) {
     PS_OUTPUT OUT;
-
+    
     int texCount = TEX_COUNT;  // Macro.
     float3 tangent = normalize(IN.tangent.xyz);
     float3 binormal = normalize(IN.binormal.xyz);
@@ -137,74 +137,40 @@ PS_OUTPUT main(PS_INPUT IN) {
     float2 dx, dy;
     dx = ddx(IN.uv.xy);
     dy = ddy(IN.uv.xy);
-
+    
     float weights[7] = { 0, 0, 0, 0, 0, 0, 0 };
     float blends[7] = { IN.blend_0.x, IN.blend_0.y, IN.blend_0.z, IN.blend_0.w, IN.blend_1.x, IN.blend_1.y, IN.blend_1.z };
     float spec[7] = { LandSpec[0].x, LandSpec[0].y, LandSpec[0].z, LandSpec[0].w, LandSpec[1].x, LandSpec[1].y, LandSpec[1].z };
     float heightStatus[7] = { LandHeight[0].x, LandHeight[0].y, LandHeight[0].z, LandHeight[0].w, LandHeight[1].x, LandHeight[1].y, LandHeight[1].z };
-
-    // See Includes/TerrainParallax.hlsl: the march and the self-shadowing only read the two
-    // strongest layers that have a height map.
-    float heightLayers[7];
-    pickHeightLayers(blends, heightStatus, heightLayers);
-
-    // Camera-relative world position, for the forward sun shadows below and, first, for
-    // [Main.Main.ReducedQuality] CheapUnderwaterTerrain: ground below the water line
-    // (TESR_TerrainParallaxExtraData.w, -FLT_MAX when off) skips the parallax and its shadows, as it
-    // is seen through moving, murky water anyway. Ported from NVR UNOFFICIAL Optimized (P48).
-    // ddx/ddy must stay at top level, outside dynamic flow control.
-    float3 shadowWorldPos = GetShadowWorldPos(IN.projectionPosition);
-    float3 shadowNormal = GetShadowGeometricNormal(shadowWorldPos);
-    bool underwater = shadowWorldPos.z < TESR_TerrainParallaxExtraData.w;
-
-    float2 offsetUV = IN.uv.xy;
-    [branch] if (!underwater)
-        offsetUV = getTerrainParallaxCoords(dist, IN.uv.xy, dx, dy, eyeDir, BaseMap, heightLayers);
+    float2 offsetUV = getParallaxCoords(dist, IN.uv.xy, dx, dy, eyeDir, texCount, BaseMap, blends, heightStatus, weights);
 
     float gloss = 0.0f;
     float specExponent = 0.0f;
-    float3 baseColor = blendTerrainDiffuse(IN.vertex_color, offsetUV, dx, dy, BaseMap, blends, heightStatus, dist, weights);
-    float3 combinedNormal = blendTerrainNormals(offsetUV, dx, dy, NormalMap, weights, spec, gloss, specExponent);
-
-    // Linear lighting ([Shaders.PBR.Main] LinearLighting), PBR path only; see "Lighting space"
-    // in PBR.hlsl. The albedo is decoded once here and the result encoded before fog.
-    linearLighting = TESR_TerrainSkyData.z > 0.0f && TESR_TerrainExtraData.x;
-    baseColor = decodeColor(baseColor);
+    float3 baseColor = blendDiffuseMaps(IN.vertex_color, offsetUV, texCount, BaseMap, weights);
+    float3 combinedNormal = blendNormalMaps(offsetUV, texCount, NormalMap, weights, spec, gloss, specExponent);
 
     float3 lightTS = mul(tbn, SunDir.xyz);
-    float parallaxShadowMultiplier = 1.0f;
-    [branch] if (!underwater)
-        parallaxShadowMultiplier = getTerrainParallaxShadow(dist, offsetUV, dx, dy, lightTS, BaseMap, heightLayers);
+    float parallaxShadowMultiplier = getParallaxShadowMultipler(dist, offsetUV, dx, dy, lightTS, texCount, blends, heightStatus, BaseMap);
 
     // Forward sun shadows. Folded into parallaxShadowMultiplier, which getSunLighting
     // applies to the sun colour only -- ambient is added afterwards and stays untouched.
     //
     // No extra interpolator needed: projectionPosition is already the clip-space position,
     // and clip position is affine in object space, so it interpolates exactly.
-    // (shadowWorldPos and shadowNormal are computed above, before the parallax.)
+    // ddx/ddy must stay at top level, outside dynamic flow control.
+    float3 shadowWorldPos = GetShadowWorldPos(IN.projectionPosition);
+    float3 shadowNormal = GetShadowGeometricNormal(shadowWorldPos);
     #if FORWARD_SHADOWS
     parallaxShadowMultiplier *= GetSunShadow(shadowWorldPos, shadowNormal);
     #endif
 
-    // World normal with the normal map, for the sky light and reflections. Land is never rotated,
-    // so its object-space frame is world-aligned and the interpolated tangent frame is exact.
-    float3 terrainWorldNormal = normalize(combinedNormal.x * tangent + combinedNormal.y * binormal + combinedNormal.z * normal);
-    float3 ambientNormal = getTerrainAmbientNormal(terrainWorldNormal, shadowNormal);
-
-    // Reflection first: it sets the share of the ambient it takes (skyReflectedFraction).
-    float terrainRoughness = getTerrainRoughness(specExponent);
-    float3 skyReflection = 0.0f;
-    [branch] if (TESR_TerrainExtraData.x)
-        skyReflection = getTerrainSkyReflection(shadowWorldPos, shadowNormal, ambientNormal, terrainRoughness, gloss);
-
-    float3 lighting = getSunLighting(lightTS, SunColor.rgb, eyeDir, combinedNormal, AmbientColor.rgb, baseColor, gloss, specExponent, 1.0, parallaxShadowMultiplier, ambientNormal);
-    lighting += skyReflection;
+    float3 lighting = getSunLighting(lightTS, SunColor.rgb, eyeDir, combinedNormal, AmbientColor.rgb, baseColor, gloss, specExponent, 1.0, parallaxShadowMultiplier, shadowNormal);
 
     #if defined(NUM_PT_LIGHTS)
         [loop] for (int i = 0; i < PointLightCount; i++) {
             float3 pointlightDir = PointLightPosition[i].xyz - IN.lPosition.xyz;
             float att = vanillaAtt(pointlightDir, PointLightPosition[i].w);
-
+        
             [branch]
             if (att > 0.001) {
                 pointlightDir = mul(tbn, pointlightDir);
@@ -212,7 +178,7 @@ PS_OUTPUT main(PS_INPUT IN) {
             }
         }
     #endif
-
+    
     // Per pixel fog.
     float4 fog;
     float3 fogPos = IN.projectionPosition.xyz;
@@ -222,12 +188,9 @@ PS_OUTPUT main(PS_INPUT IN) {
     float fogStrength = 1 - saturate((FogParam.x - length(fogPos)) / FogParam.y);
     fog.rgb = FogColor.rgb;
     fog.a = pow(fogStrength, FogParam.z);
-
-    float3 finalColor = encodeColor(lighting);
+    
+    float3 finalColor = lighting;
     finalColor = lerp(finalColor, fog.rgb, fog.a); // Apply fog.
-
-    [branch] if (TESR_TerrainPBRData.w > 0.0f)
-        finalColor = getTerrainDebug(TESR_TerrainPBRData.w, terrainRoughness, getTerrainSpecularScale(gloss, terrainRoughness), ambientNormal);
 
     OUT.color_0.a = 1;
     OUT.color_0.rgb = finalColor;
