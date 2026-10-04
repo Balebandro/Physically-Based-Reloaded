@@ -57,7 +57,8 @@ void WriteObjectMaterial(NiGeometry* Geometry) {
 // albedo for a metal's F0); the other passes draw the highlight themselves. So are its env map
 // passes (BSSM_ENVMAP .. BSSM_2x_ENVMAP_W, 0x244-0x24A, vanilla shaders): the material reflects
 // its environment itself, and the vanilla cubemap on top would reflect it twice. After the draw
-// everything goes back to empty, so nothing else (tree branches share these shaders) ever sees it.
+// s10/s11 go back to exactly what they held before (textures and sampler states) and MaterialMap to
+// 0, so nothing else (tree branches share these shaders; land reads normal maps there) ever sees it.
 namespace MaterialMaps {
 
     struct TextureEntry {
@@ -69,6 +70,31 @@ namespace MaterialMaps {
     static bool  sBound = false;
     static bool  sMuted = false;
     static DWORD sSavedWriteMask = 0xF;
+
+    // s10/s11 sampler states are set straight on the device, past the engine's render state cache,
+    // so they go back to what they were after the draw: the cache still holds those values and never
+    // re-sends them. Left changed, land (NormalMap[3], [4] at s10, s11 in TerrainTemplate) kept
+    // s11's CLAMP and LINEAR and drew that layer's normal map smeared out from its edge.
+    static const D3DSAMPLERSTATETYPE kSavedStates[] = {
+        D3DSAMP_ADDRESSU, D3DSAMP_ADDRESSV, D3DSAMP_ADDRESSW,
+        D3DSAMP_MINFILTER, D3DSAMP_MAGFILTER, D3DSAMP_MIPFILTER, D3DSAMP_SRGBTEXTURE };
+    static const int kSavedStateCount = sizeof(kSavedStates) / sizeof(kSavedStates[0]);
+    // The textures likewise: cleared to NULL, the next mesh with the same texture in that slot (the
+    // cache says it is still bound) read an empty map.
+    static DWORD sSavedSampler[2][kSavedStateCount];
+    static IDirect3DBaseTexture9* sSavedTexture[2] = {};
+
+    static void SaveSampler(IDirect3DDevice9* Device, int Slot) {
+        for (int i = 0; i < kSavedStateCount; i++) Device->GetSamplerState(10 + Slot, kSavedStates[i], &sSavedSampler[Slot][i]);
+        Device->GetTexture(10 + Slot, &sSavedTexture[Slot]);   // AddRef'd, released on restore
+    }
+
+    static void RestoreSampler(IDirect3DDevice9* Device, int Slot) {
+        for (int i = 0; i < kSavedStateCount; i++) Device->SetSamplerState(10 + Slot, kSavedStates[i], sSavedSampler[Slot][i]);
+        Device->SetTexture(10 + Slot, sSavedTexture[Slot]);
+        if (sSavedTexture[Slot]) sSavedTexture[Slot]->Release();
+        sSavedTexture[Slot] = nullptr;
+    }
 
     // The engine's file, read whole through its stream interface, as Font::Load (0xA15320) does:
     //   FileFinder::GetFile(name, READ_ONLY, 0x4000, ARCHIVE_TYPE_TEXTURES)
@@ -180,6 +206,8 @@ namespace MaterialMaps {
             sMuted = true;
             return;
         }
+        SaveSampler(Device, 0);
+        SaveSampler(Device, 1);
         Device->SetTexture(10, Map);
         Device->SetSamplerState(10, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
         Device->SetSamplerState(10, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
@@ -206,8 +234,8 @@ namespace MaterialMaps {
     void EndDraw() {
         IDirect3DDevice9* Device = TheRenderManager->device;
         if (sBound) {
-            Device->SetTexture(10, NULL);
-            Device->SetTexture(11, NULL);
+            RestoreSampler(Device, 0);
+            RestoreSampler(Device, 1);
             const float Zero[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
             Device->SetPixelShaderConstantF(152, Zero, 1);
             sBound = false;
@@ -859,6 +887,7 @@ namespace Lighting30Route {
     static const ClarifyShaderFn ClarifyShader = (ClarifyShaderFn)0xB68880;
     static const UInt32 Lighting30VTable = 0x10B9910;
     static const UInt32 ParallaxOcclusionBit = 1u << 28;   // BSSP_ParallaxOcclusion (0x1C), ulFlags[0]
+    static const UInt32 HairBit = 1u << BSSP_HAIR;          // ulFlags[0]
 
     // BSShaderProperty members by offset (NVR's headers stop at NiShadeProperty).
     static UInt32& ShaderPropertyType(void* Property) { return *(UInt32*)((UInt8*)Property + 0x1C); }
@@ -883,13 +912,19 @@ namespace Lighting30Route {
 
     void* __fastcall Hook(void* Property, void*, NiGeometry* Geometry, int a, int b) {
         // Decals (case 2, and decal NIFs) stay on the game's own route and shaders: see VanillaDecals.
-        if (!Enabled() || VanillaDecals::IsDecalProperty((BSShaderProperty*)Property)) return ClarifyShader(Property, Geometry, a, b);
+        // So does hair: the engine itself puts it on Lighting30 (BSSM_3XLIGHTING_H*, drawn by NVR's
+        // SM3003), and the copy below lost its kHairTint, which is where the NPC's hair colour lives:
+        // every head of hair came out the texture's bare grey.
+        if (!Enabled() || VanillaDecals::IsDecalProperty((BSShaderProperty*)Property) || (Flags0(Property) & HairBit))
+            return ClarifyShader(Property, Geometry, a, b);
         if (*(UInt32*)Property != Lighting30VTable) return ClarifyWithoutLighting30(Property, Geometry, a, b);
 
         void* Copy = ((void* (__cdecl*)())0xB68D50)();   // BSShaderPPLightingProperty::CreateObject
         if (!Copy) return ClarifyShader(Property, Geometry, a, b);
         UInt32* VTable = *(UInt32**)Property;
         ThisCall(VTable[52], Property, Copy);           // CopyTo3: textures, texture set, flags, material values
+        // Not copied by CopyTo3; the class layouts match, Lighting30 adding only its pass building.
+        static_cast<BSShaderPPLightingProperty*>(Copy)->kHairTint = static_cast<BSShaderPPLightingProperty*>(Property)->kHairTint;
         ShaderIndex(Copy) = 1;                          // BSSM_SHADER_SHADOWLIGHT
         ShaderPropertyType(Copy) = NiShadeProperty::kProp_PPLighting;
 
