@@ -133,6 +133,9 @@ public:
 	struct PBRMaterialSettings {
 		bool  LinearLighting;
 		bool  MergeLightPasses;   // with LinearLighting: point lights the game splits into extra passes are lit in the first one (Hooks/Shaders.cpp)
+		bool  KeepOffscreenLights; // lamps are not dropped from a mesh's lights for being outside the view (Hooks/Shaders.cpp, TestFrustumCullHook)
+		bool  VanillaEnvMapOnPBR;  // authored (_rmaos) materials keep the game's env map passes, drawn over the PBR result (Hooks/Shaders.cpp, MaterialMaps)
+		float PBRLinearLighting;   // 0-1: how linearly authored (_rmaos) materials are lit, whatever LinearLighting says (Shaders/Includes/Object.hlsl)
 		int   DebugView;
 	};
 	PBRMaterialSettings MaterialSettings;

@@ -167,10 +167,12 @@ float3 blendTerrainNormals(float2 uv, float2 dx, float2 dy, sampler2D tex[7], fl
     return normalize(expand(blendedNormal));
 }
 
-// Height-based self-shadowing toward the sun, from the picked layers.
+// Height-based self-shadowing toward the sun, from the picked layers. Its own switch
+// ([Shaders.Terrain.Parallax] Shadows, TESR_TerrainParallaxData.y): it works with parallax itself
+// off too, on the flat (unshifted) texture coordinates.
 float getTerrainParallaxShadow(float distance, float2 coords, float2 dx, float2 dy, float3 lightTS, sampler2D tex[7], float active[7]) {
     float quality = 1.0f - distance / TESR_TerrainParallaxExtraData.x;
-    if (!TESR_TerrainParallaxData.x || !TESR_TerrainParallaxData.y || quality <= 0.0f || active[0] + active[1] + active[2] + active[3] + active[4] + active[5] + active[6] <= 0.0f)
+    if (!TESR_TerrainParallaxData.y || quality <= 0.0f || active[0] + active[1] + active[2] + active[3] + active[4] + active[5] + active[6] <= 0.0f)
         return 1.0f;
 
     // The old version summed four samples at 1, 1/2, 1/3 and 1/4 of the ray; two at 1/2 and 1/4

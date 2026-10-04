@@ -2,7 +2,9 @@
 float4 TESR_TerrainParallaxData : register(c91);
 float4 TESR_TerrainParallaxExtraData : register(c92);
 #else
-float4 TESR_ParallaxData : register(c35);
+// Pinned past the game's own registers (it was c35, inside the range the game writes for its shaders;
+// see TESR_PBRData in Object.hlsl).
+float4 TESR_ParallaxData : register(c188);
 #endif
 
 #ifdef TERRAIN

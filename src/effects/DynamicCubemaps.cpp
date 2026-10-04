@@ -8,6 +8,8 @@ static const float DynamicCubemapJumpDistance = 1500.0f;
 
 void DynamicCubemapsEffect::UpdateSettings() {
 	Reset = true;
+	Constants.Debug.x = (float)std::clamp(TheSettingManager->GetSettingI("Shaders.DynamicCubemaps.Main", "DebugView"), 0, 3);
+	Constants.Debug.y = std::clamp(TheSettingManager->GetSettingF("Shaders.DynamicCubemaps.Main", "DebugRoughness"), 0.0f, 1.0f) * (Mips - 1);
 }
 
 // Only authored PBR materials reflect the cube.
@@ -86,6 +88,7 @@ bool DynamicCubemapsEffect::EnsureTextures(IDirect3DDevice9* Device) {
 	FaceHandle = Effect->GetParameterByName(NULL, "CubeFace");
 	FallbackHandle = Effect->GetParameterByName(NULL, "CubeFallback");
 	CaptureHandle = Effect->GetParameterByName(NULL, "CubeCapture");
+	DebugHandle = Effect->GetParameterByName(NULL, "CubeDebug");
 	Created = true;
 	Reset = true;
 	Logger::Log("DynamicCubemaps: %u px cubemaps, %u mips", Size, Mips);
@@ -182,8 +185,52 @@ void DynamicCubemapsEffect::RenderCubemaps(IDirect3DDevice9* Device, IDirect3DSu
 	Device->SetDepthStencilSurface(DepthStencil);
 	if (DepthStencil) DepthStencil->Release();
 
+	// The stages this pass bound on the device (SetCT's samplers on 0-2, the cubes on 4-6, 11 cleared)
+	// get back what the game's render state has cached for them. The game skips binding a texture its
+	// cache says is already there, so a stage left empty here stayed empty for the next draw that
+	// wanted the same texture: decals lost their environment map and highlights, depending on which
+	// draws happened to rebind those stages first -- and so on the view.
+	static const UINT TouchedStages[] = { 0, 1, 2, 4, 5, 6, 11 };
+	for (UINT Stage : TouchedStages)
+		Device->SetTexture(Stage, TheRenderManager->renderState->GetTexture(Stage));
+
 	Current = next;
 	Reset = false;
 	Valid = true;
 	renderTime = timer.LogTime("DynamicCubemapsEffect::RenderCubemaps");
+}
+
+// The debug view (technique Debug in DynamicCubemaps.fx.hlsl), drawn over the finished frame. Uses
+// the cubes RenderCubemaps built this frame: Env for the panorama and mirror views, the latest
+// capture (CaptureCube[Current]) for coverage.
+void DynamicCubemapsEffect::RenderDebug(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget) {
+	if (Constants.Debug.x < 0.5f || !Enabled || Effect == nullptr || !Valid || !ShouldRender()) return;
+	D3DXHANDLE Technique = Effect->GetTechniqueByName("Debug");
+	if (!Technique) return;
+
+	Effect->SetTechnique(Technique);
+	SetCT();   // depth and normals buffers, TESR_ camera constants
+	Effect->SetVector(DebugHandle, &Constants.Debug);
+
+	Device->SetRenderTarget(0, RenderTarget);
+	UINT passes = 0;
+	Effect->Begin(&passes, 0);   // restores the device's states at End
+	Device->SetRenderState(D3DRS_ZENABLE, D3DZB_FALSE);
+	Device->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+	Device->SetRenderState(D3DRS_STENCILENABLE, FALSE);
+	Device->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+	Device->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+	Device->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+	Device->SetRenderState(D3DRS_COLORWRITEENABLE, 0xF);
+	Effect->BeginPass(0);
+	Device->SetTexture(5, CaptureCube[Current]);
+	Device->SetTexture(7, Env);
+	Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
+	Effect->EndPass();
+	Effect->End();
+
+	// As in RenderCubemaps: the stages bound on the device get back what the game's render state caches.
+	static const UINT TouchedStages[] = { 0, 1, 2, 3, 5, 7 };
+	for (UINT Stage : TouchedStages)
+		Device->SetTexture(Stage, TheRenderManager->renderState->GetTexture(Stage));
 }

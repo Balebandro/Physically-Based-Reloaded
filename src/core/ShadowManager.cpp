@@ -375,6 +375,14 @@ void ShadowManager::RenderShadowSpotlight(NiSpotLight** Lights, UInt32 LightInde
 }
 
 
+// True when Object hangs anywhere under Root in the scene graph.
+static bool IsUnderNode(const NiAVObject* Object, const NiNode* Root) {
+	if (!Root) return false;
+	for (const NiAVObject* Node = Object; Node; Node = Node->m_parent)
+		if (Node == Root) return true;
+	return false;
+}
+
 void ShadowManager::RenderShadowCubeMap(ShadowSceneLight** Lights, UInt32 LightIndex) {
 	if (Lights[LightIndex] == NULL) return; // No light at current index
 	
@@ -463,8 +471,12 @@ void ShadowManager::RenderShadowCubeMap(ShadowSceneLight** Lights, UInt32 LightI
 				if (!CheckShaderFlags(geo))
 					continue;
 
-				bool isFirstPerson = shaderProp->m_usFlags.GetBit(NiShadeProperty::kFirstPerson);
-				bool isThirdPerson = shaderProp->m_usFlags.GetBit(NiShadeProperty::kThirdPerson);
+				// The flags FlagPlayerGeometry sets are refreshed only every 50 frames, so meshes attached to
+				// the player since (a drawn weapon, equipment, a first-person body mod's parts) went unflagged
+				// and cast the player's shadow in first person: an arm or weapon next to a lamp at eye height
+				// threw a shadow over the room that swung with the camera. Where the mesh hangs decides it.
+				bool isFirstPerson = shaderProp->m_usFlags.GetBit(NiShadeProperty::kFirstPerson) || IsUnderNode(geo, Player->firstPersonNiNode);
+				bool isThirdPerson = shaderProp->m_usFlags.GetBit(NiShadeProperty::kThirdPerson) || IsUnderNode(geo, Player->GetNode());
 
 				// Skip objects if they are barely visible. 
 				if ((matProp && matProp->fAlpha < 0.05f))

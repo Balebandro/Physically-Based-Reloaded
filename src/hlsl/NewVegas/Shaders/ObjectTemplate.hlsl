@@ -860,8 +860,8 @@ PS_OUTPUT main(PS_INPUT IN) {
             // this pass would have produced without Forward Shadows; harmless and
             // exact when Forward Shadows is compiled out, since sunShadow is then
             // fixed at 1.0.
-            // Under linear lighting the encoded output scales as sqrt(sunShadow).
-            OUT.color.a = weight(finalColor.rgb) / max(linearLighting ? sqrt(sunShadow) : sunShadow, 0.05f);
+            // Under linear lighting the encoded output scales as sunShadow ^ (1 / lightingGamma).
+            OUT.color.a = weight(finalColor.rgb) / max(linearLighting ? pow(max(sunShadow, 0.0f), 1.0f / lightingGamma) : sunShadow, 0.05f);
         #else
             OUT.color.a = weight(finalColor.rgb);
         #endif
@@ -1008,23 +1008,30 @@ PS_OUTPUT main(PS_INPUT IN) {
         float3 lighting = getPointLightLightingAtt(IN.lightDir.xyz, att, PSLightColor[0].rgb, viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
     #endif
 
+    // Slot k (PSLightColor[k]) holds a light only while k < lightsUsed. The game uploads just the
+    // registers of the lights the pass has (ShadowLightShader::SetupGeometryOpt_Lights /
+    // _LightsSpecular, 0xB7CB00: m_uiRegisterCount = ucNumLights - 1), so a slot past them keeps
+    // whatever an earlier draw left there. Slots 2-5 used to test k > lightsUsed, which also lit the
+    // first slot past the pass's lights: a stale lamp from another mesh, so lights and highlights
+    // jumped as a mesh's lamp count changed. In the OPT variants every position is one slot up
+    // (lightOffset), lamps 5 and 6 included.
     att = vanillaAtt(PSLightPosition[lightOffset + 0].xyz - IN.lPosition.xyz, PSLightPosition[lightOffset + 0].w);
     lighting += (1 >= lightsUsed ? 0.0 : 1.0) * getPointLightLightingAtt(IN.light2.xyz, att, PSLightColor[1].rgb, viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
 
     att = vanillaAtt(PSLightPosition[lightOffset + 1].xyz - IN.lPosition.xyz, PSLightPosition[lightOffset + 1].w);
-    lighting += (2 > lightsUsed ? 0.0 : 1.0) * getPointLightLightingAtt(IN.light3.xyz, att, PSLightColor[2].rgb, viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
+    lighting += (2 >= lightsUsed ? 0.0 : 1.0) * getPointLightLightingAtt(IN.light3.xyz, att, PSLightColor[2].rgb, viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
 
     #if MAX_LIGHTS > 3
         att = vanillaAtt(PSLightPosition[lightOffset + 2].xyz - IN.lPosition.xyz, PSLightPosition[lightOffset + 2].w);
-        lighting += (3 > lightsUsed ? 0.0 : 1.0) * getPointLightLightingAtt(IN.light4.xyz, att, PSLightColor[3].rgb, viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
+        lighting += (3 >= lightsUsed ? 0.0 : 1.0) * getPointLightLightingAtt(IN.light4.xyz, att, PSLightColor[3].rgb, viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
     #endif
 
     #if MAX_LIGHTS > 4
-        att = vanillaAtt(PSLightPosition[3].xyz - IN.lPosition.xyz, PSLightPosition[3].w);
-        lighting += (4 > lightsUsed ? 0.0 : 1.0) * getPointLightLightingAtt(IN.light5.xyz, att, PSLightColor[4].rgb, viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
+        att = vanillaAtt(PSLightPosition[lightOffset + 3].xyz - IN.lPosition.xyz, PSLightPosition[lightOffset + 3].w);
+        lighting += (4 >= lightsUsed ? 0.0 : 1.0) * getPointLightLightingAtt(IN.light5.xyz, att, PSLightColor[4].rgb, viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
 
-        att = vanillaAtt(PSLightPosition[4].xyz - IN.lPosition.xyz, PSLightPosition[4].w);
-        lighting += (5 > lightsUsed ? 0.0 : 1.0) * getPointLightLightingAtt(IN.light6.xyz, att, PSLightColor[5].rgb, viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
+        att = vanillaAtt(PSLightPosition[lightOffset + 4].xyz - IN.lPosition.xyz, PSLightPosition[lightOffset + 4].w);
+        lighting += (5 >= lightsUsed ? 0.0 : 1.0) * getPointLightLightingAtt(IN.light6.xyz, att, PSLightColor[5].rgb, viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
     #endif
 
     // ddx/ddy must stay at pixel-shader top level.

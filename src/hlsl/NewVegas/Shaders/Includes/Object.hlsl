@@ -21,8 +21,12 @@
 // Both in linear space when LinearLighting is on.
 
 // [Shaders.PBR.*], blended by weather and time (PBRShaders::UpdateConstants).
-float4 TESR_PBRData : register(c32);        // z: light scale, w: ambient scale
-float4 TESR_PBRExtraData : register(c33);   // y: skylight strength, w: linear lighting
+// Pinned high, past every register the game's own shaders use: these were at c32/c33, inside the
+// game's range (terrain's LandSpec[2] is c32-c33), and NVR uploads its constants only when the
+// shader changes, so a game write in between left the light scale wrong for the following draws.
+// Lamps and highlights went dark in interiors depending on draw order, and so on the view.
+float4 TESR_PBRData : register(c148);       // z: light scale, w: ambient scale
+float4 TESR_PBRExtraData : register(c149);  // y: skylight strength, w: linear lighting
 float4 TESR_PBRSpecularData : register(c151);   // y: 1 outdoors (the sky is the environment), 0 indoors
 float4 TESR_PBRDebugData : register(c153);  // x: DebugView (0 off)
 
@@ -65,11 +69,18 @@ samplerCUBE EnvCubeMap : register(s11);
 static float3 adCompensation = 1.0f;   // 1 / albedo in AD passes, 1 everywhere else
 
 // albedo: the diffuse texture sample, gamma-encoded, before the AD pass forces it to 1. Call
-// after setupMaterial (the divisor is the albedo in the lighting space). Capped at 8x: very dark
-// texels lose some highlight rather than push huge values into the frame.
+// after setupMaterial (the divisor is the albedo in the lighting space). Capped at 256x, for texels
+// so dark the texture pass multiplies the highlight back by next to nothing anyway.
+//
+// The cap was 8x (albedo 0.125). Linear albedo is the square of the texture, so that already cut in
+// below about 35% grey: dark materials (gloves, gunmetal) came out with roughly half their highlight
+// when the game drew them in several passes, and full when it drew them in one. A mesh moving in or
+// out of a lamp's range switches between the two (GetRenderPasses_2x, 0xBDF790), so first-person
+// weapons and gloves flickered between a dim and a bright highlight. The light-only pass renders to
+// the HDR target, so the larger values are kept until the texture pass scales them back down.
 void setupADCompensation(float3 albedo) {
 #ifdef AD_PASS
-    adCompensation = 1.0f / max(decodeColor(albedo), 0.125f);
+    adCompensation = 1.0f / max(decodeColor(albedo), 1.0f / 256.0f);
 #endif
 }
 
@@ -115,6 +126,13 @@ void setupMaterial(float specularMask, float shine, float3 normalTS, float2 uv, 
 
     float4 rmaos = tex2D(RMAOSMap, uv);
     pbrMaterial = MaterialMap.x > 0.5f;
+
+    // [Shaders.PBR.Main] PBRLinearLighting (TESR_PBRExtraData.z): how linearly authored materials
+    // are lit, whatever LinearLighting says for the rest. Decode exponent 1 + amount (PBR.hlsl).
+    if (pbrMaterial) {
+        lightingGamma = 1.0f + saturate(TESR_PBRExtraData.z);
+        linearLighting = lightingGamma > 1.001f;
+    }
     pbrRoughness = SpecularAA(normalTS, clamp(rmaos.r, 0.04f, 1.0f));
     pbrMetalness = saturate(rmaos.g);
     pbrAO = saturate(rmaos.b);
@@ -300,7 +318,8 @@ float3 getObjectSkyReflection(float3 worldPos, float3 geometricNormal, float3 no
         radiance = texCUBElod(EnvCubeMap, float4(r, pbrRoughness * ENVIRONMENT_CUBE_MIPS)).rgb;
     else
         radiance = SkyReflectionRadiance(r, pbrRoughness);
-    float3 environment = linearLighting ? radiance : sqrt(radiance);
+    // Into the lighting space: the radiance is gamma 2 linear, the lighting space gamma lightingGamma.
+    float3 environment = !linearLighting ? sqrt(radiance) : (lightingGamma == 2.0f ? radiance : pow(max(radiance, 0.0f), 0.5f * lightingGamma));
     return environment * pbrSpecularLobe * (pbrSpecularOcclusion * horizon * horizon) * adCompensation;
 #endif
 }

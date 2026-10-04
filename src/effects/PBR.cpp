@@ -24,6 +24,9 @@ void PBRShaders::UpdateSettings() {
 
 	MaterialSettings.LinearLighting = TheSettingManager->GetSettingI("Shaders.PBR.Main", "LinearLighting");
 	MaterialSettings.MergeLightPasses = TheSettingManager->GetSettingI("Shaders.PBR.Main", "MergeLightPasses");
+	MaterialSettings.KeepOffscreenLights = TheSettingManager->GetSettingI("Shaders.PBR.Main", "KeepOffscreenLights");
+	MaterialSettings.VanillaEnvMapOnPBR = TheSettingManager->GetSettingI("Shaders.PBR.Main", "VanillaEnvMapOnPBR");
+	MaterialSettings.PBRLinearLighting = std::clamp(TheSettingManager->GetSettingF("Shaders.PBR.Main", "PBRLinearLighting"), 0.0f, 1.0f);
 	MaterialSettings.DebugView = TheSettingManager->GetSettingI("Shaders.PBR.Main", "DebugView");
 }
 
@@ -45,7 +48,7 @@ void PBRShaders::UpdateConstants() {
 
 	Constants.ExtraData.x = 1.0f;
 	Constants.ExtraData.y = Blend(&PBRSettings::SkylightingScale, rainFactor);   // hemisphere skylight; 0 disables it
-	Constants.ExtraData.z = 0.0f;
+	Constants.ExtraData.z = MaterialSettings.PBRLinearLighting;   // authored materials' linear lighting amount (Object.hlsl)
 	Constants.ExtraData.w = MaterialSettings.LinearLighting ? 1.0f : 0.0f;
 
 	Constants.SpecularData = D3DXVECTOR4(0.0f, TheShaderManager->GameState.isExterior ? 1.0f : 0.0f, 0.0f, 1.0f);

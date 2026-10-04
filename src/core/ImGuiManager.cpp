@@ -2691,12 +2691,69 @@ static void RenderMainMenuToast() {
 		msg.c_str());
 }
 
+// [Main.Main.FrameCounter]: frames per second in a corner of the screen, whether or not the settings
+// overlay is open. The time between frames is measured here (BuildUI runs once per frame) and
+// averaged over half a second, so the number holds still long enough to read; Detailed adds the
+// average frame time and the slowest frame of that window, which shows a hitch the average hides.
+static void RenderFrameCounter() {
+	if (!TheSettingManager || !TheSettingManager->GetSettingI("Main.Main.FrameCounter", "Enabled")) return;
+
+	static LARGE_INTEGER frequency = {}, last = {}, windowStart = {};
+	static int frames = 0;
+	static double worstMs = 0.0, shownFps = 0.0, shownMs = 0.0, shownWorstMs = 0.0;
+	if (!frequency.QuadPart) QueryPerformanceFrequency(&frequency);
+	LARGE_INTEGER now;
+	QueryPerformanceCounter(&now);
+	if (last.QuadPart) {
+		const double frameMs = 1000.0 * (double)(now.QuadPart - last.QuadPart) / (double)frequency.QuadPart;
+		if (frameMs < 1000.0) {   // a pause (loading, alt-tab) is not a frame
+			frames++;
+			worstMs = max(worstMs, frameMs);
+		}
+	}
+	else windowStart = now;
+	last = now;
+
+	const double windowMs = 1000.0 * (double)(now.QuadPart - windowStart.QuadPart) / (double)frequency.QuadPart;
+	if (windowMs >= 500.0) {
+		if (frames > 0) {
+			shownMs = windowMs / frames;
+			shownFps = 1000.0 / shownMs;
+			shownWorstMs = worstMs;
+		}
+		frames = 0;
+		worstMs = 0.0;
+		windowStart = now;
+	}
+	if (shownFps <= 0.0) return;
+
+	char text[96];
+	if (TheSettingManager->GetSettingI("Main.Main.FrameCounter", "Detailed"))
+		snprintf(text, sizeof(text), "%.0f FPS  %.1f ms  (slowest %.1f ms)", shownFps, shownMs, shownWorstMs);
+	else
+		snprintf(text, sizeof(text), "%.0f FPS", shownFps);
+
+	const int corner = std::clamp(TheSettingManager->GetSettingI("Main.Main.FrameCounter", "Position"), 0, 3);
+	const ImVec2 display = ImGui::GetIO().DisplaySize;
+	const ImVec2 size = ImGui::CalcTextSize(text);
+	const float margin = 8.0f;
+	const ImVec2 pos((corner & 1) ? display.x - size.x - margin : margin, (corner & 2) ? display.y - size.y - margin : margin);
+	// Green at 60 and up, yellow from 30, red below.
+	const ImU32 color = shownFps >= 59.5 ? IM_COL32(120, 230, 120, 255) : shownFps >= 29.5 ? IM_COL32(240, 210, 90, 255) : IM_COL32(240, 100, 90, 255);
+
+	ImDrawList* draw = ImGui::GetForegroundDrawList();
+	draw->AddRectFilled(ImVec2(pos.x - 4.0f, pos.y - 2.0f), ImVec2(pos.x + size.x + 4.0f, pos.y + size.y + 2.0f), IM_COL32(0, 0, 0, 140), 3.0f);
+	draw->AddText(pos, color, text);
+}
+
 void ImGuiManager::BuildUI() {
 	// Main menu: show toast only, no settings window
 	if (InterfaceManager->IsActive(Menu::MenuType::kMenuType_Main)) {
 		RenderMainMenuToast();
 		return;
 	}
+
+	RenderFrameCounter();
 
 	if (!Visible) return;
 

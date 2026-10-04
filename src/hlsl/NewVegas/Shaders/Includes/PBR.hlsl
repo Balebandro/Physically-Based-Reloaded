@@ -92,9 +92,16 @@ float3 BRDF(float roughness, float3 fresnel, float NdotV, float NdotL, float Ndo
 // encoding SkyAmbient.hlsl uses), all lighting is computed and summed linearly, and the result
 // is encoded once at the end. Off, decode and encode do nothing and this is the old behaviour.
 static bool linearLighting = false;
+// The decode exponent while linearLighting is on: 2, except for authored (_rmaos) materials, which
+// take 1 + [Shaders.PBR.Main] PBRLinearLighting (Object.hlsl, setupMaterial): 1 is the game's gamma
+// space, 2 fully linear, and anything between lights partly linearly. Every pass of a mesh uses the
+// same exponent, so the light-only + texture pass route stays exact at any value.
+static float lightingGamma = 2.0f;
 
-float3 decodeColor(float3 c) { return linearLighting ? c * c : c; }
-float3 encodeColor(float3 c) { return linearLighting ? sqrt(max(c, 0.0f)) : c; }
+// One pow each: a separate exponent-2 fast path doubled the temporaries per light and pushed the
+// six-light shaders (SLS2029/2030) past ps_3_0's 32 temp registers.
+float3 decodeColor(float3 c) { return linearLighting ? pow(max(c, 0.0f), lightingGamma) : c; }
+float3 encodeColor(float3 c) { return linearLighting ? pow(max(c, 0.0f), 1.0f / lightingGamma) : c; }
 
 // Blinn-Phong exponent (vanilla glossiness, NiMaterialProperty::m_fShine or a land layer's
 // specular exponent) to GGX roughness: alpha = sqrt(2 / (n + 2)), roughness = sqrt(alpha).

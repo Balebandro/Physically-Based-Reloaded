@@ -60,6 +60,11 @@ ScreenshotKey = 87          # Keycode for custom screenshot hotkey (removes HUD 
 HDRScreenshot = false       # Save screenshots in fbx (use with DXVK HDR)
 PresetManagerEnabled = false # Master toggle for automatic per-location Preset Manager resolution. Off = your own settings are authoritative; Save/Load/Delete in the Preset Manager panel still work. Defaults off: it silently wins the location-based settings that third-party tools like Cartographer -- which this feature supersedes -- also try to control, so turn it on deliberately once you're not running one of those alongside it.
 
+[_Main.Main.FrameCounter]
+Enabled = false             # Shows frames per second in a corner of the screen (green 60 and up, yellow from 30, red below), averaged over half a second. Works with the settings menu closed.
+Position = 0                # [0-3] Corner: 0 top left, 1 top right, 2 bottom left, 3 bottom right.
+Detailed = false            # Also shows the average frame time and the slowest frame of each half second, which reveals stutters the average hides.
+
 [_Main.Main.Precipitations]
 RemovePrecipitations = false   # Disables vanilla rain and other precipitations.
 
@@ -576,6 +581,9 @@ AmbientScale = 1.0                 # Weather ambient light strength.
 SkylightingScale = 0.5             # Sky-colour ambient light. 0 disables it.
 LinearLighting = true                # Light in linear space (correct falloff and light sums) instead of the game's gamma space, as Community Shaders' linear lighting. Objects and terrain.
 MergeLightPasses = true              # With LinearLighting: lamps and highlights the game would add in extra passes are lit in the mesh's first pass instead, so they sum in linear space like the rest. Removes the brightness seams between meshes lit in one pass and meshes lit in several. Objects, hair, parallax, skin and first person (not tree branches).
+PBRLinearLighting = 1.0              # [0.0-1.0] How linearly materials with an _rmaos map are lit, on their own: 1 fully linear (as LinearLighting), 0 the game's gamma space (as LinearLighting off), in between a blend. Every other material follows LinearLighting.
+VanillaEnvMapOnPBR = true           # Materials with an _rmaos map keep the game's own cubemap (environment map) reflection, drawn last, on top of the PBR result. Off, only NVR's PBR reflection (the dynamic cubemap or the sky) is drawn, as before.
+KeepOffscreenLights = true          # Lamps stay on the meshes they light while their light sphere is off screen, instead of being dropped as the camera turns. The game draws a mesh differently by how many lamps it has (one pass, one combined pass, or several), so dropping a lamp switched nearby meshes between those and lights and highlights jumped as the view turned, mostly indoors. Lamps still fade out by distance as usual. Costs a little where several lamps are close together.
 RouteLighting30 = true               # Draw the meshes the game gives its single-pass Lighting30 shader with the shaders NVR replaces instead, so they get NVR lighting, PBR and _rmaos maps: parallax occlusion meshes (as parallax), blood and bullet-hole decals with a normal map, and meshes saved with a Lighting30 or NoFader shader block. Applies to meshes as they load: restart the game after changing it.
 DebugView = 0                        # Material debug: 0 off, 1 roughness (authored maps; vanilla materials show their glossiness), 2 metalness, 3 flags (R the game's specular flag, G an authored _rmaos map, B specular distance fade), 4 ambient normal (white faces the sky), 5 the dynamic environment cube along the normal (authored materials; black when DynamicCubemaps is off).
 
@@ -602,8 +610,12 @@ SkylightingScale = 0.0             # Sky-colour ambient light. 0 disables it.
 [_Shaders.PBR.Status]
 Enabled = true                       # Object lighting as Community Shaders: true PBR for materials with an authored _rmaos map (R roughness, G metalness, B AO, A specular, next to the diffuse texture), vanilla shading for the rest.
 
+[_Shaders.DynamicCubemaps.Main]
+DebugView = 0                        # Shows the dynamic cubemap over the screen: 0 off, 1 panorama (the whole environment cube unwrapped, looking around horizontally across the screen, up at the top), 2 mirror (every surface reflects the cube like a perfect mirror: what PBR materials would reflect there), 3 coverage (panorama of what the cube has actually seen: white is captured from the screen, black is filled in from the sky or the room's light).
+DebugRoughness = 0.0                 # [0.0-1.0] Which blur level DebugView 1 and 2 show: 0 the sharp mirror image, 1 the blurriest (what a fully rough material reflects).
+
 [_Shaders.DynamicCubemaps.Status]
-Enabled = true                       # What authored PBR materials (_rmaos) reflect, as Community Shaders' Dynamic Cubemaps: every frame the screen is projected into a cubemap around the camera, which fills in as you look around, and is blurred into one level per roughness. Directions never seen show the sky outdoors and the room's light indoors. Off, they reflect only the sky outdoors and the ambient light indoors. Costs well under a millisecond (128 px cubes). The vanilla env map pass is never drawn on authored materials.
+Enabled = true                       # What authored PBR materials (_rmaos) reflect, as Community Shaders' Dynamic Cubemaps: every frame the screen is projected into a cubemap around the camera, which fills in as you look around, and is blurred into one level per roughness. Directions never seen show the sky outdoors and the room's light indoors. Off, they reflect only the sky outdoors and the ambient light indoors. Costs well under a millisecond (128 px cubes). The game's own env map is drawn on top of them as well while [Shaders.PBR.Main] VanillaEnvMapOnPBR is on.
 
 [_Shaders.POM.Main]
 HeightMapScale = 0.4                 # Parallax mapping scale. Keep 0.4 for a widely working value.
@@ -933,7 +945,7 @@ AmbientNormalDetail = 1.0            # How much the normal maps shape sky light 
 
 [_Shaders.Terrain.Parallax]
 Enabled = true                      # Turn on parallax occlusion mapping for terrain.
-Shadows = true						# Turn on height based self shadowing.
+Shadows = true						# Turn on height based self shadowing. Works on its own, with parallax (Enabled) off too.
 HeightBlend = true                  # Turn on height based texture blending.
 HighQuality = true                  # Turn on high quality. Double the number of steps, higher performance impact.
 MaxDistance = 2048                  # Controls the maximum distance for the parallax and shadow effects.

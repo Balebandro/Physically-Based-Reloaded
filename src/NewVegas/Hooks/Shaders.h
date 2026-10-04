@@ -23,3 +23,5 @@ extern VirtFuncDetour kHairPostGeometryDetour;
 void* __fastcall HairShader__PrepareGeometryForRendering(void* apThis, void*, void* apGeometry, void* apPartition, void* apRendererData, void* apState);
 void __fastcall HairShader__PostGeometry(void* apThis, void*, void* apProperties);
 void UpdateFaceGenInteriorFlag();
+extern void(__thiscall* TestFrustumCull)(ShadowSceneLight*, NiCullingProcess*);
+void __fastcall TestFrustumCullHook(ShadowSceneLight* This, void*, NiCullingProcess* Culler);

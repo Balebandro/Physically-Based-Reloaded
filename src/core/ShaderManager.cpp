@@ -963,6 +963,9 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 	// debug shader allows to display some of the buffers
 	Effects.Debug->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 
+	// [Shaders.DynamicCubemaps.Main] DebugView: the environment cube over the finished frame.
+	Effects.DynamicCubemaps->RenderDebug(Device, RenderTarget);
+
 	timer.LogTime("ShaderManager::RenderEffects");
 }
 

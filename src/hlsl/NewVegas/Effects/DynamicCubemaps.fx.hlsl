@@ -35,9 +35,14 @@ sampler2D TESR_DepthBufferViewModel : register(s2) = sampler_state { ADDRESSU = 
 samplerCUBE PreviousCube : register(s4) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
 samplerCUBE CaptureCube : register(s5) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 samplerCUBE InferredCube : register(s6) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
+// Debug view only (technique Debug).
+samplerCUBE EnvCube : register(s7) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; ADDRESSW = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
+sampler2D TESR_NormalsBuffer : register(s3) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
+float4 CubeDebug;      // x view (1 panorama, 2 mirror, 3 coverage), y mip of the environment cube
 
 #include "Includes/Helpers.hlsl"
 #include "Includes/Depth.hlsl"
+#include "Includes/Normals.hlsl"
 
 #define PI_F 3.14159265f
 
@@ -188,6 +193,42 @@ float4 Prefilter(VSOUT IN, float2 vpos : VPOS) : COLOR0 {
     return float4(color / max(weight, 1e-4f), 1.0f);
 }
 
+// --- debug view ([Shaders.DynamicCubemaps.Main] DebugView) ----------------------------------------
+// Drawn over the finished frame, after tonemapping (DynamicCubemapsEffect::RenderDebug).
+//   1 panorama: the environment cube unwrapped, longitude across, latitude up (world Z up), at mip y
+//   2 mirror:   every surface reflects the cube as a perfect mirror at mip y; the sky shows the cube
+//               straight along the view
+//   3 coverage: the capture cube's coverage, panorama layout: white is what was seen, black what
+//               the infer pass fills from the sky or the room's light
+// The cube is linear HDR: shown through x / (1 + x) and gamma 2.
+float3 PanoramaDirection(float2 uv) {
+    float lon = (uv.x - 0.5f) * 2.0f * PI_F;
+    float lat = (0.5f - uv.y) * PI_F;
+    return float3(cos(lat) * cos(lon), cos(lat) * sin(lon), sin(lat));
+}
+
+float3 DebugDisplay(float3 c) {
+    c = max(c, 0.0f);
+    return sqrt(c / (1.0f + c));
+}
+
+float4 DebugView(VSOUT IN) : COLOR0 {
+    float2 uv = IN.UVCoord;
+    // Sampled up front: gradient samples must stay out of flow control.
+    float3 normal = normalize(GetWorldNormal(uv));
+    float depth = readDepth(uv);
+    float3 eye = normalize(toWorld(uv));
+
+    [branch] if (CubeDebug.x > 2.5f) {
+        float coverage = saturate(texCUBElod(CaptureCube, float4(PanoramaDirection(uv), 0.0f)).a);
+        return float4(coverage.xxx, 1.0f);
+    }
+    float3 dir;
+    if (CubeDebug.x > 1.5f) dir = depth / farZ >= 0.999f ? eye : reflect(eye, normal);
+    else dir = PanoramaDirection(uv);
+    return float4(DebugDisplay(texCUBElod(EnvCube, float4(dir, CubeDebug.y)).rgb), 1.0f);
+}
+
 technique {
     pass {
         VertexShader = compile vs_3_0 FrameVS();
@@ -200,5 +241,13 @@ technique {
     pass {
         VertexShader = compile vs_3_0 FrameVS();
         PixelShader = compile ps_3_0 Prefilter();
+    }
+}
+
+// After the capture technique: RenderCubemaps selects that one by index 0.
+technique Debug {
+    pass {
+        VertexShader = compile vs_3_0 FrameVS();
+        PixelShader = compile ps_3_0 DebugView();
     }
 }

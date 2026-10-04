@@ -24,6 +24,7 @@ public:
 		D3DXVECTOR4		Face;       // x face, y 1 / face size, z roughness, w coverage kept per frame where nothing is seen
 		D3DXVECTOR4		Fallback;   // rgb the room's ambient light (linear), w 1 outdoors
 		D3DXVECTOR4		Capture;    // y 1 to restart the capture
+		D3DXVECTOR4		Debug;      // x DebugView (0 off, 1 panorama, 2 mirror, 3 coverage), y mip shown
 	};
 	DynamicCubemapsStruct	Constants = {};
 
@@ -32,6 +33,8 @@ public:
 	IDirect3DCubeTexture9*	GetEnvironment() { return Valid ? Env : nullptr; }
 
 	void	RenderCubemaps(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget);
+	// [Shaders.DynamicCubemaps.Main] DebugView over the finished frame (end of ShaderManager::RenderEffects).
+	void	RenderDebug(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget);
 
 	void	UpdateConstants();
 	void	UpdateSettings();
@@ -55,6 +58,7 @@ private:
 	D3DXHANDLE	FaceHandle = NULL;
 	D3DXHANDLE	FallbackHandle = NULL;
 	D3DXHANDLE	CaptureHandle = NULL;
+	D3DXHANDLE	DebugHandle = NULL;
 
 	bool	EnsureTextures(IDirect3DDevice9* Device);
 	void	ReleaseTextures();

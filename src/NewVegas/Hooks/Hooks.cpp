@@ -25,6 +25,7 @@ void AttachHooks() {
 	DetourAttach(&(PVOID&)RenderFirstPerson, &RenderFirstPersonHook);
 	DetourAttach(&(PVOID&)SetShaders, &SetShadersHook);
 	DetourAttach(&(PVOID&)SetSamplerState, &SetSamplerStateHook);
+	DetourAttach(&(PVOID&)TestFrustumCull, &TestFrustumCullHook);   // lamps not culled by the view (Hooks/Shaders.cpp)
 
 	DetourAttach(&(PVOID&)GetWaterHeightLOD, &GetWaterHeightLODHook);
 	if (SettingsMain->Main.ForceReflections) {
