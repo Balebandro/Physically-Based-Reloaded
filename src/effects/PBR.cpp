@@ -28,6 +28,8 @@ void PBRShaders::UpdateSettings() {
 	MaterialSettings.VanillaEnvMapOnPBR = TheSettingManager->GetSettingI("Shaders.PBR.Main", "VanillaEnvMapOnPBR");
 	MaterialSettings.PBRLinearLighting = std::clamp(TheSettingManager->GetSettingF("Shaders.PBR.Main", "PBRLinearLighting"), 0.0f, 1.0f);
 	MaterialSettings.LightingModel = std::clamp(TheSettingManager->GetSettingI("Shaders.PBR.Main", "LightingModel"), 0, 1);
+	MaterialSettings.VanillaSpecularSoftness = std::clamp(TheSettingManager->GetSettingF("Shaders.PBR.Main", "VanillaSpecularSoftness"), 0.0f, 1.0f);
+	MaterialSettings.VanillaSpecularStrength = std::clamp(TheSettingManager->GetSettingF("Shaders.PBR.Main", "VanillaSpecularStrength"), 0.0f, 4.0f);
 	MaterialSettings.DebugView = TheSettingManager->GetSettingI("Shaders.PBR.Main", "DebugView");
 }
 
@@ -52,6 +54,7 @@ void PBRShaders::UpdateConstants() {
 	Constants.ExtraData.z = MaterialSettings.PBRLinearLighting;   // authored materials' linear lighting amount (Object.hlsl)
 	Constants.ExtraData.w = MaterialSettings.LinearLighting ? 1.0f : 0.0f;
 
-	Constants.SpecularData = D3DXVECTOR4((float)MaterialSettings.LightingModel, TheShaderManager->GameState.isExterior ? 1.0f : 0.0f, 0.0f, 1.0f);   // x: lighting model of authored materials
+	Constants.SpecularData = D3DXVECTOR4((float)MaterialSettings.LightingModel, TheShaderManager->GameState.isExterior ? 1.0f : 0.0f,
+		MaterialSettings.VanillaSpecularSoftness, MaterialSettings.VanillaSpecularStrength);   // x: lighting model of authored materials, zw: the vanilla highlight's softness and strength
 	Constants.DebugData.x = (float)std::clamp(MaterialSettings.DebugView, 0, 5);
 }

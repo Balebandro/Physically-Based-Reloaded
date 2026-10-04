@@ -27,7 +27,7 @@
 // Lamps and highlights went dark in interiors depending on draw order, and so on the view.
 float4 TESR_PBRData : register(c148);       // z: light scale, w: ambient scale
 float4 TESR_PBRExtraData : register(c149);  // y: skylight strength, w: linear lighting
-float4 TESR_PBRSpecularData : register(c151);   // x: lighting model of authored materials (1 Anomaly), y: 1 outdoors (the sky is the environment), 0 indoors
+float4 TESR_PBRSpecularData : register(c151);   // x: lighting model of authored materials (1 Anomaly), y: 1 outdoors (the sky is the environment), 0 indoors, z: vanilla highlight softness, w: vanilla highlight strength
 float4 TESR_PBRDebugData : register(c153);  // x: DebugView (0 off)
 
 #define LIGHT_SCALE         (TESR_PBRData.z)
@@ -180,6 +180,27 @@ float3 rebuildUpTS(float2 xy, float3 geometricNormal) {
     return float3(xy, geometricNormal.z >= 0.0f ? z : -z);
 }
 
+// --- Vanilla highlight -------------------------------------------------------------------------
+// The game's highlight for materials without an _rmaos map: Blinn-Phong, mask x N.H^shine, from the
+// game's own values (the normal map alpha and the material's glossiness), shaped by
+// [Shaders.PBR.Main] VanillaSpecularSoftness and VanillaSpecularStrength (TESR_PBRSpecularData.zw):
+//   softness  the exponent goes down to a fifth of the glossiness, widening the highlight, and its
+//             peak drops with it (by the square root of the ratio of Blinn-Phong's normalisations,
+//             (n + 8) / 8 PI: half way to keeping the light it reflects), so a wide highlight stays
+//             gentle instead of washing out. Vanilla's lift below N.L 0.2, which lit highlights on
+//             the shadow side, gives way to a fade toward the terminator.
+//   strength  scales the whole highlight.
+// Softness 0 and strength 1 are vanilla's highlight exactly.
+float vanillaSpecular(float mask, float shine, float NdotH, float NdotL) {
+    float softness = saturate(TESR_PBRSpecularData.z);
+    float n = max(shine, 1.0f);
+    float nSoft = max(n * lerp(1.0f, 0.2f, softness), 1.0f);
+    float peak = sqrt((nSoft + 8.0f) / (n + 8.0f));
+    float lift = NdotL <= 0.2f ? saturate(NdotL + 0.5f) : 1.0f;
+    float fade = lerp(lift, smoothstep(0.0f, 0.3f, NdotL), softness);
+    return mask * pow(saturate(NdotH), nSoft) * peak * fade * TESR_PBRSpecularData.w;
+}
+
 // --- Vanilla shading, in gamma space -----------------------------------------------------------
 // The parallax shader's vanilla fallback (PBR off) and the merged lamps under it.
 float3 getVanillaLightingAtt(float3 lightDir, float att, float3 lightColor, float3 viewDir, float3 normal, float3 albedo, float gloss, float glossPower) {
@@ -190,12 +211,10 @@ float3 getVanillaLightingAtt(float3 lightDir, float att, float3 lightColor, floa
     float NdotL = shades(normal.xyz, lightDir.xyz);
 
     #if defined(ONLY_SPECULAR)
-        float specStrength = gloss * pow(abs(shades(normal.xyz, halfwayDir.xyz)), glossPower);
-        float3 lighting = saturate(((0.2 >= NdotL ? (specStrength * saturate(NdotL + 0.5)) : specStrength) * lightColor.rgb) * att);
+        float3 lighting = saturate(vanillaSpecular(gloss, glossPower, abs(shades(normal.xyz, halfwayDir.xyz)), NdotL) * lightColor.rgb * att);
     #elif defined(SPECULAR)
-        float specStrength = gloss * pow(abs(shades(normal.xyz, halfwayDir.xyz)), glossPower);
         float3 lighting = albedo.rgb * NdotL * lightColor.rgb * att;
-        lighting += saturate(((0.2 >= NdotL ? (specStrength * saturate(NdotL + 0.5)) : specStrength) * lightColor.rgb) * att);
+        lighting += saturate(vanillaSpecular(gloss, glossPower, abs(shades(normal.xyz, halfwayDir.xyz)), NdotL) * lightColor.rgb * att);
     #else
         float3 lighting = albedo.rgb * NdotL * lightColor.rgb * att;
     #endif
@@ -220,10 +239,8 @@ float3 getVanillaLighting(float3 lightDir, float radius, float3 lightColor, floa
 //     and for vanilla ones whose highlight passes were merged in. Divided by the texture in the
 //     light-only pass, which the texture pass multiplies back in.
 
-// Vanilla's Blinn-Phong highlight, mask x N.H^shine, with its lift below N.L 0.2.
 float3 vanillaHighlight(float3 N, float3 L, float3 V, float NdotL, float3 light) {
-    float specStrength = vanillaMask * pow(saturate(dot(N, normalize(L + V))), vanillaShine);
-    return saturate((NdotL <= 0.2f ? specStrength * saturate(NdotL + 0.5f) : specStrength) * light);
+    return saturate(vanillaSpecular(vanillaMask, vanillaShine, dot(N, normalize(L + V)), NdotL) * light);
 }
 
 float3 directLight(float3 L, float3 light, float3 V, float3 N, float3 albedo) {
