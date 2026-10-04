@@ -27,13 +27,14 @@
 // Lamps and highlights went dark in interiors depending on draw order, and so on the view.
 float4 TESR_PBRData : register(c148);       // z: light scale, w: ambient scale
 float4 TESR_PBRExtraData : register(c149);  // y: skylight strength, w: linear lighting
-float4 TESR_PBRSpecularData : register(c151);   // y: 1 outdoors (the sky is the environment), 0 indoors
+float4 TESR_PBRSpecularData : register(c151);   // x: lighting model of authored materials (1 Anomaly), y: 1 outdoors (the sky is the environment), 0 indoors
 float4 TESR_PBRDebugData : register(c153);  // x: DebugView (0 off)
 
 #define LIGHT_SCALE         (TESR_PBRData.z)
 #define AMBIENT_SCALE       (TESR_PBRData.w)
 #define SKY_AMBIENT_STRENGTH (TESR_PBRExtraData.y)
 #define OUTDOORS            (TESR_PBRSpecularData.y > 0.5f)
+#define ANOMALY_LIGHTING    (TESR_PBRSpecularData.x > 0.5f)   // [Shaders.PBR.Main] LightingModel 1: authored materials lit as S.T.A.L.K.E.R. Anomaly (PBR.hlsl Anomaly_*)
 
 // Per-object data written for every draw by the per-geometry hooks (NewVegas/Hooks/Shaders.cpp,
 // WriteObjectMaterial), not through the TESR_ constant table: x is 1 when the mesh carries the
@@ -141,6 +142,11 @@ void setupMaterial(float specularMask, float shine, float3 normalTS, float2 uv, 
     pbrAlbedo = decodeColor(albedoGamma);
 }
 
+// Anomaly lighting: F0 of the dielectric (0.04 x the specular level) or of the metal (its base colour).
+float3 anomalyF0() {
+    return lerp((0.04f * pbrSpecularWeight).xxx, pbrSpecularWeight * pbrAlbedo, pbrMetalness);
+}
+
 // --- Normal-mapped ambient -------------------------------------------------------------------
 // The direct lights use the normal map in tangent space, but the sky light needs to know which
 // way each normal-mapped pixel faces in the WORLD: up toward the sky or down toward the ground.
@@ -227,7 +233,10 @@ float3 directLight(float3 L, float3 light, float3 V, float3 N, float3 albedo) {
 
     [branch] if (pbrMaterial) {
         float3 diffuse, specular;
-        OpenPBR_DirectLight(N, V, L, light, pbrRoughness, pbrMetalness, pbrSpecularWeight, pbrEta, albedo, pbrAlbedo, diffuse, specular);
+        [branch] if (ANOMALY_LIGHTING)
+            Anomaly_DirectLight(N, V, L, light, pbrRoughness * pbrRoughness, anomalyF0(), albedo * (1.0f - pbrMetalness), diffuse, specular);
+        else
+            OpenPBR_DirectLight(N, V, L, light, pbrRoughness, pbrMetalness, pbrSpecularWeight, pbrEta, albedo, pbrAlbedo, diffuse, specular);
         #if defined(ONLY_SPECULAR)
             return specular;
         #else
@@ -303,7 +312,15 @@ float3 getObjectSkyReflection(float3 worldPos, float3 geometricNormal, float3 no
 
     float3 V = -normalize(worldPos);
     float NdotV = saturate(dot(normal, V));
-    OpenPBR_EnvironmentWeights(NdotV, pbrRoughness, pbrMetalness, pbrSpecularWeight, pbrEta, pbrAlbedo, pbrSpecularLobe, pbrDiffuseShare);
+    // Anomaly: the reflection is weighted by its split-sum at its rough (R^2) and the diffuse ambient
+    // keeps the whole albedo of the dielectric part (Amb_BRDF); OpenPBR: the substrate's lobes.
+    float envRough = ANOMALY_LIGHTING ? pbrRoughness * pbrRoughness : pbrRoughness;
+    [branch] if (ANOMALY_LIGHTING) {
+        pbrSpecularLobe = Anomaly_EnvSpecular(anomalyF0(), envRough, NdotV);
+        pbrDiffuseShare = 1.0f - pbrMetalness;
+    }
+    else
+        OpenPBR_EnvironmentWeights(NdotV, pbrRoughness, pbrMetalness, pbrSpecularWeight, pbrEta, pbrAlbedo, pbrSpecularLobe, pbrDiffuseShare);
     pbrSpecularOcclusion = CS_SpecularOcclusion(NdotV, pbrRoughness * pbrRoughness, pbrAO);
 
     [branch] if (!OUTDOORS && !ENVIRONMENT_CUBE)
@@ -315,9 +332,9 @@ float3 getObjectSkyReflection(float3 worldPos, float3 geometricNormal, float3 no
     float horizon = saturate(1.0f + 1.2f * dot(r, geometricNormal));
     float3 radiance;   // linear
     [branch] if (ENVIRONMENT_CUBE)
-        radiance = texCUBElod(EnvCubeMap, float4(r, pbrRoughness * ENVIRONMENT_CUBE_MIPS)).rgb;
+        radiance = texCUBElod(EnvCubeMap, float4(r, envRough * ENVIRONMENT_CUBE_MIPS)).rgb;
     else
-        radiance = SkyReflectionRadiance(r, pbrRoughness);
+        radiance = SkyReflectionRadiance(r, envRough);
     // Into the lighting space: the radiance is gamma 2 linear, the lighting space gamma lightingGamma.
     float3 environment = !linearLighting ? sqrt(radiance) : (lightingGamma == 2.0f ? radiance : pow(max(radiance, 0.0f), 0.5f * lightingGamma));
     return environment * pbrSpecularLobe * (pbrSpecularOcclusion * horizon * horizon) * adCompensation;

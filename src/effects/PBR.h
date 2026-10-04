@@ -136,6 +136,7 @@ public:
 		bool  KeepOffscreenLights; // lamps are not dropped from a mesh's lights for being outside the view (Hooks/Shaders.cpp, TestFrustumCullHook)
 		bool  VanillaEnvMapOnPBR;  // authored (_rmaos) materials keep the game's env map passes, drawn over the PBR result (Hooks/Shaders.cpp, MaterialMaps)
 		float PBRLinearLighting;   // 0-1: how linearly authored (_rmaos) materials are lit, whatever LinearLighting says (Shaders/Includes/Object.hlsl)
+		int   LightingModel;       // authored (_rmaos) materials: 0 OpenPBR, 1 S.T.A.L.K.E.R. Anomaly (Shaders/Includes/PBR.hlsl)
 		int   DebugView;
 	};
 	PBRMaterialSettings MaterialSettings;
