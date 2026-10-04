@@ -142,24 +142,9 @@ void setupMaterial(float specularMask, float shine, float3 normalTS, float2 uv, 
     pbrAlbedo = decodeColor(albedoGamma);
 }
 
-// Anomaly lighting: Anomaly's material response, from the map. Anomaly has no metals: everything
-// reflects little (calc_f0: SPECULAR_BASE 0.03 x SPECULAR_RANGE 0.2 x ((0.5 + material ID) x
-// (0.5 + gloss) - 0.25), 0.01 at most), so a surface's face stays dark and only the Fresnel rise
-// toward grazing angles lights its edges. Here the material ID is the metalness and the gloss is
-// 1 - roughness, scaled by the map's specular level.
+// Anomaly lighting: F0 of the dielectric (0.04 x the specular level) or of the metal (its base colour).
 float3 anomalyF0() {
-    float gloss = 1.0f - pbrRoughness;
-    return (0.03f * 0.2f * max(0.0f, (0.5f + pbrMetalness) * (0.5f + gloss) - 0.25f) * pbrSpecularWeight).xxx;
-}
-
-// A metal's diffuse colour, as Anomaly's Enhanced Shaders make it (calc_albedo): the screen blend's
-// contribution, (1 - (1 - c)^2) - lerp(luma, c, 0.5) in gamma space, a dark tint of the base colour
-// ("gets rid of all highlights"). Returned as a factor on the albedo, so it holds in light-only
-// passes too, where the albedo is 1 and the texture pass multiplies the colour back in.
-float3 anomalyDiffuseFactor() {
-    float3 c = saturate(encodeColor(pbrAlbedo));
-    float3 metal = saturate((1.0f - (1.0f - c) * (1.0f - c)) - lerp(dot(c, float3(0.2125f, 0.7154f, 0.0721f)).xxx, c, 0.5f));
-    return lerp(1.0f.xxx, decodeColor(metal) / max(pbrAlbedo, 1e-3f), pbrMetalness);
+    return lerp((0.04f * pbrSpecularWeight).xxx, pbrSpecularWeight * pbrAlbedo, pbrMetalness);
 }
 
 // --- Normal-mapped ambient -------------------------------------------------------------------
@@ -249,7 +234,7 @@ float3 directLight(float3 L, float3 light, float3 V, float3 N, float3 albedo) {
     [branch] if (pbrMaterial) {
         float3 diffuse, specular;
         [branch] if (ANOMALY_LIGHTING)
-            Anomaly_DirectLight(N, V, L, light, pbrRoughness, anomalyF0(), albedo * anomalyDiffuseFactor(), diffuse, specular);
+            Anomaly_DirectLight(N, V, L, light, pbrRoughness, anomalyF0(), albedo * (1.0f - pbrMetalness), diffuse, specular);
         else
             OpenPBR_DirectLight(N, V, L, light, pbrRoughness, pbrMetalness, pbrSpecularWeight, pbrEta, albedo, pbrAlbedo, diffuse, specular);
         #if defined(ONLY_SPECULAR)
@@ -332,7 +317,7 @@ float3 getObjectSkyReflection(float3 worldPos, float3 geometricNormal, float3 no
     float envRough = pbrRoughness;
     [branch] if (ANOMALY_LIGHTING) {
         pbrSpecularLobe = Anomaly_EnvSpecular(anomalyF0(), envRough, NdotV);
-        pbrDiffuseShare = 1.0f;   // the metal's darkening is in anomalyDiffuseFactor (getAmbientLighting)
+        pbrDiffuseShare = 1.0f - pbrMetalness;
     }
     else
         OpenPBR_EnvironmentWeights(NdotV, pbrRoughness, pbrMetalness, pbrSpecularWeight, pbrEta, pbrAlbedo, pbrSpecularLobe, pbrDiffuseShare);
@@ -366,7 +351,7 @@ float3 getAmbientLighting(float3 ambient, float3 albedo, float3 worldNormal, flo
 
 #ifndef NO_AMBIENT
     [branch] if (pbrMaterial) {
-        float3 diffuse = irradiance * albedo * pbrDiffuseShare * CS_MultiBounceAO(pbrAlbedo, pbrAO) * (ANOMALY_LIGHTING ? anomalyDiffuseFactor() : 1.0f.xxx);
+        float3 diffuse = irradiance * albedo * pbrDiffuseShare * CS_MultiBounceAO(pbrAlbedo, pbrAO);
         float3 indoorReflection = (OUTDOORS || ENVIRONMENT_CUBE) ? 0.0f : flatAmbient * pbrSpecularLobe * pbrSpecularOcclusion * adCompensation;
         return diffuse + indoorReflection;
     }
