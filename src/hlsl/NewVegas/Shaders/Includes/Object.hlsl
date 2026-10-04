@@ -234,7 +234,7 @@ float3 directLight(float3 L, float3 light, float3 V, float3 N, float3 albedo) {
     [branch] if (pbrMaterial) {
         float3 diffuse, specular;
         [branch] if (ANOMALY_LIGHTING)
-            Anomaly_DirectLight(N, V, L, light, pbrRoughness * pbrRoughness, anomalyF0(), albedo * (1.0f - pbrMetalness), diffuse, specular);
+            Anomaly_DirectLight(N, V, L, light, pbrRoughness, anomalyF0(), albedo * (1.0f - pbrMetalness), diffuse, specular);
         else
             OpenPBR_DirectLight(N, V, L, light, pbrRoughness, pbrMetalness, pbrSpecularWeight, pbrEta, albedo, pbrAlbedo, diffuse, specular);
         #if defined(ONLY_SPECULAR)
@@ -312,9 +312,9 @@ float3 getObjectSkyReflection(float3 worldPos, float3 geometricNormal, float3 no
 
     float3 V = -normalize(worldPos);
     float NdotV = saturate(dot(normal, V));
-    // Anomaly: the reflection is weighted by its split-sum at its rough (R^2) and the diffuse ambient
+    // Anomaly: the reflection is weighted by its split-sum (EnvBRDFApprox) and the diffuse ambient
     // keeps the whole albedo of the dielectric part (Amb_BRDF); OpenPBR: the substrate's lobes.
-    float envRough = ANOMALY_LIGHTING ? pbrRoughness * pbrRoughness : pbrRoughness;
+    float envRough = pbrRoughness;
     [branch] if (ANOMALY_LIGHTING) {
         pbrSpecularLobe = Anomaly_EnvSpecular(anomalyF0(), envRough, NdotV);
         pbrDiffuseShare = 1.0f - pbrMetalness;
