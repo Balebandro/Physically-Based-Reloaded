@@ -605,9 +605,11 @@ namespace MergedLights {
 // Decals (blood, bullet holes, impact marks and NIF decal meshes) lie on the surface they mark and
 // stay in front of it only through the game's depth bias. Drawn with NVR's object shaders, which
 // compute positions and lighting differently from the wall underneath, they flickered in interiors.
-// Every decal draw therefore runs on the game's own vertex and pixel shader pair, and skips NVR's
-// per-draw extras (merged lamps, material maps), so its additive light passes stay as the game
-// built them.
+// Every decal draw in an interior therefore runs on the game's own vertex and pixel shader pair, and
+// skips NVR's per-draw extras (merged lamps, material maps), so its additive light passes stay as
+// the game built them. Exterior decals keep NVR's shaders: the game's never apply the forward sun
+// shadow, so with forward shadows on, a decal in shade stayed fully sunlit. The Lighting30 decal
+// shaders (SM3004/5/7) make the same split at load (ShaderManager, IsExteriorOnly).
 //
 // The batch hook (SetShadersHook) binds shaders once per batch, and a batch mixes decals with
 // other meshes, so the swap is per draw: the game's pair goes on the device for the decal, and
@@ -626,10 +628,11 @@ namespace VanillaDecals {
 
     void EndDraw();
 
-    // Before a draw: true when the geometry is a decal (it is then drawn with the game's shaders).
+    // Before a draw: true when the geometry is an interior decal (it is then drawn with the game's
+    // shaders). The same exterior test as NiD3DPixelShaderEx::SetupShader.
     bool OnDraw(NiGeometry* Geometry, NiD3DPass* Pass) {
         if (sSwapped) EndDraw();   // a previous draw's PostGeometry did not run (see MergedLights::OnDraw)
-        if (!IsDecal(Geometry)) return false;
+        if (!IsDecal(Geometry) || Player->GetWorldSpace()) return false;
         NiD3DVertexShaderEx* VertexShader = Pass ? (NiD3DVertexShaderEx*)Pass->VertexShader : nullptr;
         NiD3DPixelShaderEx* PixelShader = Pass ? (NiD3DPixelShaderEx*)Pass->PixelShader : nullptr;
         if (!VertexShader || !PixelShader || !VertexShader->ShaderHandleBackup || !PixelShader->ShaderHandleBackup) return true;

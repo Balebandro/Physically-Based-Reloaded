@@ -523,9 +523,9 @@ ShaderCollection* ShaderManager::GetShaderCollection(const char* Name) {
 	if (!memcmp(Name, "SKIN", 4)) return Shaders.Skin;
 	// Hair (BSSM_3XLIGHTING_*) lives in the SM3 family, not HAIR*. Only SM3003 has a
 	// replacement on disk; the rest resolve to no file and fall through to vanilla.
-	// The decal shaders (SM3004.vso, SM3005/SM3007.pso: blood, bullet holes) stay the game's own,
-	// as every decal does (VanillaDecals, Hooks/Shaders.cpp): replaced, they flickered in interiors.
-	if (!memcmp(Name, "SM3004", 6) || !memcmp(Name, "SM3005", 6) || !memcmp(Name, "SM3007", 6)) return NULL;
+	// The decal shaders (SM3004.vso, SM3005/SM3007.pso: blood, bullet holes) are replaced in
+	// exteriors only (IsExteriorOnly below): there they take the forward sun shadow, which the
+	// game's own never apply; in interiors, where the replacements flickered, they stay the game's.
 	if (!memcmp(Name, "SM3", 3)) return Shaders.PBR;
 	// SpeedTree leaves. STLEAF001/003.vso are vs_3_0 replacements, so every leaf PS must have
 	// a ps_3_0 replacement too: D3D9 rejects a 2.x VS paired with a 3.0 PS.
@@ -550,7 +550,25 @@ void ShaderManager::ReloadEffects() {
 }
 
 /*
-* Load generic Vertex Shaders as well as the ones for interiors and exteriors if the exist. 
+* Shaders replaced in exteriors only. Their replacement goes in the Exterior slot, so SetupShader
+* falls back to the game's shader everywhere else (see the decal shaders in GetShaderCollection).
+*/
+static bool IsExteriorOnly(const char* Name) {
+	return !memcmp(Name, "SM3004", 6) || !memcmp(Name, "SM3005", 6) || !memcmp(Name, "SM3007", 6);
+}
+
+template <typename Program>
+static void MakeExteriorOnly(const char* Name, Program** Prog) {
+	if (!IsExteriorOnly(Name)) return;
+	if (!Prog[ShaderRecordType::Exterior]) Prog[ShaderRecordType::Exterior] = Prog[ShaderRecordType::Default];
+	else delete Prog[ShaderRecordType::Default];
+	delete Prog[ShaderRecordType::Interior];
+	Prog[ShaderRecordType::Default] = NULL;
+	Prog[ShaderRecordType::Interior] = NULL;
+}
+
+/*
+* Load generic Vertex Shaders as well as the ones for interiors and exteriors if the exist.
 * Returns false if generic one isn't found (as other ones are optional)
 */
 bool ShaderManager::LoadShader(NiD3DVertexShader* Shader) {
@@ -574,6 +592,7 @@ bool ShaderManager::LoadShader(NiD3DVertexShader* Shader) {
 	VertexShader->ShaderProg[ShaderRecordType::Default]  = (ShaderRecordVertex*)ShaderRecord::LoadShader(VertexShader->Name, NULL, Template);
 	VertexShader->ShaderProg[ShaderRecordType::Exterior] = (ShaderRecordVertex*)ShaderRecord::LoadShader(VertexShader->Name, "Exteriors\\", Template);
 	VertexShader->ShaderProg[ShaderRecordType::Interior] = (ShaderRecordVertex*)ShaderRecord::LoadShader(VertexShader->Name, "Interiors\\", Template);
+	MakeExteriorOnly(VertexShader->Name, VertexShader->ShaderProg);
 	VertexShader->Enabled = enabled;
 
 	if (VertexShader->ShaderProg[ShaderRecordType::Default] != nullptr || VertexShader->ShaderProg[ShaderRecordType::Exterior] != nullptr || VertexShader->ShaderProg[ShaderRecordType::Interior] != nullptr) {
@@ -609,6 +628,7 @@ bool ShaderManager::LoadShader(NiD3DPixelShader* Shader) {
 	PixelShader->ShaderProg[ShaderRecordType::Default]  = (ShaderRecordPixel*)ShaderRecord::LoadShader(PixelShader->Name, NULL, Template);
 	PixelShader->ShaderProg[ShaderRecordType::Exterior] = (ShaderRecordPixel*)ShaderRecord::LoadShader(PixelShader->Name, "Exteriors\\", Template);
 	PixelShader->ShaderProg[ShaderRecordType::Interior] = (ShaderRecordPixel*)ShaderRecord::LoadShader(PixelShader->Name, "Interiors\\", Template);
+	MakeExteriorOnly(PixelShader->Name, PixelShader->ShaderProg);
 	PixelShader->Enabled = enabled;
 
 	if (PixelShader->ShaderProg[ShaderRecordType::Default] != nullptr || PixelShader->ShaderProg[ShaderRecordType::Exterior] != nullptr || PixelShader->ShaderProg[ShaderRecordType::Interior] != nullptr) {
