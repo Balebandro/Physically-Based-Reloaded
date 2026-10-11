@@ -567,6 +567,10 @@ BlurOffsetMax = 24.0
 BlurScale = 4.0
 Enabled = true
 GaussianWeight = 6.0
+Mode = 0                               # [0-3] What blurs: 0 the whole screen, 1 the weapon (viewmodel) only, 2 everything but the weapon (these three when the camera turns), 3 the weapon from its own movement while firing, reloading or aiming (not camera turns or walking), with the world sharp.
+WeaponBlurHold = 0.35                  # [0.0-1.0] Mode 3: seconds the weapon blur keeps going after a shot, reload or aim change, for the recoil and the sights to settle.
+WeaponBlurMax = 0.08                  # [0.0-0.3] Mode 3: the longest weapon blur, as a fraction of the screen height.
+WeaponBlurScale = 2.0                  # [0.0-6.0] Mode 3: weapon blur length, as a multiple of how far it moved on screen in one frame.
 
 [_Shaders.MotionBlur.ThirdPersonView]
 BlurCutOff = 15.0

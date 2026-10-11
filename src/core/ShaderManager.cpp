@@ -961,6 +961,12 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 	Effects.Coloring->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 	if (!Effects.LUT->Settings.PreTonemapping)
 		Effects.LUT->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+
+	// Sharpening before the blurs: run after them, it sharpened depth of field and motion blur back
+	// out -- hardest on bright pixels (its strength scales with luma), so a front-lit weapon lost its
+	// motion blur while a backlit one kept it.
+	Effects.Sharpening->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+
 	Effects.DepthOfField->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 	Effects.MotionBlur->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 
@@ -971,8 +977,6 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 
 	Effects.DitherBuster->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 	Effects.SMAA->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
-
-	Effects.Sharpening->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 
 	// cinema effect gets rendered very last because of vignetting/letterboxing
 	Effects.Cinema->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
