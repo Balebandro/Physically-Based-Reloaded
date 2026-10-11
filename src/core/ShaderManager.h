@@ -102,6 +102,7 @@ public:
 		NormalsEffect*			Normals;
 		RainEffect*				Rain;
 		SharpeningEffect*		Sharpening;
+		HeatHazeEffect*			HeatHaze;
 		SnowEffect*				Snow;
 		SnowAccumulationEffect*	SnowAccumulation;
 		ShadowsExteriorEffect*	ShadowsExteriors;

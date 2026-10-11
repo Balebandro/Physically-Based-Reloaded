@@ -494,6 +494,20 @@ DebugView = 0                          # [0-5] Replaces the frame with a diagnos
 Enabled = false                        # Temporal anti-aliasing: blends each frame with the last, reprojected for camera motion. With Jitter on it anti-aliases still images as well as settling edges and fine detail that crawl as the view moves. The first-person weapon is reprojected with zero motion so it does not smear when turning.
 
 
+[_Shaders.HeatHaze.Main]
+Strength = 2.5                         # [0.0-8.0] How far the haze displaces the image at its hottest, in pixels (at 1080p). It follows the heat: zero at night, building from sunrise to PeakHour, fading to zero by sunset; full in clear weather, CloudyScale of it when cloudy, none in rain or snow or while the ground is still wet.
+StartDistance = 1500.0                 # [0-20000] No haze nearer than this (game units), so nearby things never waver.
+FullDistance = 12000.0                 # [1000-60000] Full haze from this distance on.
+HorizonBand = 0.25                     # [0.05-1.0] How far above and below the horizon the haze reaches (the sine of the view angle): it lives along the horizon, where the line of sight runs longest through hot air.
+NoiseScale = 40.0                      # [5-200] Ripple size: higher makes finer, busier ripples.
+Speed = 0.6                            # [0.0-3.0] How fast the ripples rise.
+PeakHour = 14.5                        # [10.0-17.0] The hottest hour of the day, when the haze is strongest.
+CloudyScale = 0.35                     # [0.0-1.0] Heat in cloudy weather, as a share of a clear day's.
+
+[_Shaders.HeatHaze.Status]
+Enabled = false                        # Heat haze: distant ground shimmers in the hot air near the horizon, strongest on clear afternoons, gone at night and in rain or snow.
+
+
 [_Shaders.ImageAdjust.Main]
 Brightness = 1.0                      # Overall image brightness.
 Saturation = 1.0                      # Overall image saturation.

@@ -67,6 +67,7 @@ void ShaderManager::Initialize() {
 	TheShaderManager->RegisterEffect<NormalsEffect>(&TheShaderManager->Effects.Normals);
 	TheShaderManager->RegisterEffect<RainEffect>(&TheShaderManager->Effects.Rain);
 	TheShaderManager->RegisterEffect<SharpeningEffect>(&TheShaderManager->Effects.Sharpening);
+	TheShaderManager->RegisterEffect<HeatHazeEffect>(&TheShaderManager->Effects.HeatHaze);
 	TheShaderManager->RegisterEffect<ShadowsExteriorEffect>(&TheShaderManager->Effects.ShadowsExteriors);
 	TheShaderManager->RegisterEffect<ShadowsInteriorsEffect>(&TheShaderManager->Effects.ShadowsInteriors);
 	TheShaderManager->RegisterEffect<PointShadowsEffect>(&TheShaderManager->Effects.PointShadows);
@@ -953,6 +954,9 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 
 	Effects.Rain->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 	Effects.Snow->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+
+	// After TAA, which would otherwise average the shimmer away (and fight it as motion it cannot track).
+	Effects.HeatHaze->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 
 	//Effects.Linearization->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 	Effects.BloomLegacy->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
