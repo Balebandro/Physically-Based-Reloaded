@@ -50,6 +50,8 @@ void AttachHooks() {
 	kHairPostGeometryDetour.ReplaceVirtualFunc(0x10BBB50 + 35 * 4, HairShader__PostGeometry);
 	kNoLightingPrepareGeometryDetour.ReplaceVirtualFunc(0x10BB230 + 27 * 4, NoLightingShader__PrepareGeometryForRendering);   // rain particles culled under cover
 	kNoLightingPostGeometryDetour.ReplaceVirtualFunc(0x10BB230 + 35 * 4, NoLightingShader__PostGeometry);
+	kPipboyPostProcessDetour.ReplaceVirtualFunc(0x10780AC + 20 * 4, FOPipboyManager__RenderPostProcess);   // raindrops on the Pip-Boy screen
+
 	WriteRelCall(0xBE0B73, NiD3DVertexShaderEx::Free);
 	WriteRelCall(0xBE0AF3, NiD3DPixelShaderEx::Free);
 	SafeWrite32(0x00E7624D, sizeof(RenderManager));
