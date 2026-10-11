@@ -32,3 +32,20 @@ void GodRaysEffect::RegisterConstants() {
 bool GodRaysEffect::ShouldRender() {
 	return TheShaderManager->GameState.isExterior && !TheShaderManager->GameState.isUnderwater && TheShaderManager->GameState.dayLight > 0.5;
 }
+
+// The intermediate passes write only the top-left quarter and sample RenderedBuffer at most two texels past it,
+// so a margin of 4 texels keeps every tap inside the copied rect. The last pass still copies the whole target.
+bool GodRaysEffect::PartialCopyRect(IDirect3DSurface9* RenderTarget, IDirect3DSurface9* RenderedSurface, RECT* Rect) {
+	D3DSURFACE_DESC targetDesc, renderedDesc;
+	if (FAILED(RenderTarget->GetDesc(&targetDesc)) || FAILED(RenderedSurface->GetDesc(&renderedDesc))) return false;
+	// the same rect addresses both surfaces, so only limit the copy when their sizes match
+	if (targetDesc.Width != renderedDesc.Width || targetDesc.Height != renderedDesc.Height) return false;
+
+	LONG right = (LONG)(targetDesc.Width / 2 + 4);
+	LONG bottom = (LONG)(targetDesc.Height / 2 + 4);
+	Rect->left = 0;
+	Rect->top = 0;
+	Rect->right = right < (LONG)targetDesc.Width ? right : (LONG)targetDesc.Width;
+	Rect->bottom = bottom < (LONG)targetDesc.Height ? bottom : (LONG)targetDesc.Height;
+	return true;
+}

@@ -37,8 +37,11 @@ public:
 	NiVector4				BillboardUp;
 	ShaderRecordVertex*		ShadowMapVertex;
 	ShaderRecordPixel*		ShadowMapPixel;
+	// Opaque casters: ShadowMap.pso without its alpha-test discard, so the GPU keeps early-Z. Loaded in Initialize.
+	ShaderRecordPixel*		ShadowMapOpaquePixel;
 	ShaderRecordVertex*		ShadowCubeMapVertex;
 	ShaderRecordPixel*		ShadowCubeMapPixel;
+	ShaderRecordPixel*		ShadowCubeMapOpaquePixel;
 	ShaderRecordVertex*		ShadowMapBlurVertex;
 	ShaderRecordPixel*		ShadowMapBlurPixel;
 	ShaderRecordPixel*		ShadowMapClearPixel;
@@ -49,6 +52,8 @@ public:
 	// Reused by AccumChildren. That runs per reference, per cell, per cascade, and a fresh
 	// std::stack allocated a deque block on every call; clear() keeps the capacity.
 	std::vector<NiAVObject*>	containersScratch;
+	// Reused by the form-based fallback in RenderShadowCubeMap: the references in range of the light, collected once per light.
+	std::vector<NiNode*>		fallbackRefsScratch;
 	int						PointLightsNum;
 	float					shadowMapsRenderTime;
 	bool					ShadowShadersLoaded;

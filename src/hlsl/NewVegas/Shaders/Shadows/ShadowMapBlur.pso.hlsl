@@ -82,8 +82,12 @@ float4 main(VSOUT IN) : COLOR0 {
         return Blur9(uv, float2(0.0f, 0.0f), float2(0.5f, 0.5f)); // Closest cascade.
     else if (uv.y < 0.5)
         return Blur5(uv, float2(0.5f, 0.0f), float2(1.0f, 0.5f)); // Second cascade.
-    else if (uv.x < 0.5)
-        return Blur5(uv, float2(0.0f, 0.5f), float2(0.5f, 1.0f)); // Third cascade.
+    else if (uv.x < 0.5) {
+        // Third cascade. TESR_ShadowBlur.z is 0 when the cascade was reused this frame: blurring it again accumulates.
+        if (TESR_ShadowBlur.z)
+            return Blur5(uv, float2(0.0f, 0.5f), float2(0.5f, 1.0f));
+        return tex2Dlod(SourceBuffer, float4(uv.xy, 0.0f, 0.0f)); // Reused cascade: keep the stored data.
+    }
     else if (TESR_ShadowBlur.y)
         return Blur5(uv, float2(0.5f, 0.5f), float2(1.0f, 1.0f)); // Furthest cascade.
     else

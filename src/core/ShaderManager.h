@@ -103,6 +103,7 @@ public:
 		RainEffect*				Rain;
 		SharpeningEffect*		Sharpening;
 		HeatHazeEffect*			HeatHaze;
+		SandstormEffect*			Sandstorm;
 		SnowEffect*				Snow;
 		SnowAccumulationEffect*	SnowAccumulation;
 		ShadowsExteriorEffect*	ShadowsExteriors;
@@ -175,5 +176,7 @@ public:
 	D3DXVECTOR4				LightPosition[TrackedLightsMax];
 	D3DXVECTOR4				LightColor[TrackedLightsMax + ShadowCubeMapsMax];
 	D3DXVECTOR4				LightAttenuation[TrackedLightsMax];
+	// Reused by GetNearbyLights for the scene lights sorted by distance (a std::map there allocated a node per light per frame).
+	std::vector<std::pair<int, ShadowSceneLight*>>	SceneLightsScratch;
 };
 

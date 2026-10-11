@@ -11,7 +11,8 @@ public:
 	ShaderRecordVertex* VertexShader;
 	ShaderRecordPixel* PixelShader;
 
-	std::stack<NiGeometry*>	GeometryList;
+	// A vector, not a std::stack: the same LIFO order, but the storage is kept between frames.
+	std::vector<NiGeometry*>	GeometryList;
 	virtual bool AccumObject(NiGeometry* Geo) { return true; };
 	virtual void UpdateConstants(NiGeometry* Geo) {};
 	virtual void RenderGeometry(NiGeometry* Geo);

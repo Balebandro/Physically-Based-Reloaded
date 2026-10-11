@@ -20,11 +20,24 @@ void ShadowManager::Initialize() {
 	TheShadowManager->ShadowMapPixel = (ShaderRecordPixel*)ShaderRecord::LoadShader("ShadowMap.pso", "Shadows\\");
 	TheShadowManager->ShadowCubeMapVertex = (ShaderRecordVertex*)ShaderRecord::LoadShader("ShadowCubeMap.vso", "Shadows\\");
 	TheShadowManager->ShadowCubeMapPixel = (ShaderRecordPixel*)ShaderRecord::LoadShader("ShadowCubeMap.pso", "Shadows\\");
+	// Opaque casters get the caster shader without its alpha-test discard. That discard disables early-Z for every
+	// caster in the pass, and an opaque caster never runs it (TESR_ShadowData.y is 0). Alpha passes keep the clip shader.
+	TheShadowManager->ShadowMapOpaquePixel = (ShaderRecordPixel*)ShaderRecord::LoadShader("ShadowMapOpaque.pso", "Shadows\\");
+	TheShadowManager->ShadowCubeMapOpaquePixel = (ShaderRecordPixel*)ShaderRecord::LoadShader("ShadowCubeMapOpaque.pso", "Shadows\\");
 
     TheShadowManager->ShadowMapBlurVertex = (ShaderRecordVertex*) ShaderRecord::LoadShader("ShadowMapBlur.vso", "Shadows\\");
     TheShadowManager->ShadowMapBlurPixel = (ShaderRecordPixel*) ShaderRecord::LoadShader("ShadowMapBlur.pso", "Shadows\\");
 
 	TheShadowManager->ShadowMapClearPixel = (ShaderRecordPixel*) ShaderRecord::LoadShader("ShadowMapClear.pso", "Shadows\\");
+	// A missing or uncompilable opaque copy falls back to the clip shader: the same image, only the early-Z gain is lost.
+	if (!TheShadowManager->ShadowMapOpaquePixel) {
+		TheShadowManager->ShadowMapOpaquePixel = TheShadowManager->ShadowMapPixel;
+		Logger::Log("[WARNING] ShadowMapOpaque.pso did not load; opaque shadow casters use the alpha-test shader.");
+	}
+	if (!TheShadowManager->ShadowCubeMapOpaquePixel) {
+		TheShadowManager->ShadowCubeMapOpaquePixel = TheShadowManager->ShadowCubeMapPixel;
+		Logger::Log("[WARNING] ShadowCubeMapOpaque.pso did not load; opaque cube casters use the alpha-test shader.");
+	}
 
 	// Make sure samplers are not reset on SetCT as that causes errors.
 	TheShadowManager->ShadowMapVertex->ClearSamplers = false;
@@ -34,6 +47,8 @@ void ShadowManager::Initialize() {
 	TheShadowManager->ShadowMapBlurVertex->ClearSamplers = false;
 	TheShadowManager->ShadowMapBlurPixel->ClearSamplers = false;
 	TheShadowManager->ShadowMapClearPixel->ClearSamplers = false;
+	TheShadowManager->ShadowMapOpaquePixel->ClearSamplers = false;
+	TheShadowManager->ShadowCubeMapOpaquePixel->ClearSamplers = false;
 
 	TheShadowManager->ShadowShadersLoaded = true;
     if (TheShadowManager->ShadowMapVertex == nullptr || TheShadowManager->ShadowMapPixel == nullptr  || TheShadowManager->ShadowMapBlurVertex  == nullptr
@@ -105,6 +120,24 @@ NiNode* ShadowManager::GetRefNode(TESObjectREFR* Ref, ShadowsExteriorEffect::For
 		break;
 	}
 
+#if !defined(OBLIVION)
+	// Creature/NPC animation LOD (assumed cause, see the README): the engine does not animate actors in the MiddleLow and
+	// Low process levels (no animData there) and may throttle distant ones, so their shadow would show a frozen pose.
+	// Skip those actors, and optionally every actor beyond ActorMaxDistance from the camera (0 = no limit).
+	if (TypeID == TESForm::FormType::kFormType_NPC || TypeID == TESForm::FormType::kFormType_Creature) {
+		ShadowsExteriorEffect::ShadowMapStruct* ShadowMaps = &TheShaderManager->Effects.ShadowsExteriors->Settings.ShadowMaps;
+		if (ShadowMaps->SkipLowProcessActors) {
+			BaseProcess* Process = static_cast<MobileObject*>(Ref)->process;
+			if (Process && Process->processLevel >= 2) return NULL;
+		}
+		if (ShadowMaps->ActorMaxDistance > 0.0f) {
+			const D3DXVECTOR4& Camera = TheRenderManager->CameraPosition;
+			float dx = Ref->pos.x - Camera.x, dy = Ref->pos.y - Camera.y, dz = Ref->pos.z - Camera.z;
+			if (dx * dx + dy * dy + dz * dz > ShadowMaps->ActorMaxDistance * ShadowMaps->ActorMaxDistance) return NULL;
+		}
+	}
+#endif
+
 	// GetNode() is a plain pointer read, so it stays here. The refraction test is NOT: it calls
 	// into the engine to walk the reference's extra-data list. Callers apply IsRefracting()
 	// after the cascade test instead, where only the references that survive it pay the cost --
@@ -154,9 +187,28 @@ void ShadowManager::AccumObject(NiAVObject* NiObject, ShadowsExteriorEffect::For
 }
 
 
+// Object LOD inside the loaded cells: BSShaderManager::kLoadedRange, the box the land LOD is hidden under
+// in TerrainLODPass. The references there are already in the pass as full models (AccumExteriorCell), so
+// their LOD copy must not cast a second shadow. A geometry is inside when its bound centre is; a node only
+// when its whole bound is, so a block straddling the edge is walked, and only the parts inside the cells go.
+static bool IsLodInLoadedCells(NiAVObject* Object) {
+#if defined(OBLIVION)
+	return false;
+#else
+	NiBound* Bound = Object->m_kWorldBound; // the field: GetWorldBound() substitutes NiBound::GetGlobalWorldBound() when null
+	if (!Bound) return false;
+	const float Reach = Object->IsGeometry() ? 0.0f : Bound->Radius;
+	const NiPoint4* Range = BSShaderManager::kLoadedRange;
+	return fabsf(Bound->Center.x - Range->x) + Reach < Range->z && fabsf(Bound->Center.y - Range->y) + Reach < Range->w;
+#endif
+}
+
 // go through the Object children and sort the ones that will be rendered based on their properties
 void ShadowManager::AccumChildren(NiAVObject* NiObject, ShadowsExteriorEffect::FormsStruct* Forms, bool isLand, bool isLOD, NiFrustumPlanes *arPlanes) {
 	if (!NiObject) return;
+
+	// Object LOD (isLOD without isLand) inside the loaded cells is left out, see IsLodInLoadedCells. Off, the walk is the old one, apart from the switch guards that stop it reading past the children.
+	const bool skipLoadedLod = isLOD && !isLand && Forms->LodSkipLoaded;
 
 	std::vector<NiAVObject*>& containers = containersScratch;
 	containers.clear();
@@ -186,10 +238,13 @@ void ShadowManager::AccumChildren(NiAVObject* NiObject, ShadowsExteriorEffect::F
 		if (Node->IsKindOf<NiSwitchNode>()) {
 			// NiSwitchNode - only render active children (if exists) to the shadow map.
 			NiSwitchNode* SwitchNode = static_cast<NiSwitchNode*>(Node);
-			if (SwitchNode->m_iIndex < 0)
+			if (SwitchNode->m_iIndex < 0 || SwitchNode->m_iIndex >= Node->m_children.end)
 				continue;
 
 			child = Node->m_children.data[SwitchNode->m_iIndex];
+			// With LodSkipLoaded, the active child takes the children loop's tests too: culled or faded object LOD, and LOD in the loaded cells.
+			if (!child || (skipLoadedLod && ((child->m_flags & NiAVObject::NiFlags::APP_CULLED) || (child->IsFadeNode() && static_cast<BSFadeNode*>(child)->FadeAlpha < 0.75f) || IsLodInLoadedCells(child))))
+				continue;
 			if (!child->IsGeometry())
 				containers.push_back(child);
 			else
@@ -211,6 +266,7 @@ void ShadowManager::AccumChildren(NiAVObject* NiObject, ShadowsExteriorEffect::F
 			else if (arPlanes && !child->WithinFrustum(arPlanes)) continue;
 
 			if (child->IsFadeNode() && static_cast<BSFadeNode*>(child)->FadeAlpha < 0.75f) continue; // stop rendering fadenodes below a certain opacity
+			if (skipLoadedLod && IsLodInLoadedCells(child)) continue; // object LOD inside the loaded cells
 			if (!child->IsGeometry())
 				containers.push_back(child);
 			else
@@ -422,6 +478,20 @@ void ShadowManager::RenderShadowCubeMap(ShadowSceneLight** Lights, UInt32 LightI
 	RenderState->SetRenderState(D3DRS_ALPHAREF, 0, RenderStateArgs);
 	RenderState->SetRenderState(D3DRS_ALPHAFUNC, D3DCMP_ALWAYS, RenderStateArgs);
 
+	// The form-based fallback below (used only when the game has not built this light's geometry list) selects the same
+	// references for every face. Collect them once here instead of walking the cell for each of the six faces.
+	fallbackRefsScratch.clear();
+	if (!Lights[LightIndex]->kGeometryList.start) {
+		TList<TESObjectREFR>::Entry* Entry = &Player->parentCell->objectList.First;
+		while (Entry) {
+			if (NiNode* RefNode = GetRefNode(Entry->item, &Settings->Forms)) {
+				if (RefNode->GetDistance(LightPos) <= Radius + RefNode->GetWorldBoundRadius() && !IsRefracting(Entry->item))
+					fallbackRefsScratch.push_back(RefNode);
+			}
+			Entry = Entry->next;
+		}
+	}
+
 	for (int Face = 0; Face < 6; Face++) {
 		At = Eye;
 		switch (Face) {
@@ -499,21 +569,8 @@ void ShadowManager::RenderShadowCubeMap(ShadowSceneLight** Lights, UInt32 LightI
 		}
 		else {
 			// old form based geo accumulation when the one perform by the game has not handled this light
-			TList<TESObjectREFR>::Entry* Entry = &Player->parentCell->objectList.First;
-			while (Entry) {
-				if (NiNode* RefNode = GetRefNode(Entry->item, &Settings->Forms)) {
-					// Detect if the object is in front of the light in the direction of the current face
-					// TODO: improve to base on frustum
-					D3DXVECTOR3 ObjectPos = RefNode->m_worldTransform.pos.toD3DXVEC3();
-					D3DXVECTOR3 ObjectToLight = ObjectPos - LightPos->toD3DXVEC3();
-
-					D3DXVec3Normalize(&ObjectToLight, &ObjectToLight);
-					bool inFront = D3DXVec3Dot(&ObjectToLight, &CameraDirection) > 0;
-					if (RefNode->GetDistance(LightPos) <= Radius + RefNode->GetWorldBoundRadius() && !IsRefracting(Entry->item))
-						AccumChildren(RefNode, &Settings->Forms, false, false);
-				}
-				Entry = Entry->next;
-			}
+			for (NiNode* RefNode : fallbackRefsScratch)
+				AccumChildren(RefNode, &Settings->Forms, false, false);
 		}
 
 
@@ -688,16 +745,17 @@ void ShadowManager::RenderShadowMaps() {
 		// Update cascade depths based on current camera.
 		Shadows->GetCascadeDepths();
 
+		// Opaque passes (no alpha test, TESR_ShadowData.y is 0) use the no-discard copy, so the GPU keeps early-Z.
 		geometryPass->VertexShader = ShadowMapVertex;
-		geometryPass->PixelShader = ShadowMapPixel;
+		geometryPass->PixelShader = ShadowMapOpaquePixel;
 		alphaPass->VertexShader = ShadowMapVertex;
 		alphaPass->PixelShader = ShadowMapPixel;
 		skinnedGeoPass->VertexShader = ShadowMapVertex;
-		skinnedGeoPass->PixelShader = ShadowMapPixel;
+		skinnedGeoPass->PixelShader = ShadowMapOpaquePixel;
 		speedTreePass->VertexShader = ShadowMapVertex;
 		speedTreePass->PixelShader = ShadowMapPixel;
 		terrainLODPass->VertexShader = ShadowMapVertex;
-		terrainLODPass->PixelShader = ShadowMapPixel;
+		terrainLODPass->PixelShader = ShadowMapOpaquePixel;
 
 		// Below the horizon the sun/moon cascades are not drawn, which leaves the atlas and its
 		// camera-relative transforms stale -- tell ShadowsExterior so nothing samples them (see
@@ -726,20 +784,37 @@ void ShadowManager::RenderShadowMaps() {
 			for (int i = MapNear; i < MapOrtho; i++) {
 				ShadowsExteriorEffect::ShadowMapSettings* ShadowMap = &Shadows->ShadowMaps[i];
 
-				if (!Shadows->Settings.ShadowMaps.LimitFrequency || i != MapLod || !(FrameCounter % 4)) {
+				// LimitFrequency: LOD is re-rendered on frame 0 of 4. FarLimitFrequency: Far on frame 1, so the two do not share a frame.
+				// A cascade that has never been rendered (HasRendered is false) always renders.
+				bool limitedLod = Shadows->Settings.ShadowMaps.LimitFrequency && i == MapLod;
+				bool limitedFar = Shadows->Settings.ShadowMaps.FarLimitFrequency && i == MapFar;
+				bool renderThisFrame = (!limitedLod || !(FrameCounter % 4)) && (!limitedFar || FrameCounter == 1 || !ShadowMap->HasRendered);
+
+				if (renderThisFrame) {
+					ShadowMap->HasRendered = true; // later frames may reuse this cascade
 					Shadows->Constants.ShadowViewProj = Shadows->GetCascadeViewProj(ShadowMap, &SunDir);
 					RenderShadowMap(ShadowMap, &Shadows->Constants.ShadowViewProj);
 				}
 				else {
-					// We need to update the shadowprojmatrix of MapLod by the camera translation between frames to avoid jumps in the shadows.
+					// We need to update the shadowprojmatrix of the limited cascade by the camera translation between frames to avoid jumps in the shadows.
 					D3DXVECTOR3 newCameraTranslation = WorldSceneGraph->camera->m_worldTransform.pos.toD3DXVEC3();
 					D3DXVECTOR3 difference = newCameraTranslation - ShadowMap->CameraTranslation;
 					D3DXMATRIX translationMatrix;
 					D3DXMatrixTranslation(&translationMatrix, difference.x, difference.y, difference.z);
 					ShadowMap->ShadowCameraToLight = translationMatrix * ShadowMap->ShadowCameraToLight;
 					ShadowMap->CameraTranslation = newCameraTranslation;
-					
-					Shadows->Constants.ShadowBlur.y = Shadows->ShadowAtlasSurfaceMSAA ? 1.0f : 0.0f; // Disable blur for last cascade if MSAA is off.
+
+					if (i == MapFar) {
+						// The centre is camera-relative, so it moves against the camera just as the matrix does. LOD keeps its old centre; changing it would alter the default image.
+						ShadowMap->ShadowMapCascadeCenterRadius.x -= difference.x;
+						ShadowMap->ShadowMapCascadeCenterRadius.y -= difference.y;
+						ShadowMap->ShadowMapCascadeCenterRadius.z -= difference.z;
+						// Re-blurring stale data accumulates on the non-MSAA atlas. MSAA re-resolves raw data every frame, so it can stay on.
+						Shadows->Constants.ShadowBlur.z = Shadows->ShadowAtlasSurfaceMSAA ? 1.0f : 0.0f;
+					}
+					else {
+						Shadows->Constants.ShadowBlur.y = Shadows->ShadowAtlasSurfaceMSAA ? 1.0f : 0.0f; // Disable blur for last cascade if MSAA is off.
+					}
 				}
 
 				std::string message = "ShadowManager::RenderShadowMap ";
@@ -793,12 +868,13 @@ void ShadowManager::RenderShadowMaps() {
 	bool usePointLights = (TheShaderManager->GameState.isDayTime > 0.5) ? ShadowsExteriors->UsePointShadowsDay : ShadowsExteriors->UsePointShadowsNight;
 
 	AlphaEnabled = ShadowsInteriors->Forms.AlphaEnabled;
+	// Opaque cube casters use the no-discard copy, as the sun pass does.
 	geometryPass->VertexShader = ShadowCubeMapVertex;
-	geometryPass->PixelShader = ShadowCubeMapPixel;
+	geometryPass->PixelShader = ShadowCubeMapOpaquePixel;
 	alphaPass->VertexShader = ShadowCubeMapVertex;
 	alphaPass->PixelShader = ShadowCubeMapPixel;
 	skinnedGeoPass->VertexShader = ShadowCubeMapVertex;
-	skinnedGeoPass->PixelShader = ShadowCubeMapPixel;
+	skinnedGeoPass->PixelShader = ShadowCubeMapOpaquePixel;
 	speedTreePass->VertexShader = ShadowCubeMapVertex;
 	speedTreePass->PixelShader = ShadowCubeMapPixel;
 

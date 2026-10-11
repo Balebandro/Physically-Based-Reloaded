@@ -16,6 +16,7 @@ public:
 	void	RegisterConstants();
 	void	UpdateSettings();
 	bool	ShouldRender();
+	bool	PartialCopyRect(IDirect3DSurface9* RenderTarget, IDirect3DSurface9* RenderedSurface, RECT* Rect);
 
 	float dayMult;
 	float nightMult;

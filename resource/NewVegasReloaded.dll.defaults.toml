@@ -505,6 +505,26 @@ CloudyScale = 0.35                     # [0.0-1.0] Heat in cloudy weather, as a 
 Enabled = false                        # Heat haze: distant ground shimmers in the hot air near the horizon, strongest on clear afternoons, gone at night and in rain or snow.
 
 
+[_Shaders.Sandstorm.Main]
+Density = 0.0004                       # [0.0-0.003] How thick the dust is, as haze optical depth per game unit of distance at full storm. 0.0004 turns about a third of a level view 1000 units away to dust, a bit under two-thirds of one 2500 away, and reaches the 0.85 cap near 4700. Looking up thins it (see HeightFalloff). Scaled by the gusts.
+HeightFalloff = 1500.0                 # [100-10000] Altitude above the eye (game units, 4096 to a cell) over which the dust thins by a factor of e. The dust is thickest at and below eye level and thins above it, so a storm's top is a soft ceiling.
+DustColorR = 0.75                      # [0.0-1.0] Red of the dust, sRGB, as it looks in full daylight. Its brightness follows the game's own fog colour, so it darkens at dusk and at night.
+DustColorG = 0.60                      # [0.0-1.0] Green of the dust, sRGB (see DustColorR).
+DustColorB = 0.40                      # [0.0-1.0] Blue of the dust, sRGB (see DustColorR).
+StreakStrength = 0.6                   # [0.0-1.0] How bright the wind-blown grains and streaks are against the haze. 0 leaves the haze alone.
+StreakSpeed = 1.2                      # [0.0-5.0] How fast the streaks sweep across the screen, in screen heights per second, at medium wind. Half that in no wind, one and a half times that in full wind.
+StreakScale = 160.0                    # [40-400] How fine the streaks are: higher gives thinner and more numerous streaks and grains.
+NearStreakDistance = 300.0             # [1-2000] Grains fade out nearer than this (game units), so the weapon and the hands are never streaked.
+SkyDarken = 0.55                       # [0.0-1.0] Sky brightness at full storm, as a share of its clear-weather brightness. The sky also takes on the dust colour.
+GustStrength = 0.35                    # [0.0-1.0] How far the gusts swing the density and the streaks, either way. About one gust every five seconds.
+WindThreshold = 150.0                  # [0-255] The weather's own wind speed (0-255) a storm needs, at least this. Weather below it is not a storm, however dusty.
+FogDistanceThreshold = 20000.0         # [1000-100000] The sky's fog far distance (game units) a storm needs: closer than this is dusty air. A cell is 4096 units.
+ForceStorm = false                     # Debug: a storm whatever the weather, to see and tune the effect at once.
+
+[_Shaders.Sandstorm.Status]
+Enabled = true                         # Sandstorm: windy, dusty weather that is neither rain nor snow fills the air with a warm dust haze and sweeping grains, easing in and out over a few seconds. Costs nothing outside such weather.
+
+
 [_Shaders.ImageAdjust.Main]
 Brightness = 1.0                      # Overall image brightness.
 Saturation = 1.0                      # Overall image saturation.
@@ -690,6 +710,7 @@ Containers = true                    # Whether to include objects with "Containe
 Doors = true                         # Whether to include objects with "Doors" flag when rendering shadowmaps.
 Furniture = true                     # Whether to include objects with "Furniture" flag when rendering shadowmaps.
 Lod = false                          # Whether to include objects with "Lod" flag when rendering shadowmaps.
+LodSkipLoaded = true                 # Skip object LOD inside the loaded cells: those references are walked as full models instead, subject to the flags above. Also skips culled or faded active LOD levels. false: the old behaviour.
 MinRadius = 1.0                      # Whether to include objects with a radius of less than x pixels on the screen in the shadowmaps.
 Misc = true                          # Whether to include objects with misc flags when rendering shadowmaps.
 Statics = true                       # Whether to include objects with "Statics" flag when rendering shadowmaps.
@@ -706,6 +727,7 @@ Containers = true                    # Whether to include objects with "Containe
 Doors = true                         # Whether to include objects with "Doors" flag when rendering shadowmaps.
 Furniture = true                     # Whether to include objects with "Furniture" flag when rendering shadowmaps.
 Lod = false                          # Whether to include objects with "Lod" flag when rendering shadowmaps.
+LodSkipLoaded = true                 # Skip object LOD inside the loaded cells: those references are walked as full models instead, subject to the flags above. Also skips culled or faded active LOD levels. false: the old behaviour.
 MinRadius = 1.0                      # Whether to include objects with a radius of less than x pixels on the screen in the shadowmaps.
 Misc = true                          # Whether to include objects with misc flags when rendering shadowmaps.
 Statics = true                       # Whether to include objects with "Statics" flag when rendering shadowmaps.
@@ -722,6 +744,7 @@ Containers = true                    # Whether to include objects with "Containe
 Doors = true                         # Whether to include objects with "Doors" flag when rendering shadowmaps.
 Furniture = true                     # Whether to include objects with "Furniture" flag when rendering shadowmaps.
 Lod = true                           # Whether to include objects with "Lod" flag when rendering shadowmaps.
+LodSkipLoaded = true                 # Skip object LOD inside the loaded cells: those references are walked as full models instead, subject to the flags above. Also skips culled or faded active LOD levels. false: the old behaviour.
 MinRadius = 10.0                     # Whether to include objects with a radius of less than x pixels on the screen in the shadowmaps.
 Misc = true                          # Whether to include objects with misc flags when rendering shadowmaps.
 Statics = true                       # Whether to include objects with "Statics" flag when rendering shadowmaps.
@@ -738,6 +761,7 @@ Containers = false                   # Whether to include objects with "Containe
 Doors = true                         # Whether to include objects with "Doors" flag when rendering shadowmaps.
 Furniture = false                    # Whether to include objects with "Furniture" flag when rendering shadowmaps.
 Lod = true                           # Whether to include objects with "Lod" flag when rendering shadowmaps.
+LodSkipLoaded = true                 # Skip object LOD inside the loaded cells: those references are walked as full models instead, subject to the flags above. Also skips culled or faded active LOD levels. false: the old behaviour.
 MinRadius = 10.0                     # Whether to include objects with a radius of less than x pixels on the screen in the shadowmaps.
 Misc = false                         # Whether to include objects with misc flags when rendering shadowmaps.
 Statics = true                       # Whether to include objects with "Statics" flag when rendering shadowmaps.
@@ -754,6 +778,7 @@ Containers = false                   # Whether to include objects with "Containe
 Doors = false                        # Whether to include objects with "Doors" flag when rendering ortho map.
 Furniture = false                    # Whether to include objects with "Furniture" flag when rendering ortho map.
 Lod = false                          # Whether to include objects with "Lod" flag when rendering ortho map.
+LodSkipLoaded = true                 # Skip object LOD inside the loaded cells: those references are walked as full models instead, subject to the flags above. Also skips culled or faded active LOD levels. false: the old behaviour.
 MinRadius = 1.0						 # Whether to include objects with a radius of less than x pixels on the screen in the ortho map.
 Misc = true                          # Whether to include objects with misc flags when rendering ortho map.
 Statics = true                       # Whether to include objects with "Statics" flag when rendering ortho map.
@@ -786,6 +811,9 @@ Anisotropy = 0						 # DISABLED. Anisotropic filteric for mipmaps, 0: disabled, 
 Distance = 6000                      # Distance to render shadows for. The unit is the same as the game uses for i.e. fog values. 
 CascadeLambda = 0.9					 # [0.0-1.0] Controls how cascades are split, higher value means nearer cascades get higher resolution.
 LimitFrequency = true				 # Limit the update frequency of the furthest cascade (once per four frames).
+FarLimitFrequency = false				 # [0-1] Also limit the far cascade (the one before LOD) to one update per four frames. Moving casters in that cascade update up to three frames late.
+SkipLowProcessActors = true          # Leave actors the engine is not animating (process level MiddleLow or Low) out of the shadow maps, so a frozen pose is never drawn as a shadow. Trade-off: those actors cast no shadow.
+ActorMaxDistance = 0                 # [0-20000] Actors farther than this from the camera (game units) cast no shadow; 0 means no limit. A test knob for the creature animation issue: if a distant creature's shadow looks frozen or wrong, lower this until it disappears.
 
 [_Shaders.ShadowsExteriors.Ortho]
 Resolution = 2						 # Resolution of the texture used to store the ortho map. 0: 128, 1: 256, 2: 512, 3: 1024, 4: 2048
@@ -894,6 +922,18 @@ UseNormals = false                  # EXPERIMENTAL-Uses the R & G channels of th
 SphericalNormals = false            # EXPERIMENTAL-Uses this setting if the normals of the clouds point to the center of the panoramic texture
 Transparency = 1.0                  # Clouds base transparency
 Brightness = 1.0                    # Clouds base brightness
+Volumetric = 1                      # [0-1] 1 draws the clouds as a thick slab lit by the sun: bright silver edges when the sun is behind them, darker undersides, and sunset colour. Above about 9 degrees the slab replaces the flat shading, UseNormals included. The game's cloud textures still decide where the clouds are. 0 draws the flat clouds as before.
+Steps = 8                           # [2-16] Samples through the cloud layer for each pixel. 16 gives smoother edges at about twice the cost.
+CloudHeight = 6000.0                # [500-20000] Height of the base of the cloud layer above the camera, in game units (one cell is 4096 units across). The game's cloud texture is laid on this base. The height only changes the scale of the erosion noise (higher gives finer wisps). The depth of the layer comes from CloudThickness and UVScale.
+CloudThickness = 2500.0             # [100-10000] Depth of the cloud layer in game units. Thicker clouds are more opaque when you look through them.
+Density = 1.0                       # [0.0-3.0] How much of the texture's coverage becomes cloud. It acts before the erosion, so it grows or shrinks the outlines of the clouds.
+Absorption = 1.0                    # [0.0-4.0] How strongly the clouds absorb light, both for the view through them and for the sun reaching their insides. Higher is more opaque and darker underneath.
+DetailScale = 2.0                   # [0.2-10.0] Size of the procedural noise that erodes the edges, in cells per 1000 game units. Higher gives finer wisps.
+UVScale = 0.025                     # [0.001-0.2] How far the cloud texture is carried through the layer, in texture units per 1000 game units of horizontal travel. 0.025 is one repeat per 40000 units, the default. The sky mesh's UVs are in the NIF, so tune this: raise it if the depth looks too flat, lower it if clouds smear at low elevations.
+Scattering = 0.4                    # [0.0-0.9] Forward scattering (Henyey-Greenstein g). Higher gives a stronger glow where the clouds are backlit by the sun.
+SilverLining = 1.0                  # [0.0-3.0] Brightness of the thin edges of the clouds when the sun is behind them. 0 turns the silver lining off.
+AmbientStrength = 1.0               # [0.0-3.0] Brightness of the sky light on the clouds. At night the clouds are lit by this alone.
+DetailSpeed = 0.02                  # [0.0-0.2] How fast the erosion noise drifts, in cells per second.
 
 [_Shaders.Sky.Status]
 Enabled = true                      # Replaces the sky and cloud shaders to add more subtle sky shading.
