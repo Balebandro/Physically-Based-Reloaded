@@ -184,6 +184,15 @@
     #include "includes/MergedLights.hlsl"
 #endif
 
+// Wetness Effects (Includes/Wetness.hlsl): the passes that light the material's own albedo, ambient
+// and reflections get the water layer; lamp-only and highlight-only passes do not. s12 is free in
+// every variant, for the rain occlusion map.
+#if defined(PS) && !defined(DIFFUSE) && !defined(POINT) && !defined(ONLY_SPECULAR)
+    #define OBJECT_WETNESS
+    #define WETNESS_ORTHO_REG s12
+    #include "includes/Wetness.hlsl"
+#endif
+
 // Forward sun shadows. Enabled at COMPILE TIME via FORWARD_SHADOWS in Includes/Shadow.hlsl,
 // deliberately not via a runtime constant -- see the note there.
 
@@ -782,6 +791,24 @@ PS_OUTPUT main(PS_INPUT IN) {
         #endif
     #endif
 
+    // Wetness (Includes/Wetness.hlsl): the albedo darkens before any light sees it. In a light-only
+    // pass the albedo is 1 here and the texture pass multiplies the real one in afterwards, so the
+    // light is scaled by how much darker the wet albedo is instead. Metals darken less (CS's porosity).
+    #ifdef OBJECT_WETNESS
+        Wetness wet = (Wetness)0;
+        wet.roughness = 1.0f;
+        wet.normal = reflectionNormal;
+        [branch] if (shadowVSValid > 0.0f)
+            wet = GetWetness(IN.shadowWorldPos.xyz, reflectionGeometricNormal, reflectionNormal);
+        float porosity = pbrMaterial ? 1.0f - saturate(sqrt(pbrMetalness)) : 1.0f;
+        #if defined(ONLY_LIGHT)
+            float3 dryAlbedo = max(decodeColor(adAlbedo), 1.0f / 256.0f);
+            baseColor.rgb *= WetAlbedo(dryAlbedo, wet.darkening, porosity) / dryAlbedo;
+        #else
+            baseColor.rgb = WetAlbedo(baseColor.rgb, wet.darkening, porosity);
+        #endif
+    #endif
+
     #if !defined(DIFFUSE) && !defined(POINT)
         float3 lighting = getSunLighting(IN.lightDir.xyz, PSLightColor[0].rgb * shadowMultiplier, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness, sunShadow);
     #else
@@ -804,6 +831,25 @@ PS_OUTPUT main(PS_INPUT IN) {
         // Reflection first: it sets the share of the ambient it takes (skyReflectedFraction).
         lighting += getObjectSkyReflection(IN.shadowWorldPos.xyz, reflectionGeometricNormal, reflectionNormal, roughness, shadowVSValid);
         lighting += getAmbientLighting(AmbientColor.rgb, baseColor.rgb, ambientNormal, shadowVSValid);
+    #endif
+
+    // The water film: the sun's highlight on it and its reflection, over the material.
+    #ifdef OBJECT_WETNESS
+        [branch] if (wet.gloss > 0.001f) {
+            float3 wetV = -normalize(IN.shadowWorldPos.xyz);
+            float3 sunLight = decodeColor(PSLightColor[0].rgb * shadowMultiplier) * sunShadow * LIGHT_SCALE;
+            float3 wetLayer = WetSpecular(wet.normal, wetV, TESR_WetnessSun.xyz, sunLight, wet.roughness) * smoothstep(0.0f, 0.2f, wet.gloss);
+            float3 r = reflect(-wetV, wet.normal);
+            float3 radiance;   // linear
+            [branch] if (ENVIRONMENT_CUBE)
+                radiance = texCUBElod(EnvCubeMap, float4(r, wet.roughness * ENVIRONMENT_CUBE_MIPS)).rgb;
+            else
+                radiance = SkyReflectionRadiance(r, wet.roughness);
+            float3 environment = !linearLighting ? sqrt(radiance) : (lightingGamma == 2.0f ? radiance : pow(max(radiance, 0.0f), 0.5f * lightingGamma));
+            float horizon = saturate(1.0f + 1.2f * dot(r, reflectionGeometricNormal));
+            wetLayer += environment * WetReflectance(saturate(dot(wet.normal, wetV)), wet.roughness, wet.gloss) * horizon * horizon;
+            lighting += wetLayer * adCompensation;
+        }
     #endif
 
     // Other light sources. Same object-space attenuation fix as light0 above.
@@ -837,6 +883,11 @@ PS_OUTPUT main(PS_INPUT IN) {
     #if !defined(DIFFUSE) && !defined(POINT) && !defined(ONLY_SPECULAR)
         [branch] if (TESR_PBRDebugData.x > 0.0f)
             finalColor.rgb = getMaterialDebug(TESR_PBRDebugData.x, roughness, ambientNormal);
+    #endif
+
+    #ifdef OBJECT_WETNESS
+        [branch] if (WETNESS_DEBUG_COVER && shadowVSValid > 0.0f)
+            finalColor.rgb = WetnessCoverDebug(IN.shadowWorldPos.xyz, reflectionGeometricNormal);
     #endif
 
 #if SHADOW_FORCE_MARKER
@@ -985,6 +1036,29 @@ PS_OUTPUT main(PS_INPUT IN) {
     float roughness = getMaterialRoughness(shine);
     baseColor.rgb = decodeColor(baseColor.rgb);
 
+    // ddx/ddy must stay at pixel-shader top level. Ahead of the lights: the wetness needs them.
+    float3 ambNormal = GetShadowGeometricNormal(SHADOW_WP_LOAD(IN));
+    float shadowVSValid = SHADOW_WP_VALID(IN) ? 1.0f : 0.0f;
+
+    // Normal-mapped ambient, see the LIGHTS < 4 variant. At MAX_LIGHTS 6 up's z has no channel
+    // and is rebuilt.
+    #if MAX_LIGHTS > 4
+        float3 upTS = rebuildUpTS(IN.uv.zw, ambNormal);
+    #else
+        float3 upTS = float3(IN.uv.zw, IN.lPosition.w);
+    #endif
+    float3 ambientNormal = getAmbientNormal(normal.xyz, upTS, ambNormal, shadowVSValid);
+
+    // Wetness, see the LIGHTS < 4 variant.
+    #ifdef OBJECT_WETNESS
+        Wetness wet = (Wetness)0;
+        wet.roughness = 1.0f;
+        wet.normal = ambientNormal;
+        [branch] if (shadowVSValid > 0.0f)
+            wet = GetWetness(SHADOW_WP_LOAD(IN), ambNormal, ambientNormal);
+        baseColor.rgb = WetAlbedo(baseColor.rgb, wet.darkening, pbrMaterial ? 1.0f - saturate(sqrt(pbrMetalness)) : 1.0f);
+    #endif
+
     // Lighting.
     float3 viewDir = { IN.lightDir.w, IN.light2.w, IN.light3.w };
 
@@ -1034,22 +1108,30 @@ PS_OUTPUT main(PS_INPUT IN) {
         [branch] if (5 < lightsUsed) lighting += getPointLightLightingAtt(IN.light6.xyz, att, PSLightColor[5].rgb, viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
     #endif
 
-    // ddx/ddy must stay at pixel-shader top level.
-    float3 ambNormal = GetShadowGeometricNormal(SHADOW_WP_LOAD(IN));
-    float shadowVSValid = SHADOW_WP_VALID(IN) ? 1.0f : 0.0f;
-
-    // Normal-mapped ambient, see the LIGHTS < 4 variant. At MAX_LIGHTS 6 up's z has no channel
-    // and is rebuilt.
-    #if MAX_LIGHTS > 4
-        float3 upTS = rebuildUpTS(IN.uv.zw, ambNormal);
-    #else
-        float3 upTS = float3(IN.uv.zw, IN.lPosition.w);
-    #endif
-    float3 ambientNormal = getAmbientNormal(normal.xyz, upTS, ambNormal, shadowVSValid);
-
     // Reflection first: it sets the share of the ambient it takes (skyReflectedFraction).
     lighting += getObjectSkyReflection(SHADOW_WP_LOAD(IN), ambNormal, ambientNormal, roughness, shadowVSValid);
     lighting += getAmbientLighting(AmbientColor.rgb, baseColor.rgb, ambientNormal, shadowVSValid);
+
+    // The water film, see the LIGHTS < 4 variant. With OPT the first light slot is a lamp, not the sun.
+    #ifdef OBJECT_WETNESS
+        [branch] if (wet.gloss > 0.001f) {
+            float3 wetV = -normalize(SHADOW_WP_LOAD(IN));
+            float3 wetLayer = 0.0f;
+            #ifndef OPT
+                wetLayer += WetSpecular(wet.normal, wetV, TESR_WetnessSun.xyz, decodeColor(PSLightColor[0].rgb) * sunShadow * LIGHT_SCALE, wet.roughness) * smoothstep(0.0f, 0.2f, wet.gloss);
+            #endif
+            float3 r = reflect(-wetV, wet.normal);
+            float3 radiance;   // linear
+            [branch] if (ENVIRONMENT_CUBE)
+                radiance = texCUBElod(EnvCubeMap, float4(r, wet.roughness * ENVIRONMENT_CUBE_MIPS)).rgb;
+            else
+                radiance = SkyReflectionRadiance(r, wet.roughness);
+            float3 environment = !linearLighting ? sqrt(radiance) : (lightingGamma == 2.0f ? radiance : pow(max(radiance, 0.0f), 0.5f * lightingGamma));
+            float horizon = saturate(1.0f + 1.2f * dot(r, ambNormal));
+            wetLayer += environment * WetReflectance(saturate(dot(wet.normal, wetV)), wet.roughness, wet.gloss) * horizon * horizon;
+            lighting += wetLayer;
+        }
+    #endif
 
     // Vanilla attenuates the full specular term by LightData[0].w (IN.lPosition.w): the engine's specular
     // distance fade. It arrives per draw as ObjectMaterial.y instead (setupMaterial), since lPosition.w
@@ -1065,6 +1147,10 @@ PS_OUTPUT main(PS_INPUT IN) {
         finalColor.rgb = lerp(finalColor.rgb, IN.fogColor.rgb, IN.fogColor.a);
     #endif
 
+    #ifdef OBJECT_WETNESS
+        [branch] if (WETNESS_DEBUG_COVER && shadowVSValid > 0.0f)
+            finalColor.rgb = WetnessCoverDebug(SHADOW_WP_LOAD(IN), ambNormal);
+    #endif
 
 #if SHADOW_FORCE_MARKER
     finalColor.rgb = float3(1.0f, 0.0f, 1.0f);   // unconditional: proves this shader ran

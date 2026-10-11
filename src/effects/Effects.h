@@ -48,4 +48,5 @@
 #include "POM.h"
 #include "PBR.h"
 #include "Terrain.h"
+#include "WetnessEffects.h"
 #include "Grass.h"

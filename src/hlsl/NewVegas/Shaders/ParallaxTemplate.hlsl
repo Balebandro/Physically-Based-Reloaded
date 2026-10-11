@@ -148,6 +148,14 @@
     #include "includes/MergedLights.hlsl"
 #endif
 
+// Wetness Effects (Includes/Wetness.hlsl), as in ObjectTemplate.hlsl: the passes that light the
+// material's own albedo, ambient and reflections get the water layer. s12 is free here as there.
+#if defined(PS) && !defined(DIFFUSE) && !defined(ONLY_SPECULAR) && !defined(NO_LIGHT) && !defined(POINT)
+    #define PARALLAX_WETNESS
+    #define WETNESS_ORTHO_REG s12
+    #include "includes/Wetness.hlsl"
+#endif
+
 // Forward sun shadows -- see ObjectTemplate.hlsl. PAR shaders do full sun lighting but had
 // no shadow term at all, so every parallax-material object rendered fully sunlit once the
 // deferred sun was switched off.
@@ -627,6 +635,23 @@ PS_OUTPUT main(PS_INPUT IN)
             }
         #endif
 
+        // Wetness, as in ObjectTemplate.hlsl: the albedo darkens before any light sees it (in the
+        // light-only pass, the light is scaled instead, since the texture pass multiplies the albedo in).
+        #ifdef PARALLAX_WETNESS
+            Wetness wet = (Wetness)0;
+            wet.roughness = 1.0f;
+            wet.normal = reflectionNormal;
+            [branch] if (shadowWorldPosValid > 0.0f)
+                wet = GetWetness(IN.shadowWorldPos.xyz, reflectionGeometricNormal, reflectionNormal);
+            float porosity = pbrMaterial ? 1.0f - saturate(sqrt(pbrMetalness)) : 1.0f;
+            #if defined(ONLY_LIGHT)
+                float3 dryAlbedo = max(decodeColor(adAlbedo), 1.0f / 256.0f);
+                baseColor.rgb *= WetAlbedo(dryAlbedo, wet.darkening, porosity) / dryAlbedo;
+            #else
+                baseColor.rgb = WetAlbedo(baseColor.rgb, wet.darkening, porosity);
+            #endif
+        #endif
+
         #if !defined(DIFFUSE) && !defined(POINT)
             if (TESR_ParallaxData.y)
                 lighting = getSunLighting(IN.lightDir.xyz, PSLightColor[0].rgb * shadowMultiplier, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness, sunVisibility);
@@ -661,6 +686,25 @@ PS_OUTPUT main(PS_INPUT IN)
             }
             else
                 lighting += baseColor.rgb * AmbientColor.rgb;
+        #endif
+
+        // The water film: the sun's highlight on it and its reflection, over the material.
+        #ifdef PARALLAX_WETNESS
+            [branch] if (wet.gloss > 0.001f) {
+                float3 wetV = -normalize(IN.shadowWorldPos.xyz);
+                float3 sunLight = decodeColor(PSLightColor[0].rgb * shadowMultiplier) * sunVisibility * LIGHT_SCALE;
+                float3 wetLayer = WetSpecular(wet.normal, wetV, TESR_WetnessSun.xyz, sunLight, wet.roughness) * smoothstep(0.0f, 0.2f, wet.gloss);
+                float3 r = reflect(-wetV, wet.normal);
+                float3 radiance;   // linear
+                [branch] if (ENVIRONMENT_CUBE)
+                    radiance = texCUBElod(EnvCubeMap, float4(r, wet.roughness * ENVIRONMENT_CUBE_MIPS)).rgb;
+                else
+                    radiance = SkyReflectionRadiance(r, wet.roughness);
+                float3 environment = !linearLighting ? sqrt(radiance) : (lightingGamma == 2.0f ? radiance : pow(max(radiance, 0.0f), 0.5f * lightingGamma));
+                float horizon = saturate(1.0f + 1.2f * dot(r, reflectionGeometricNormal));
+                wetLayer += environment * WetReflectance(saturate(dot(wet.normal, wetV)), wet.roughness, wet.gloss) * horizon * horizon;
+                lighting += wetLayer * adCompensation;
+            }
         #endif
 
         // Other light sources.
@@ -711,6 +755,11 @@ PS_OUTPUT main(PS_INPUT IN)
         #if !defined(ONLY_LIGHT)
             [branch] if (TESR_ParallaxData.y && TESR_PBRDebugData.x > 0.0f)
                 lighting = getMaterialDebug(TESR_PBRDebugData.x, roughness, ambientNormal);
+        #endif
+
+        #ifdef PARALLAX_WETNESS
+            [branch] if (WETNESS_DEBUG_COVER && shadowWorldPosValid > 0.0f)
+                lighting = WetnessCoverDebug(IN.shadowWorldPos.xyz, reflectionGeometricNormal);
         #endif
     #endif
 

@@ -669,6 +669,8 @@ void ShadowsExteriorEffect::RecreateTextures(bool cascades, bool ortho, bool cub
 		TheShaderManager->Effects.Snow->ClearSampler("TESR_OrthoMapBuffer", 19);
 		TheShaderManager->Effects.SnowAccumulation->ClearSampler("TESR_OrthoMapBuffer", 19);
 		TheShaderManager->Effects.WetWorld->ClearSampler("TESR_OrthoMapBuffer", 19);
+		// The object and terrain shaders sample it too (wetness occlusion, Includes/Wetness.hlsl).
+		TheShaderManager->ClearShaderSamplers("TESR_OrthoMapBuffer", 19);
 	}
 
 	// Reset shadow manager frame counter.

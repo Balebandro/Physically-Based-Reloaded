@@ -47,7 +47,13 @@ float3 blendNormalMaps(float2 uv, int texCount, sampler2D tex[7], float blends[7
 
     float4 normal;
     [unroll] for (int i = 0; i < texCount; i++) {
-        normal = tex2D(tex[i], uv);
+        #ifdef TERRAIN_FLAT_NORMAL7
+            // Seven-texture land: the seventh layer's slot (s13) carries the rain occlusion map
+            // (TerrainTemplate, Wetness Effects), so that layer is flat and without a gloss mask.
+            normal = i == 6 ? float4(0.5f, 0.5f, 1.0f, 0.0f) : tex2D(tex[i], uv);
+        #else
+            normal = tex2D(tex[i], uv);
+        #endif
         blendedNormal += normal.xyz * blends[i];
         gloss += normal.w * blends[i] * (spec[i] > 0 ? 1.0f : 0.0f);
         specExponent += spec[i] * blends[i];

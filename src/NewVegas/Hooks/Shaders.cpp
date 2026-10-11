@@ -658,6 +658,64 @@ namespace VanillaDecals {
     }
 }
 
+// --- Rain occlusion map on seven-texture land ---------------------------------------------------
+// Land with seven texture layers (TerrainTemplate TEX_COUNT 7: SLS2140/2142/2144/2146) has no sampler
+// to spare for Wetness Effects' rain occlusion map: the engine binds the seventh normal map to s13 for
+// each draw. Those variants draw that layer flat and read the map on s13; this puts it there after the
+// engine's texture setup and tells the shader so (pixel c213 x = 1), then puts s13 back exactly as it
+// was (texture and sampler states: the render state cache never re-sends what it thinks is bound) and
+// clears c213. Without the binding (wetness off, no map) the shader skips the test.
+namespace LandRainCover {
+
+    static bool sBound = false;
+    static IDirect3DBaseTexture9* sSavedTexture = nullptr;
+    static const D3DSAMPLERSTATETYPE kStates[] = { D3DSAMP_ADDRESSU, D3DSAMP_ADDRESSV, D3DSAMP_MINFILTER, D3DSAMP_MAGFILTER, D3DSAMP_MIPFILTER, D3DSAMP_SRGBTEXTURE };
+    static DWORD sSavedStates[6];
+
+    static bool IsSevenTextureLand(NiD3DPixelShaderEx* PixelShader) {
+        const char* Name = PixelShader ? PixelShader->Name : nullptr;
+        if (!Name) return false;
+        return !_strnicmp(Name, "SLS2140", 7) || !_strnicmp(Name, "SLS2142", 7) || !_strnicmp(Name, "SLS2144", 7) || !_strnicmp(Name, "SLS2146", 7);
+    }
+
+    void EndDraw();
+
+    void OnDraw(NiD3DPixelShaderEx* PixelShader) {
+        if (sBound) EndDraw();
+        if (!IsSevenTextureLand(PixelShader)) return;
+        WetnessEffectsShaders* Wetness = TheShaderManager->Shaders.Wetness;
+        ShadowsExteriorEffect* Shadows = TheShaderManager->Effects.ShadowsExteriors;
+        IDirect3DTexture9* Ortho = Shadows ? Shadows->ShadowMapOrthoTexture : nullptr;
+        if (!Wetness || Wetness->Constants.Flags.w <= 0.0f || !Ortho || !TheShaderManager->orthoRequired) return;
+
+        IDirect3DDevice9* Device = TheRenderManager->device;
+        Device->GetTexture(13, &sSavedTexture);   // AddRef'd: released after it is put back
+        for (int i = 0; i < 6; i++) Device->GetSamplerState(13, kStates[i], &sSavedStates[i]);
+        Device->SetTexture(13, Ortho);
+        Device->SetSamplerState(13, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+        Device->SetSamplerState(13, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+        Device->SetSamplerState(13, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+        Device->SetSamplerState(13, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+        Device->SetSamplerState(13, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+        Device->SetSamplerState(13, D3DSAMP_SRGBTEXTURE, FALSE);
+        float Bound[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+        Device->SetPixelShaderConstantF(213, Bound, 1);
+        sBound = true;
+    }
+
+    void EndDraw() {
+        if (!sBound) return;
+        IDirect3DDevice9* Device = TheRenderManager->device;
+        Device->SetTexture(13, sSavedTexture);
+        if (sSavedTexture) sSavedTexture->Release();
+        sSavedTexture = nullptr;
+        for (int i = 0; i < 6; i++) Device->SetSamplerState(13, kStates[i], sSavedStates[i]);
+        float Unbound[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        Device->SetPixelShaderConstantF(213, Unbound, 1);
+        sBound = false;
+    }
+}
+
 // ShadowLightShader's per-geometry virtuals (vtable 0x10AF2F8): the same two functions as
 // SkinShader's slots 27 and 35, hooked in this shader's own vtable, for the merged light passes.
 VirtFuncDetour kLightPrepareGeometryDetour;
@@ -666,6 +724,7 @@ VirtFuncDetour kLightPostGeometryDetour;
 void* __fastcall ShadowLightShader__PrepareGeometryForRendering(void* apThis, void*, void* apGeometry, void* apPartition, void* apRendererData, void* apState) {
     void* Result = (void*)ThisCall(kLightPrepareGeometryDetour.GetOverwrittenAddr(), apThis, apGeometry, apPartition, apRendererData, apState);
     NiD3DPass* Pass = *(NiD3DPass**)0x0126F74C;   // NiD3DShader::m_pCurrentPass
+    LandRainCover::OnDraw(Pass ? (NiD3DPixelShaderEx*)Pass->PixelShader : nullptr);
     if (VanillaDecals::OnDraw((NiGeometry*)apGeometry, Pass)) return Result;
     WriteObjectMaterial((NiGeometry*)apGeometry);
     NiD3DPixelShaderEx* PixelShader = Pass ? (NiD3DPixelShaderEx*)Pass->PixelShader : nullptr;
@@ -681,6 +740,7 @@ void __fastcall ShadowLightShader__PostGeometry(void* apThis, void*, void* apPro
     MergedLights::EndDraw();
     MaterialMaps::EndDraw();
     VanillaDecals::EndDraw();
+    LandRainCover::EndDraw();
 }
 
 // ParallaxShader's (vtable 0x10BB7A8): the same two functions again, in its own vtable.

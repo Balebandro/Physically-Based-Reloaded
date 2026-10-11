@@ -175,6 +175,7 @@
     <ClCompile Include="..\src\effects\SnowAccumulation.cpp" />
     <ClCompile Include="..\src\effects\SunShadows.cpp" />
     <ClCompile Include="..\src\effects\Terrain.cpp" />
+    <ClCompile Include="..\src\effects\WetnessEffects.cpp" />
     <ClCompile Include="..\src\effects\Tonemapping.cpp" />
     <ClCompile Include="..\src\effects\Underwater.cpp" />
     <ClCompile Include="..\src\effects\VolumetricLight.cpp" />
@@ -286,6 +287,7 @@
     <ClInclude Include="..\src\effects\SnowAccumulation.h" />
     <ClInclude Include="..\src\effects\SunShadows.h" />
     <ClInclude Include="..\src\effects\Terrain.h" />
+    <ClInclude Include="..\src\effects\WetnessEffects.h" />
     <ClInclude Include="..\src\effects\Tonemapping.h" />
     <ClInclude Include="..\src\effects\Underwater.h" />
     <ClInclude Include="..\src\effects\VolumetricLight.h" />

@@ -17,6 +17,14 @@
     #define NUM_PT_LIGHTS 24
 #endif
 
+// Wetness Effects (Includes/Wetness.hlsl, below): seven textures fill s13 with the seventh normal map,
+// so that layer goes flat (Terrain.hlsl blendNormalMaps) and the rain occlusion map is put on s13 per
+// draw instead (Hooks/Shaders.cpp, LandRainCover), which says so in c213.
+#if defined(PS) && TEX_COUNT >= 7
+    #define TERRAIN_FLAT_NORMAL7
+    #define WETNESS_ORTHO_PER_DRAW
+#endif
+
 #include "includes/Helpers.hlsl"
 #include "includes/Terrain.hlsl"
 #include "includes/Parallax.hlsl"
@@ -25,6 +33,13 @@
 // default. s14/s15 are the only free sampler slots in ps_3_0 here.
 #define SHADOW_ATLAS_SAMPLER_REG s14
 #include "includes/Shadow.hlsl"
+
+// Wetness Effects (Includes/Wetness.hlsl). The rain occlusion map goes on s13: free below seven textures
+// (NVR binds it with the shader), the seventh normal map's otherwise (see TERRAIN_FLAT_NORMAL7 above).
+#ifdef PS
+    #define WETNESS_ORTHO_REG s13
+    #include "includes/Wetness.hlsl"
+#endif
 
 
 struct VS_INPUT {
@@ -226,8 +241,24 @@ PS_OUTPUT main(PS_INPUT IN) {
     [branch] if (TESR_TerrainExtraData.x)
         skyReflection = getTerrainSkyReflection(shadowWorldPos, shadowNormal, ambientNormal, terrainRoughness, gloss);
 
+    // Wetness: the albedo darkens before any light sees it (land is porous: full darkening).
+    Wetness wet = GetWetness(shadowWorldPos, shadowNormal, terrainWorldNormal);
+    baseColor = WetAlbedo(baseColor, wet.darkening, 1.0f);
+
     float3 lighting = getSunLighting(lightTS, SunColor.rgb, eyeDir, combinedNormal, AmbientColor.rgb, baseColor, gloss, specExponent, 1.0, parallaxShadowMultiplier, ambientNormal);
     lighting += skyReflection;
+
+    // The water film: the sun's highlight on it and its reflection of the sky, over the land.
+    [branch] if (wet.gloss > 0.001f) {
+        float3 wetV = -normalize(shadowWorldPos);
+        float3 sunLight = decodeColor(SunColor.rgb) * TESR_TerrainData.z * parallaxShadowMultiplier;
+        lighting += WetSpecular(wet.normal, wetV, TESR_WetnessSun.xyz, sunLight, wet.roughness) * smoothstep(0.0f, 0.2f, wet.gloss);
+        float3 r = reflect(-wetV, wet.normal);
+        float3 radiance = SkyReflectionRadiance(r, wet.roughness);
+        float3 sky = linearLighting ? radiance : sqrt(radiance);
+        float horizon = saturate(1.0f + 1.2f * dot(r, shadowNormal));
+        lighting += sky * WetReflectance(saturate(dot(wet.normal, wetV)), wet.roughness, wet.gloss) * horizon * horizon;
+    }
 
     #if defined(NUM_PT_LIGHTS)
         [loop] for (int i = 0; i < PointLightCount; i++) {

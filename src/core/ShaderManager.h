@@ -130,6 +130,7 @@ public:
 		SkinShaders*			Skin;
 		GrassShaders*			Grass;
 		TerrainShaders*			Terrain;
+		WetnessEffectsShaders*	Wetness;
 	};
 
 	struct GameStateStruct {

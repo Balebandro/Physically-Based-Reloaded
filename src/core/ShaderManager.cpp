@@ -92,6 +92,7 @@ void ShaderManager::Initialize() {
 	TheShaderManager->RegisterShaderCollection<SkinShaders>(&TheShaderManager->Shaders.Skin);
 	TheShaderManager->RegisterShaderCollection<GrassShaders>(&TheShaderManager->Shaders.Grass);
 	TheShaderManager->RegisterShaderCollection<TerrainShaders>(&TheShaderManager->Shaders.Terrain);
+	TheShaderManager->RegisterShaderCollection<WetnessEffectsShaders>(&TheShaderManager->Shaders.Wetness);
 	
 	//setup map of constant names
 	TheShaderManager->RegisterConstant("TESR_WorldTransform", (D3DXVECTOR4*)&TheRenderManager->worldMatrix);
@@ -495,6 +496,9 @@ void ShaderManager::UpdateConstants() {
 	// TESR_PBRData (see Shaders/Includes/PBRScale.hlsl) and render black at a zero scale, so
 	// these constants stay current whether or not the PBR collection is enabled.
 	if (!Shaders.PBR->Enabled) Shaders.PBR->UpdateConstants();
+
+	// The object and terrain shaders read the wetness whether or not it is on: off, it must read dry.
+	if (!Shaders.Wetness->Enabled) Shaders.Wetness->UpdateConstants();
 
 	// Underwater effect uses constants from the water shader
 	if (Effects.Underwater->Enabled && !Shaders.Water->Enabled) Shaders.Water->UpdateConstants();
