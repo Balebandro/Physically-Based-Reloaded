@@ -25,6 +25,8 @@ public:
 		int		DebugView;
 		bool	Jitter;
 		float	WeaponTAA;
+		float	Sharpness;		// sharpening of the TAA output (never of the history), 0 off
+		float	MipBias;		// texture mip LOD bias while the jittered world draws, 0 off
 	};
 	TAASettingsStruct	Settings;
 
@@ -33,6 +35,7 @@ public:
 		D3DXVECTOR4	PrevProjection;		// x: last frame's projMatrix._11, y: its _22
 		D3DXVECTOR4	CameraDelta;		// xyz: camera position this frame minus last frame's
 		D3DXVECTOR4	Weapon;				// x: history weight scale on first-person weapon pixels
+		D3DXVECTOR4	Sharpen;			// x: sharpness of the output pass
 		D3DXMATRIX	PrevViewTransform;	// last frame's viewMatrix; the shader reads only its rotation
 	};
 	TAAStruct	Constants;
@@ -69,6 +72,9 @@ private:
 	NiCamera*	jitterCamera = nullptr;
 	float		frustumShiftX = 0.0f;
 	float		frustumShiftY = 0.0f;
+	bool		mipBiasActive = false;
+
+	void	SetMipBias(float bias);
 
 	bool	WillResolveThisFrame();
 

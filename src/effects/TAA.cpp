@@ -9,6 +9,7 @@ void TAAEffect::RegisterConstants() {
 	TheShaderManager->RegisterConstant("TESR_TAAPrevProjection", &Constants.PrevProjection);
 	TheShaderManager->RegisterConstant("TESR_TAACameraDelta", &Constants.CameraDelta);
 	TheShaderManager->RegisterConstant("TESR_TAAWeapon", &Constants.Weapon);
+	TheShaderManager->RegisterConstant("TESR_TAASharpen", &Constants.Sharpen);
 	TheShaderManager->RegisterConstant("TESR_TAAPrevViewTransform", (D3DXVECTOR4*)&Constants.PrevViewTransform);
 }
 
@@ -38,6 +39,21 @@ void TAAEffect::UpdateSettings() {
 	// 0 is a real value here -- the weapon skipped entirely -- so a missing key reading as 0 is taken
 	// at its word rather than replaced by the default.
 	Settings.WeaponTAA = std::clamp(TheSettingManager->GetSettingF("Shaders.TAA.Main", "WeaponTAA"), 0.0f, 1.0f);
+
+	// 0 is off for both, which is also what a missing key reads as.
+	Settings.Sharpness = std::clamp(TheSettingManager->GetSettingF("Shaders.TAA.Main", "Sharpness"), 0.0f, 1.0f);
+	Settings.MipBias = std::clamp(TheSettingManager->GetSettingF("Shaders.TAA.Main", "MipBias"), -1.5f, 0.0f);
+}
+
+// Texture mip LOD bias on every sampler while the jittered world draws. Averaging jittered frames
+// already filters textures, so the usual mip level comes out softer than without TAA; a negative bias
+// picks a sharper mip and TAA settles the extra shimmer that would otherwise bring. Set straight on
+// the device, around the game's render state cache; should the game set this state itself for some
+// texture, that sampler just goes back to the game's value. EndJitter resets all of them to 0.
+void TAAEffect::SetMipBias(float bias) {
+	DWORD value = *(DWORD*)&bias;
+	for (DWORD sampler = 0; sampler < 16; sampler++)
+		TheRenderManager->device->SetSamplerState(sampler, D3DSAMP_MIPMAPLODBIAS, value);
 }
 
 void TAAEffect::UpdateConstants() {
@@ -45,6 +61,7 @@ void TAAEffect::UpdateConstants() {
 	Constants.Data.y = Settings.ClipGamma;
 	Constants.Data.w = (float)Settings.DebugView;
 	Constants.Weapon = D3DXVECTOR4(Settings.WeaponTAA, 0.0f, 0.0f, 0.0f);
+	Constants.Sharpen = D3DXVECTOR4(Settings.Sharpness, 0.0f, 0.0f, 0.0f);
 }
 
 // Record the camera that rendered the frame now in the history buffer, for next frame's
@@ -136,9 +153,18 @@ void TAAEffect::BeginJitter() {
 	jitterCamera = camera;
 	jitterActive = true;
 	TheRenderManager->SetupSceneCamera();
+
+	if (Settings.MipBias < 0.0f) {
+		SetMipBias(Settings.MipBias);
+		mipBiasActive = true;
+	}
 }
 
 void TAAEffect::EndJitter() {
+	if (mipBiasActive) {
+		SetMipBias(0.0f);
+		mipBiasActive = false;
+	}
 	if (!jitterActive) return;
 
 	if (jitterCamera) {

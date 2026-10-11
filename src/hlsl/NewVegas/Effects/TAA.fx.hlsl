@@ -55,6 +55,7 @@ float4 TESR_TAAPrevProjection;         // x: last frame's projection _11, y: its
 float4 TESR_TAACameraDelta;            // xyz: camera position this frame minus last frame's
 float4x4 TESR_TAAPrevViewTransform;    // last frame's TESR_ViewTransform; only its rotation is read
 float4 TESR_TAAWeapon;                 // x: history weight scale on first-person weapon pixels (WeaponTAA)
+float4 TESR_TAASharpen;                // x: output sharpness (Sharpness), 0 off
 
 // POINT: the neighbourhood below reads exact texels.
 sampler2D TESR_SourceBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
@@ -311,10 +312,40 @@ float4 DebugPS(VSOUT IN) : COLOR0
 // effect in this codebase keeps the two distinct, and the Resolve and Output technique names are
 // what TAAEffect looks up.
 //
-// Copies the resolved frame, which lives in the FP16 history buffer, back to the screen.
+// Copies the resolved frame, which lives in the FP16 history buffer, back to the screen, sharpened
+// (Sharpness). Averaging jittered frames is a reconstruction filter about a pixel wide, so the
+// result is a little softer than a single aliased frame; every shipped TAA sharpens after it. Done
+// here, on the way out, the history itself stays unsharpened -- sharpening fed back into it would
+// compound frame after frame.
+//
+// A cross-shaped unsharp mask whose result is clamped to the range of the five taps: detail is
+// lifted, but nothing can overshoot its neighbours, so there are no halos and no HDR blow-ups. The
+// strength backs off where the neighbourhood is already high-contrast (edges TAA just settled), so
+// it mostly brings back texture detail.
 float4 OutputPS(VSOUT IN) : COLOR0
 {
-	return float4(tex2D(TESR_TAAHistoryBuffer, IN.UVCoord).rgb, 1.0f);
+	float3 center = tex2D(TESR_TAAHistoryBuffer, IN.UVCoord).rgb;
+	float sharpness = TESR_TAASharpen.x;
+	[branch] if (sharpness <= 0.0f) return float4(center, 1.0f);
+
+	float2 texel = TESR_ReciprocalResolution.xy;
+	float3 up    = tex2D(TESR_TAAHistoryBuffer, IN.UVCoord + float2(0.0f, -texel.y)).rgb;
+	float3 down  = tex2D(TESR_TAAHistoryBuffer, IN.UVCoord + float2(0.0f,  texel.y)).rgb;
+	float3 left  = tex2D(TESR_TAAHistoryBuffer, IN.UVCoord + float2(-texel.x, 0.0f)).rgb;
+	float3 right = tex2D(TESR_TAAHistoryBuffer, IN.UVCoord + float2( texel.x, 0.0f)).rgb;
+
+	float3 lo = min(center, min(min(up, down), min(left, right)));
+	float3 hi = max(center, max(max(up, down), max(left, right)));
+
+	// Local contrast, relative to brightness: 0 on flat areas, toward 1 across hard edges.
+	float lumaLo = dot(lo, float3(0.2126f, 0.7152f, 0.0722f));
+	float lumaHi = dot(hi, float3(0.2126f, 0.7152f, 0.0722f));
+	float contrast = saturate((lumaHi - lumaLo) / (lumaHi + 0.05f));
+	float amount = sharpness * 2.0f * (1.0f - 0.75f * contrast);
+
+	float3 blurred = 0.25f * (up + down + left + right);
+	float3 sharpened = center + (center - blurred) * amount;
+	return float4(clamp(sharpened, lo, hi), 1.0f);
 }
 
 technique Resolve
