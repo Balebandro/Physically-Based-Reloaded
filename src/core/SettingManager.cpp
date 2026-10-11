@@ -400,6 +400,7 @@ void SettingManager::LoadSettings() {
 	SettingsMain.Main.RemoveUnderwater = GetSettingI("Main.Main.Water", "RemoveUnderwater");
 	SettingsMain.Main.RemovePrecipitations = GetSettingI("Shaders.WetnessEffects.Rain", "RemovePrecipitations");
 	SettingsMain.Main.ForceReflections = GetSettingI("Main.Main.Water", "ForceReflections");
+	SettingsMain.Main.ReflectionClipFix = GetSettingI("Main.Main.Water", "ReflectionClipFix");
 	SettingsMain.Main.MemoryHeapManagement = GetSettingI("Main.Main.Memory", "HeapManagement");
 	SettingsMain.Main.MemoryTextureManagement = GetSettingI("Main.Main.Memory", "TextureManagement");
 	SettingsMain.Main.AnisotropicFilter = GetSettingI("Main.Main.Misc", "AnisotropicFilter");

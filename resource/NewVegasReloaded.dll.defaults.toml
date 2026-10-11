@@ -67,6 +67,7 @@ Detailed = false            # Also shows the average frame time and the slowest 
 
 [_Main.Main.Water]
 ForceReflections = true     # Always render the full world in reflection for HD reflections.
+ReflectionClipFix = true    # Re-issue the water clip plane while the water reflection is drawn. Without it, looking level or up, far LOD buildings vanish from water reflections and terrain below the water surface shows in them. Same clip plane, re-set after the pass's shaders are bound.
 RemoveUnderwater = false    # Disables fog underwater. Not compatible with custom underwater shader.
 
 [_Main.Main.ReducedQuality]

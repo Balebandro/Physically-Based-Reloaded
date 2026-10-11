@@ -10,6 +10,7 @@ struct SettingsMainStruct {
 		bool	RemoveUnderwater;
 		bool	ForceMSAA;
 		bool	ForceReflections;
+		bool	ReflectionClipFix;	// [Main.Main.Water] re-issue the water clip plane while the reflection pass draws (Render.cpp)
 		bool	RemovePrecipitations;
 		bool	MemoryHeapManagement;
 		bool	MemoryTextureManagement;

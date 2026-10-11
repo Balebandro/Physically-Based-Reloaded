@@ -4,6 +4,23 @@
 // See ReflectionPassScope: the next shader bind re-uploads NVR's constants.
 static bool ForcePixelConstants = false;
 
+// Water reflection clip plane fix ([Main.Main.Water] ReflectionClipFix, default on; from NVR Unofficial Optimized).
+// The game sets clip plane 0 (the water surface) once at the start of the reflection pass (TESWaterSystem::SetClipPlane),
+// before the pass binds any vertex shader. The driver then misapplies that plane to the later programmable draws: looking
+// level or up, far LOD buildings were clipped out of the reflection map entirely and terrain below the water surface (the
+// LOD push-down walls) showed in it. A diagnostic build that rebuilt the plane per draw found the game's value correct to
+// 3e-5 at every draw, so the plane is right and only needs re-issuing: while the reflection pass draws, clip plane 0 is
+// set again, unchanged, before and after each pass binds its shaders. Same plane, no other change.
+static bool InReflectionPass = false;
+static void ReissueReflectionClipPlane() {
+	if (!InReflectionPass || !TheSettingManager->SettingsMain.Main.ReflectionClipFix) return;
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	DWORD ClipEnable = 0;
+	if (!Device || FAILED(Device->GetRenderState(D3DRS_CLIPPLANEENABLE, &ClipEnable)) || !(ClipEnable & 1)) return;
+	float Plane[4];
+	if (SUCCEEDED(Device->GetClipPlane(0, Plane))) Device->SetClipPlane(0, Plane);
+}
+
 void (__thiscall* Render)(Main*, BSRenderedTexture*, int, int) = (void (__thiscall*)(Main*, BSRenderedTexture*, int, int))Hooks::Render;
 void __fastcall RenderHook(Main* This, UInt32 edx, BSRenderedTexture* RenderedTexture, int Arg2, int Arg3) {
 	
@@ -66,7 +83,9 @@ void __fastcall SetShadersHook(BSShader* This, UInt32 edx, UInt32 PassIndex) {
 		InterfaceManager->ShowMessage("Shaders Traced");
 		//DWNode::AddNode(Name, Geometry->m_parent, Geometry);
 	}
+	ReissueReflectionClipPlane();
 	(*SetShaders)(This, PassIndex);
+	ReissueReflectionClipPlane();   // once the pass's shaders are bound: this is the one that makes the plane take
 
 	// Per-object material data for the PBR object shaders: ObjectMaterial, pixel register c150
 	// (Shaders/Includes/Object.hlsl). Set directly, per draw: the TESR_ constant table only
@@ -220,7 +239,9 @@ void (__thiscall* RenderReflections)(WaterManager*, NiCamera*, ShadowSceneNode*)
 void __fastcall RenderReflectionsHook(WaterManager* This, UInt32 edx, NiCamera* Camera, ShadowSceneNode* SceneNode) {
 	ReflectionPassScope scope;
 	if (DWNode::Get()) DWNode::AddNode("BEGIN REFLECTIONS RENDERING", NULL, NULL);
+	InReflectionPass = true;
 	(*RenderReflections)(This, Camera, SceneNode);
+	InReflectionPass = false;
 	if (DWNode::Get()) DWNode::AddNode("END REFLECTIONS RENDERING", NULL, NULL);
 }
 void (__thiscall* RenderPipboy)(Main*, NiGeometry*, NiDX9Renderer*) = (void (__thiscall*)(Main*, NiGeometry*, NiDX9Renderer*))Hooks::RenderPipboy;
