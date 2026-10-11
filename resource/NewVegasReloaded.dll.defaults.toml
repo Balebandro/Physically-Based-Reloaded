@@ -65,9 +65,6 @@ Enabled = false             # Shows frames per second in a corner of the screen 
 Position = 0                # [0-3] Corner: 0 top left, 1 top right, 2 bottom left, 3 bottom right.
 Detailed = false            # Also shows the average frame time and the slowest frame of each half second, which reveals stutters the average hides.
 
-[_Main.Main.Precipitations]
-RemovePrecipitations = false   # Disables vanilla rain and other precipitations.
-
 [_Main.Main.Water]
 ForceReflections = true     # Always render the full world in reflection for HD reflections.
 RemoveUnderwater = false    # Disables fog underwater. Not compatible with custom underwater shader.
@@ -1175,6 +1172,14 @@ RippleRadius = 1.0                  # [0.1-2.0] How far a ripple spreads, in cel
 RippleBreadth = 0.5                 # [0.05-1.0] Width of a ripple's ring, in cells.
 RippleLifetime = 0.5                # [0.05-4.0] How long a ripple lasts, in seconds.
 
+[_Shaders.WetnessEffects.Rain]
+UseRainMesh = true                  # NVR's own rain: the RainMesh mesh (3D Rain's, by default) kept on the player and animated whenever the weather rains, in any worldspace, with no rain script needed. Culled under cover like any rain mesh (CullUnderCover); RemovePrecipitations does not hide it.
+RainMesh = "nvdlc02/sky/nvdlc02rain.nif"   # The rain mesh NVR uses, relative to Meshes (3D Rain replaces this one).
+ForceRain = false                   # Rain whatever the weather (outdoors): NVR's rain falls and the world soaks, puddles and splashes as in a full downpour. For testing, or a load order whose weathers never rain.
+CullUnderCover = true               # Rain meshes (NVR's own, 3D Rain's strip particles, Honest Hearts' rain) stop under roofs, porches, bridges and overhangs, tested against the top-down ortho map ([Shaders.ShadowsExteriors.Ortho]: Resolution 2 or more for small roofs).
+RemovePrecipitations = false        # Hides vanilla rain and other precipitations: the weather's own rain and snow, and the rain meshes rain scripts place on the player (RainMeshRoots). NVR's own rain mesh stays. Takes effect immediately.
+RainMeshRoots = "FlameStripTest"    # Node names that mark a rain mesh (a mesh root or any node above the particles), separated by ;. 3D Rain's rain mesh root is FlameStripTest.
+
 [_Shaders.WetnessEffects.Debug]
 WetnessOverride = -1.0              # [-1.0-1.0] Force the wetness, whatever the weather (for testing: vanilla New Vegas has almost no rain). -1 off.
 PuddleOverride = -1.0               # [-1.0-1.0] Force the puddle wetness. -1 off.
@@ -1182,7 +1187,7 @@ RainOverride = -1.0                 # [-1.0-1.0] Force the rain intensity (splas
 ShowCover = false                   # Debug view of what counts as under cover: green open to the sky, red covered, yellow outside the top-down map (counted open), blue no map, dark blue land with no map slot.
 
 [_Shaders.WetnessEffects.Status]
-Enabled = true                      # Wetness Effects (from Community Shaders): in the rain surfaces darken and gain a glossy water film, puddles form on flat ground, drops splash and ripple, nothing under cover gets wet, ground by the water stays wet; things dry after the rain. Uses the top-down ortho map ([Shaders.ShadowsExteriors.Ortho]) for cover: Resolution 2 or more keeps porches and roofs dry.
+Enabled = true                      # Wetness Effects (from Community Shaders): in the rain surfaces darken and gain a glossy water film, puddles form on flat ground, drops splash and ripple, nothing under cover gets wet, ground by the water stays wet; things dry after the rain. Uses the top-down ortho map ([Shaders.ShadowsExteriors.Ortho]) for cover: Resolution 2 or more keeps porches and roofs dry. Also the switch for the rain ([Shaders.WetnessEffects.Rain]): off, the game's rain is left as the game draws it.
 
 [_Shaders.WetWorld.Main]
 Amount = 0.0                        # Darkness of puddles

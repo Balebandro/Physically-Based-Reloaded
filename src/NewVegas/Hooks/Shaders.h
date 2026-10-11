@@ -22,6 +22,11 @@ extern VirtFuncDetour kHairPrepareGeometryDetour;
 extern VirtFuncDetour kHairPostGeometryDetour;
 void* __fastcall HairShader__PrepareGeometryForRendering(void* apThis, void*, void* apGeometry, void* apPartition, void* apRendererData, void* apState);
 void __fastcall HairShader__PostGeometry(void* apThis, void*, void* apProperties);
+extern VirtFuncDetour kNoLightingPrepareGeometryDetour;
+extern VirtFuncDetour kNoLightingPostGeometryDetour;
+void* __fastcall NoLightingShader__PrepareGeometryForRendering(void* apThis, void*, void* apGeometry, void* apPartition, void* apRendererData, void* apState);
+void __fastcall NoLightingShader__PostGeometry(void* apThis, void*, void* apProperties);
+namespace RainParticles { void SetRainSource(NiNode* Root); }
 void UpdateFaceGenInteriorFlag();
 extern void(__thiscall* TestFrustumCull)(ShadowSceneLight*, NiCullingProcess*);
 void __fastcall TestFrustumCullHook(ShadowSceneLight* This, void*, NiCullingProcess* Culler);

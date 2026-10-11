@@ -1,5 +1,7 @@
 #pragma once
 
+#include <set>
+
 // 0xB89D80
 VirtFuncDetour kSkyShaderConstantsDetour;
 void __fastcall SkyShader__UpdateConstants(SkyShader* apThis, void*, const NiPropertyState* apProperties) {
@@ -783,6 +785,432 @@ void* __fastcall HairShader__PrepareGeometryForRendering(void* apThis, void*, vo
 void __fastcall HairShader__PostGeometry(void* apThis, void*, void* apProperties) {
     ThisCall(kHairPostGeometryDetour.GetOverwrittenAddr(), apThis, apProperties);
     MergedLights::EndDraw();
+}
+
+// --- Rain particles culled under cover ---------------------------------------------------------
+// The game's own rain (3D Rain's strip particles, Honest Hearts' rain: references the rain scripts
+// enable and move onto the player) is drawn by the NoLighting shader like fire, glows and sparks, and
+// falls straight through roofs. For rain draws only, NVR binds its own pair (Shaders/RainParticles.hlsl):
+// the game's NOLIGHT vertex and pixel shaders reproduced on their own registers, so the engine's
+// constant uploads still land where they are read, plus a test against NVR's top-down ortho depth map
+// that fades the rain out under anything above it. A rain draw is a geometry under a node named in
+// [Shaders.WetnessEffects.Rain] RainMeshRoots (3D Rain's mesh root is "FlameStripTest"). Every
+// other NoLighting draw, and rain drawn with a NOLIGHT variant the pair does not cover (skinned,
+// untextured), keeps the game's shaders. Both shaders are swapped together: a 3.0 shader cannot pair
+// with a 2.x one.
+namespace RainParticles {
+
+    static IDirect3DVertexShader9* sVertex[16] = {};  // SOFT x FALLOFF x SUBTEX x VERTEX_COLOR
+    static bool sVertexTried[16] = {};
+    static IDirect3DPixelShader9* sPixel[4] = {};     // SOFT x premultiplied
+    static bool sPixelTried[4] = {};
+    static bool sSwapped = false;
+    static bool sTextureBound = false;
+    static DWORD sOldSampler[4];
+    static bool sHidden = false;
+    static DWORD sOldColorWrite = 0;
+
+    static void* Compile(const char* Profile, const D3DXMACRO* Macros) {
+        char Path[MAX_PATH];
+        sprintf_s(Path, "%sRainParticles.hlsl", ShadersPath);
+        ID3DXBuffer* Code = nullptr;
+        ID3DXBuffer* Errors = nullptr;
+        HRESULT Result = D3DXCompileShaderFromFileA(Path, Macros, NULL, "main", Profile, 0, &Code, &Errors, NULL);
+        if (Errors) {
+            Logger::Log("RainParticles: %s", (char*)Errors->GetBufferPointer());
+            Errors->Release();
+        }
+        if (FAILED(Result) || !Code) {
+            Logger::Log("RainParticles: could not compile %s (%s)", Path, Profile);
+            return nullptr;
+        }
+        void* Shader = nullptr;
+        IDirect3DDevice9* Device = TheRenderManager->device;
+        if (Profile[0] == 'v') Device->CreateVertexShader((const DWORD*)Code->GetBufferPointer(), (IDirect3DVertexShader9**)&Shader);
+        else Device->CreatePixelShader((const DWORD*)Code->GetBufferPointer(), (IDirect3DPixelShader9**)&Shader);
+        Code->Release();
+        Logger::Log("RainParticles: compiled %s %s", Profile, Shader ? "" : "(create failed)");
+        return Shader;
+    }
+
+    static IDirect3DVertexShader9* GetVertex(bool Falloff, bool SubTex, bool Color, bool Soft) {
+        int Index = (Soft ? 8 : 0) + (Falloff ? 4 : 0) + (SubTex ? 2 : 0) + (Color ? 1 : 0);
+        if (!sVertexTried[Index]) {
+            sVertexTried[Index] = true;
+            D3DXMACRO Macros[6] = {};
+            int n = 0;
+            Macros[n++] = { "VS", "1" };
+            if (Soft) Macros[n++] = { "SOFT", "1" };
+            if (Falloff) Macros[n++] = { "FALLOFF", "1" };
+            if (SubTex) Macros[n++] = { "SUBTEX", "1" };
+            if (Color) Macros[n++] = { "VERTEX_COLOR", "1" };
+            sVertex[Index] = (IDirect3DVertexShader9*)Compile("vs_3_0", Macros);
+        }
+        return sVertex[Index];
+    }
+
+    static IDirect3DPixelShader9* GetPixel(bool Premultiplied, bool Soft) {
+        int Index = (Soft ? 2 : 0) + (Premultiplied ? 1 : 0);
+        if (!sPixelTried[Index]) {
+            sPixelTried[Index] = true;
+            D3DXMACRO Macros[4] = {};
+            int n = 0;
+            Macros[n++] = { "PS", "1" };
+            if (Premultiplied) Macros[n++] = { "PMA", "1" };
+            if (Soft) Macros[n++] = { "SOFT", "1" };
+            sPixel[Index] = (IDirect3DPixelShader9*)Compile("ps_3_0", Macros);
+        }
+        return sPixel[Index];
+    }
+
+    // 0 not rain, 1 a game rain mesh (named in RainMeshRoots), 2 NVR's own rain mesh (RainEffect::UpdateRainMesh).
+    static int RainKind(NiAVObject* Object, const std::vector<std::string>& Roots, NiNode* Own) {
+        int Kind = 0;
+        for (int Depth = 0; Object && Depth < 12; Depth++, Object = Object->m_parent) {
+            if (Own && Object == Own) return 2;
+            const char* Name = Object->m_pcName;
+            if (Kind || !Name || !*Name) continue;
+            for (const std::string& Root : Roots)
+                if (!_stricmp(Name, Root.c_str())) { Kind = 1; break; }
+        }
+        return Kind;
+    }
+
+    // The game's vertex shader, by name, as the variant reproducing it: false where none does.
+    static bool VertexVariant(const char* Name, bool& Falloff, bool& SubTex, bool& Color) {
+        if (!Name || _strnicmp(Name, "NOLIGHT0", 8)) return false;
+        switch (atoi(Name + 7)) {
+            case 0:          Falloff = false; SubTex = false; Color = false; return true;
+            case 2: case 16: Falloff = false; SubTex = false; Color = true;  return true;
+            case 4:          Falloff = true;  SubTex = false; Color = false; return true;
+            case 6: case 18: Falloff = true;  SubTex = false; Color = true;  return true;
+            case 17:         Falloff = false; SubTex = true;  Color = true;  return true;
+            case 19:         Falloff = true;  SubTex = true;  Color = true;  return true;
+        }
+        return false;
+    }
+
+    void EndDraw();
+    static bool BeginSwap(IDirect3DDevice9* Device, bool Falloff, bool SubTex, bool Color, bool Premultiplied, bool Soft = false);
+
+    void OnDraw(NiGeometry* Geometry, NiD3DPass* Pass) {
+        if (sSwapped || sHidden) EndDraw();   // a previous draw's PostGeometry did not run
+        RainEffect* Rain = TheShaderManager->Effects.Rain;
+        if (!Rain || !(Rain->CullParticles || Rain->RemoveVanilla) || !Pass || !Geometry) return;
+        int Kind = RainKind(Geometry, Rain->ParticleRoots, Rain->OwnRainRoot);
+        if (!Kind) return;
+
+        // RemovePrecipitations: the game's rain mesh is not drawn at all (NVR's own is). Colour writes off
+        // for this draw only (as the muted highlight passes), so nothing holds on to a mesh the game may free.
+        if (Rain->RemoveVanilla && Kind == 1) {
+            IDirect3DDevice9* Device = TheRenderManager->device;
+            Device->GetRenderState(D3DRS_COLORWRITEENABLE, &sOldColorWrite);
+            Device->SetRenderState(D3DRS_COLORWRITEENABLE, 0);
+            sHidden = true;
+            return;
+        }
+
+        if (!Rain->CullParticles || !TheShaderManager->GameState.isExterior) return;
+        Rain->LastParticleDraw = GetTickCount();
+
+        NiD3DVertexShader* GameVertex = (NiD3DVertexShader*)Pass->VertexShader;
+        NiD3DPixelShader* GamePixel = (NiD3DPixelShader*)Pass->PixelShader;
+        if (!GameVertex || !GamePixel || !GameVertex->Name || !GamePixel->Name) return;
+
+        bool Falloff, SubTex, Color;
+        bool Premultiplied = !_strnicmp(GamePixel->Name, "NOLIGHTTEXVCPMA", 15);
+        bool Supported = VertexVariant(GameVertex->Name, Falloff, SubTex, Color) && (Premultiplied || !_strnicmp(GamePixel->Name, "NOLIGHTTEX", 10));
+
+        // Once per shader pair: which the rain is drawn with, and whether it is culled.
+        static std::set<std::string> sLogged;
+        std::string Pair = std::string(GameVertex->Name) + " + " + GamePixel->Name;
+        if (sLogged.insert(Pair).second)
+            Logger::Log("RainParticles: rain drawn with %s: %s", Pair.c_str(), Supported ? "culled under cover" : "not covered, left to the game's shaders");
+        if (!Supported) return;
+        sSwapped = BeginSwap(TheRenderManager->device, Falloff, SubTex, Color, Premultiplied);
+    }
+
+    // The swap itself: NVR's pair for the variant, the clip-to-ortho transform, the ortho map on sampler 8.
+    static bool BeginSwap(IDirect3DDevice9* Device, bool Falloff, bool SubTex, bool Color, bool Premultiplied, bool Soft) {
+        IDirect3DVertexShader9* Vertex = GetVertex(Falloff, SubTex, Color, Soft);
+        IDirect3DPixelShader9* Pixel = GetPixel(Premultiplied, Soft);
+        if (!Vertex || !Pixel) return false;
+
+        // The ortho map while it is being rendered (asked for while rain draws, ShaderManager). Without
+        // it the rain is drawn uncut.
+        ShadowsExteriorEffect* Shadows = TheShaderManager->Effects.ShadowsExteriors;
+        IDirect3DTexture9* Ortho = Shadows ? Shadows->ShadowMapOrthoTexture : nullptr;
+        bool HaveOrtho = Ortho && TheShaderManager->orthoRequired;
+
+        // Clip space to the ortho map: the inverse of the camera's rotation and projection (the game's
+        // own, as the draw uses them: the position relative to the camera, which the ortho transform
+        // takes) times the ortho transform.
+        D3DXMATRIX ViewRotation = TheRenderManager->viewMatrix;
+        ViewRotation._41 = ViewRotation._42 = ViewRotation._43 = 0.0f;
+        D3DXMATRIX ViewProjection = ViewRotation * TheRenderManager->projMatrix;
+        D3DXMATRIX ClipToOrtho;
+        if (!D3DXMatrixInverse(&ClipToOrtho, NULL, &ViewProjection)) return false;
+        if (HaveOrtho) ClipToOrtho = ClipToOrtho * Shadows->ShadowMaps[ShadowsExteriorEffect::MapOrtho].ShadowCameraToLight;
+
+        Device->SetVertexShader(Vertex);
+        Device->SetPixelShader(Pixel);
+        Device->SetVertexShaderConstantF(200, (const float*)&ClipToOrtho, 4);
+        float CoverData[4] = { HaveOrtho ? Shadows->ShadowMaps[ShadowsExteriorEffect::MapOrtho].ShadowMapInverseResolution : 0.0f, 0.0005f, 0.0f, 0.0f };
+        Device->SetPixelShaderConstantF(200, CoverData, 1);
+        if (HaveOrtho) {
+            Device->GetSamplerState(8, D3DSAMP_MINFILTER, &sOldSampler[0]);
+            Device->GetSamplerState(8, D3DSAMP_MAGFILTER, &sOldSampler[1]);
+            Device->GetSamplerState(8, D3DSAMP_ADDRESSU, &sOldSampler[2]);
+            Device->GetSamplerState(8, D3DSAMP_ADDRESSV, &sOldSampler[3]);
+            Device->SetTexture(8, Ortho);
+            Device->SetSamplerState(8, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+            Device->SetSamplerState(8, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+            Device->SetSamplerState(8, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+            Device->SetSamplerState(8, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+            sTextureBound = true;
+        }
+        return true;
+    }
+
+    // After the draw: the shaders the render state believes are bound go back on the device, and
+    // sampler 8 is left as it was; a hidden rain draw gets its colour writes back.
+    void EndDraw() {
+        IDirect3DDevice9* Device = TheRenderManager->device;
+        if (sHidden) {
+            Device->SetRenderState(D3DRS_COLORWRITEENABLE, sOldColorWrite);
+            sHidden = false;
+        }
+        if (!sSwapped) return;
+        Device->SetVertexShader(TheRenderManager->renderState->GetVertexShader());
+        Device->SetPixelShader(TheRenderManager->renderState->GetPixelShader());
+        if (sTextureBound) {
+            Device->SetTexture(8, NULL);
+            Device->SetSamplerState(8, D3DSAMP_MINFILTER, sOldSampler[0]);
+            Device->SetSamplerState(8, D3DSAMP_MAGFILTER, sOldSampler[1]);
+            Device->SetSamplerState(8, D3DSAMP_ADDRESSU, sOldSampler[2]);
+            Device->SetSamplerState(8, D3DSAMP_ADDRESSV, sOldSampler[3]);
+            sTextureBound = false;
+        }
+        sSwapped = false;
+    }
+
+    // --- Rain draws found at the device ----------------------------------------------------------
+    // Particle systems never reach NoLighting's per-geometry hooks above: the engine draws them on
+    // another path. So the four draw calls of the device itself are patched (IDirect3DDevice9 vtable
+    // slots 81-84), and while it rains a draw whose stage 0 texture is one of the rain mesh's
+    // (RainEffect::UpdateRainMesh hands the mesh over each frame) gets the swap. The game's NOLIGHT
+    // variant is told by its bytecode size, distinct for each variant the pair reproduces. Outside
+    // the rain the patched calls go straight through.
+    static IDirect3DBaseTexture9* sRainTextures[8] = {};
+    static int sRainTextureCount = 0;
+    static bool sDeviceActive = false;
+    static std::unordered_map<void*, int> sVariants;   // shader handle -> variant (see VariantOf), -1 none
+
+    typedef HRESULT (STDMETHODCALLTYPE* DrawPrimitiveFn)(IDirect3DDevice9*, D3DPRIMITIVETYPE, UINT, UINT);
+    typedef HRESULT (STDMETHODCALLTYPE* DrawIndexedPrimitiveFn)(IDirect3DDevice9*, D3DPRIMITIVETYPE, INT, UINT, UINT, UINT, UINT);
+    typedef HRESULT (STDMETHODCALLTYPE* DrawPrimitiveUPFn)(IDirect3DDevice9*, D3DPRIMITIVETYPE, UINT, CONST void*, UINT);
+    typedef HRESULT (STDMETHODCALLTYPE* DrawIndexedPrimitiveUPFn)(IDirect3DDevice9*, D3DPRIMITIVETYPE, UINT, UINT, UINT, CONST void*, D3DFORMAT, CONST void*, UINT);
+    static DrawPrimitiveFn sDrawPrimitive = nullptr;
+    static DrawIndexedPrimitiveFn sDrawIndexedPrimitive = nullptr;
+    static DrawPrimitiveUPFn sDrawPrimitiveUP = nullptr;
+    static DrawIndexedPrimitiveUPFn sDrawIndexedPrimitiveUP = nullptr;
+
+    // Vertex: bit 0 vertex colour, bit 1 sub-texture offsets, bit 2 falloff, bit 3 soft particles.
+    // Pixel: bit 0 premultiplied, bit 1 soft particles. The soft pairs (716 + 696 streaks, 1076 + 900 mist)
+    // are what this setup draws the rain with, read off the device (Shaders/RainParticles.hlsl, SOFT).
+    // From the game's NOLIGHT bytecode sizes (shaderpackage019): 000 616, 002/016 640, 017 664,
+    // 004 1004, 006/018 1028, 019 1052; TEX 536, TEXVC 564, TEXVCPMA 396.
+    static int VariantOf(IUnknown* Shader, bool Vertex) {
+        if (!Shader) return -1;
+        auto Found = sVariants.find(Shader);
+        if (Found != sVariants.end()) return Found->second;
+        UINT Size = 0;
+        if (Vertex) ((IDirect3DVertexShader9*)Shader)->GetFunction(NULL, &Size);
+        else ((IDirect3DPixelShader9*)Shader)->GetFunction(NULL, &Size);
+        int Variant = -1;
+        if (Vertex) {
+            switch (Size) {
+                case 616: Variant = 0; break;
+                case 640: Variant = 1; break;
+                case 664: Variant = 3; break;
+                case 1004: Variant = 4; break;
+                case 1028: Variant = 5; break;
+                case 1052: Variant = 7; break;
+                case 716: Variant = 8 | 1; break;            // soft particles: streaks
+                case 1076: Variant = 8 | 4 | 2 | 1; break;   // soft particles: mist (sub-textures, falloff)
+            }
+        }
+        else {
+            switch (Size) {
+                case 536: case 564: Variant = 0; break;
+                case 396: Variant = 1; break;
+                case 696: Variant = 2 | 1; break;            // soft, premultiplied
+                case 900: Variant = 2; break;                // soft, fog modes
+            }
+        }
+        sVariants[Shader] = Variant;
+        return Variant;
+    }
+
+    static bool BeginDeviceDraw(IDirect3DDevice9* Device) {
+        if (!sDeviceActive || sSwapped || sHidden) return false;
+        IDirect3DBaseTexture9* Texture = nullptr;
+        Device->GetTexture(0, &Texture);
+        bool Rain = false;
+        for (int i = 0; i < sRainTextureCount; i++) if (Texture == sRainTextures[i]) Rain = true;
+        if (Texture) Texture->Release();
+        if (!Rain) return false;
+
+        IDirect3DVertexShader9* GameVertex = nullptr;
+        IDirect3DPixelShader9* GamePixel = nullptr;
+        Device->GetVertexShader(&GameVertex);
+        Device->GetPixelShader(&GamePixel);
+        int VertexVariant = VariantOf(GameVertex, true);
+        int PixelVariant = VariantOf(GamePixel, false);
+        UINT VertexSize = 0, PixelSize = 0;
+        static std::set<std::pair<void*, void*>> sLogged;
+        if (sLogged.insert({ GameVertex, GamePixel }).second) {
+            if (GameVertex) GameVertex->GetFunction(NULL, &VertexSize);
+            if (GamePixel) GamePixel->GetFunction(NULL, &PixelSize);
+            // Diagnostic: the bytecode of the pair, for disassembly (RainShader_<n>.vso/.pso in the game folder),
+            // and the render target and depth surface the draw goes to.
+            static int sDumped = 0;
+            if (sDumped < 8) {
+                char Path[64];
+                std::vector<char> Code;
+                if (GameVertex && VertexSize) {
+                    Code.resize(VertexSize); GameVertex->GetFunction(Code.data(), &VertexSize);
+                    sprintf_s(Path, "RainShader_%d.vso", sDumped);
+                    if (FILE* File = fopen(Path, "wb")) { fwrite(Code.data(), 1, VertexSize, File); fclose(File); }
+                }
+                if (GamePixel && PixelSize) {
+                    Code.resize(PixelSize); GamePixel->GetFunction(Code.data(), &PixelSize);
+                    sprintf_s(Path, "RainShader_%d.pso", sDumped);
+                    if (FILE* File = fopen(Path, "wb")) { fwrite(Code.data(), 1, PixelSize, File); fclose(File); }
+                }
+                IDirect3DSurface9* Target = nullptr;
+                IDirect3DSurface9* Depth = nullptr;
+                Device->GetRenderTarget(0, &Target);
+                Device->GetDepthStencilSurface(&Depth);
+                D3DSURFACE_DESC TargetDesc = {};
+                if (Target) Target->GetDesc(&TargetDesc);
+                Logger::Log("RainParticles: pair %d dumped; target %ux%u format %d, depth %p, world depth %p",
+                    sDumped, TargetDesc.Width, TargetDesc.Height, (int)TargetDesc.Format, Depth, TheTextureManager->TerrainBlendWorldDepth);
+                if (Target) Target->Release();
+                if (Depth) Depth->Release();
+                sDumped++;
+            }
+            Logger::Log("RainParticles: rain drawn with shaders of %u + %u bytes: %s", VertexSize, PixelSize,
+                VertexVariant >= 0 && PixelVariant >= 0 ? "culled under cover" : "not a variant NVR reproduces, left to the game's shaders");
+        }
+        if (GameVertex) GameVertex->Release();
+        if (GamePixel) GamePixel->Release();
+        if (VertexVariant < 0 || PixelVariant < 0) return false;
+
+        TheShaderManager->Effects.Rain->LastParticleDraw = GetTickCount();
+        // The soft and plain families do not mix: their vertex outputs differ.
+        if (((VertexVariant & 8) != 0) != ((PixelVariant & 2) != 0)) return false;
+        sSwapped = BeginSwap(Device, (VertexVariant & 4) != 0, (VertexVariant & 2) != 0, (VertexVariant & 1) != 0, (PixelVariant & 1) != 0, (VertexVariant & 8) != 0);
+        return sSwapped;
+    }
+
+    static HRESULT STDMETHODCALLTYPE DrawPrimitiveHook(IDirect3DDevice9* Device, D3DPRIMITIVETYPE Type, UINT Start, UINT Count) {
+        bool Swapped = BeginDeviceDraw(Device);
+        HRESULT Result = sDrawPrimitive(Device, Type, Start, Count);
+        if (Swapped) EndDraw();
+        return Result;
+    }
+    static HRESULT STDMETHODCALLTYPE DrawIndexedPrimitiveHook(IDirect3DDevice9* Device, D3DPRIMITIVETYPE Type, INT Base, UINT MinIndex, UINT Vertices, UINT Start, UINT Count) {
+        bool Swapped = BeginDeviceDraw(Device);
+        HRESULT Result = sDrawIndexedPrimitive(Device, Type, Base, MinIndex, Vertices, Start, Count);
+        if (Swapped) EndDraw();
+        return Result;
+    }
+    static HRESULT STDMETHODCALLTYPE DrawPrimitiveUPHook(IDirect3DDevice9* Device, D3DPRIMITIVETYPE Type, UINT Count, CONST void* Data, UINT Stride) {
+        bool Swapped = BeginDeviceDraw(Device);
+        HRESULT Result = sDrawPrimitiveUP(Device, Type, Count, Data, Stride);
+        if (Swapped) EndDraw();
+        return Result;
+    }
+    static HRESULT STDMETHODCALLTYPE DrawIndexedPrimitiveUPHook(IDirect3DDevice9* Device, D3DPRIMITIVETYPE Type, UINT MinIndex, UINT Vertices, UINT Count, CONST void* Indices, D3DFORMAT Format, CONST void* Data, UINT Stride) {
+        bool Swapped = BeginDeviceDraw(Device);
+        HRESULT Result = sDrawIndexedPrimitiveUP(Device, Type, MinIndex, Vertices, Count, Indices, Format, Data, Stride);
+        if (Swapped) EndDraw();
+        return Result;
+    }
+
+    static void InstallDeviceHooks() {
+        static bool sInstalled = false;
+        IDirect3DDevice9* Device = TheRenderManager ? TheRenderManager->device : nullptr;
+        if (sInstalled || !Device) return;
+        sInstalled = true;
+        void** Vtbl = *(void***)Device;
+        DWORD Old;
+        VirtualProtect(&Vtbl[81], 4 * sizeof(void*), PAGE_EXECUTE_READWRITE, &Old);
+        sDrawPrimitive = (DrawPrimitiveFn)Vtbl[81];
+        sDrawIndexedPrimitive = (DrawIndexedPrimitiveFn)Vtbl[82];
+        sDrawPrimitiveUP = (DrawPrimitiveUPFn)Vtbl[83];
+        sDrawIndexedPrimitiveUP = (DrawIndexedPrimitiveUPFn)Vtbl[84];
+        Vtbl[81] = (void*)DrawPrimitiveHook;
+        Vtbl[82] = (void*)DrawIndexedPrimitiveHook;
+        Vtbl[83] = (void*)DrawPrimitiveUPHook;
+        Vtbl[84] = (void*)DrawIndexedPrimitiveUPHook;
+        VirtualProtect(&Vtbl[81], 4 * sizeof(void*), Old, &Old);
+        Logger::Log("RainParticles: device draw calls hooked for rain culling");
+    }
+
+    // The rain textures: the D3D texture of each particle system's NoLighting property in the mesh
+    // (BSShaderNoLightingProperty::srcTexture +0x60, NiTexture::textureData +0x24,
+    // NiDX9TextureData::GetD3DBaseTexture vtable 0x9C; NiGeometry::shaderProp +0xA8).
+    static void CollectTextures(NiAVObject* Object, int Depth) {
+        if (!Object || Depth > 8) return;
+        UInt32 Vtbl = *(UInt32*)Object;
+        if (Vtbl == 0x10BD44C || Vtbl == 0x10BE35C) {   // NiParticleSystem, BSStripParticleSystem
+            void* Property = *(void**)((char*)Object + 0xA8);
+            if (!Property || *(UInt32*)Property != 0x10AE670) return;   // BSShaderNoLightingProperty
+            void* Texture = *(void**)((char*)Property + 0x60);
+            void* Data = Texture ? *(void**)((char*)Texture + 0x24) : nullptr;
+            if (!Data) return;
+            IDirect3DBaseTexture9* D3DTexture = (IDirect3DBaseTexture9*)ThisCall((*(UInt32**)Data)[0x9C / 4], Data);
+            if (!D3DTexture) return;
+            for (int i = 0; i < sRainTextureCount; i++) if (sRainTextures[i] == D3DTexture) return;
+            if (sRainTextureCount < 8) sRainTextures[sRainTextureCount++] = D3DTexture;
+            return;
+        }
+        if (Vtbl == 0x109B5AC || Vtbl == 0x10A8F90) {   // NiNode, BSFadeNode
+            NiAVObject** Children = *(NiAVObject***)((char*)Object + 0xA0);
+            UInt16 Count = *(UInt16*)((char*)Object + 0xA6);
+            for (UInt16 i = 0; Children && i < Count; i++) CollectTextures(Children[i], Depth + 1);
+        }
+    }
+
+    // Each frame from RainEffect::UpdateRainMesh: the rain mesh drawn now (null when none).
+    void SetRainSource(NiNode* Root) {
+        sRainTextureCount = 0;
+        sDeviceActive = false;
+        if (!Root) return;
+        CollectTextures(Root, 0);
+        if (!sRainTextureCount) return;
+        InstallDeviceHooks();
+        sDeviceActive = sDrawIndexedPrimitive != nullptr;
+    }
+}
+
+// BSShaderNoLighting's per-geometry virtuals (vtable 0x10BB230): slot 27 the shared
+// NiD3DShader::PrepareGeometryForRendering (0xE812F0), slot 35 its own PostGeometry (0xBC8D90).
+// Hooked in this vtable only, so no other shader is touched.
+VirtFuncDetour kNoLightingPrepareGeometryDetour;
+VirtFuncDetour kNoLightingPostGeometryDetour;
+
+void* __fastcall NoLightingShader__PrepareGeometryForRendering(void* apThis, void*, void* apGeometry, void* apPartition, void* apRendererData, void* apState) {
+    void* Result = (void*)ThisCall(kNoLightingPrepareGeometryDetour.GetOverwrittenAddr(), apThis, apGeometry, apPartition, apRendererData, apState);
+    RainParticles::OnDraw((NiGeometry*)apGeometry, *(NiD3DPass**)0x0126F74C);   // NiD3DShader::m_pCurrentPass
+    return Result;
+}
+
+void __fastcall NoLightingShader__PostGeometry(void* apThis, void*, void* apProperties) {
+    ThisCall(kNoLightingPostGeometryDetour.GetOverwrittenAddr(), apThis, apProperties);
+    RainParticles::EndDraw();
 }
 
 // SkinShader's per-geometry virtuals (vtable 0x10BB980), bracketing every skin draw on both of

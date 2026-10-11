@@ -500,6 +500,15 @@ void ShaderManager::UpdateConstants() {
 	// The object and terrain shaders read the wetness whether or not it is on: off, it must read dry.
 	if (!Shaders.Wetness->Enabled) Shaders.Wetness->UpdateConstants();
 
+	// Rain is part of Wetness Effects ([Shaders.WetnessEffects.Rain]): its switch turns all of it on or off.
+	Effects.Rain->ApplySwitch(Shaders.Wetness->Enabled);
+
+	// The game's rain particles are culled under cover with the ortho map (Hooks/Shaders.cpp, RainParticles).
+	if (Effects.Rain->ParticlesDrawnRecently()) orthoRequired = true;
+
+	// RemovePrecipitations, applied and undone live.
+	Effects.Rain->ApplyVanillaPrecipitations();
+	Effects.Rain->UpdateRainMesh();   // NVR's own rain mesh (3D Rain's), on the player while it rains
 	// Underwater effect uses constants from the water shader
 	if (Effects.Underwater->Enabled && !Shaders.Water->Enabled) Shaders.Water->UpdateConstants();
 	if (!Effects.ShadowsExteriors->Enabled && Effects.ShadowsInteriors->Enabled) Effects.ShadowsExteriors->UpdateConstants(); // Interior and exterior shadows share settings

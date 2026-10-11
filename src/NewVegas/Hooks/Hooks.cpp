@@ -48,7 +48,8 @@ void AttachHooks() {
 	kParallaxPostGeometryDetour.ReplaceVirtualFunc(0x10BB7A8 + 35 * 4, ParallaxShader__PostGeometry);
 	kHairPrepareGeometryDetour.ReplaceVirtualFunc(0x10BBB50 + 27 * 4, HairShader__PrepareGeometryForRendering);
 	kHairPostGeometryDetour.ReplaceVirtualFunc(0x10BBB50 + 35 * 4, HairShader__PostGeometry);
-
+	kNoLightingPrepareGeometryDetour.ReplaceVirtualFunc(0x10BB230 + 27 * 4, NoLightingShader__PrepareGeometryForRendering);   // rain particles culled under cover
+	kNoLightingPostGeometryDetour.ReplaceVirtualFunc(0x10BB230 + 35 * 4, NoLightingShader__PostGeometry);
 	WriteRelCall(0xBE0B73, NiD3DVertexShaderEx::Free);
 	WriteRelCall(0xBE0AF3, NiD3DPixelShaderEx::Free);
 	SafeWrite32(0x00E7624D, sizeof(RenderManager));
@@ -83,10 +84,8 @@ void AttachHooks() {
 	if (TheSettingManager->SettingsMain.Main.ReplaceIntro) 
 		WriteRelJump(Jumpers::SetTileShaderConstants::Hook, SetTileShaderConstantsHook);
 
-	if (TheSettingManager->SettingsMain.Main.RemovePrecipitations) {
-		WriteRelJump(0x0063AFC4, 0x0063AFD8);
-		WriteRelJump(0x0063A5CB, 0x0063A5DE);
-	}
+	// [Shaders.WetnessEffects.Rain] RemovePrecipitations is applied, and undone, live by
+	// RainEffect::ApplyVanillaPrecipitations (a one-byte patch there, so it can be reverted).
 
 	// Vanilla fog remover.
 	for (UInt32 uiAddress : {0x6335EE, 0xB795FA, 0xB7AE86, 0xB7B539, 0xB7C3AB, 0xB86738, 0xBAA43B, 0xBB1B5B, 0xBB1FA5, 0xBB670E, 0xBBDF26, 0xBBE3EC, 0xBC6E33, 0xBD4BED }) {

@@ -94,6 +94,8 @@ void WetnessEffectsShaders::UpdateConstants() {
 		wetness = min(wetness, 1.0f);
 		puddles = min(puddles, 1.0f);
 
+		// [Shaders.WetnessEffects.Rain] ForceRain: the rain falls whatever the weather, and wets the world with it.
+		if (TheShaderManager->Effects.Rain && TheShaderManager->Effects.Rain->ForceRain) raining = wetness = puddles = 1.0f;
 
 		if (Settings.WetnessOverride >= 0.0f) wetness = Settings.WetnessOverride;
 		if (Settings.PuddleOverride >= 0.0f) puddles = Settings.PuddleOverride;
