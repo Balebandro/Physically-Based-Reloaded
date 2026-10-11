@@ -103,7 +103,6 @@ public:
 		RainEffect*				Rain;
 		SharpeningEffect*		Sharpening;
 		HeatHazeEffect*			HeatHaze;
-		SandstormEffect*			Sandstorm;
 		SnowEffect*				Snow;
 		SnowAccumulationEffect*	SnowAccumulation;
 		ShadowsExteriorEffect*	ShadowsExteriors;

@@ -506,26 +506,6 @@ CloudyScale = 0.35                     # [0.0-1.0] Heat in cloudy weather, as a 
 Enabled = false                        # Heat haze: distant ground shimmers in the hot air near the horizon, strongest on clear afternoons, gone at night and in rain or snow.
 
 
-[_Shaders.Sandstorm.Main]
-Density = 0.0004                       # [0.0-0.003] How thick the dust is, as haze optical depth per game unit of distance at full storm. 0.0004 turns about a third of a level view 1000 units away to dust, a bit under two-thirds of one 2500 away, and reaches the 0.85 cap near 4700. Looking up thins it (see HeightFalloff). Scaled by the gusts.
-HeightFalloff = 1500.0                 # [100-10000] Altitude above the eye (game units, 4096 to a cell) over which the dust thins by a factor of e. The dust is thickest at and below eye level and thins above it, so a storm's top is a soft ceiling.
-DustColorR = 0.75                      # [0.0-1.0] Red of the dust, sRGB, as it looks in full daylight. Its brightness follows the game's own fog colour, so it darkens at dusk and at night.
-DustColorG = 0.60                      # [0.0-1.0] Green of the dust, sRGB (see DustColorR).
-DustColorB = 0.40                      # [0.0-1.0] Blue of the dust, sRGB (see DustColorR).
-StreakStrength = 0.6                   # [0.0-1.0] How bright the wind-blown grains and streaks are against the haze. 0 leaves the haze alone.
-StreakSpeed = 1.2                      # [0.0-5.0] How fast the streaks sweep across the screen, in screen heights per second, at medium wind. Half that in no wind, one and a half times that in full wind.
-StreakScale = 160.0                    # [40-400] How fine the streaks are: higher gives thinner and more numerous streaks and grains.
-NearStreakDistance = 300.0             # [1-2000] Grains fade out nearer than this (game units), so the weapon and the hands are never streaked.
-SkyDarken = 0.55                       # [0.0-1.0] Sky brightness at full storm, as a share of its clear-weather brightness. The sky also takes on the dust colour.
-GustStrength = 0.35                    # [0.0-1.0] How far the gusts swing the density and the streaks, either way. About one gust every five seconds.
-WindThreshold = 150.0                  # [0-255] The weather's own wind speed (0-255) a storm needs, at least this. Weather below it is not a storm, however dusty.
-FogDistanceThreshold = 20000.0         # [1000-100000] The sky's fog far distance (game units) a storm needs: closer than this is dusty air. A cell is 4096 units.
-ForceStorm = false                     # Debug: a storm whatever the weather, to see and tune the effect at once.
-
-[_Shaders.Sandstorm.Status]
-Enabled = true                         # Sandstorm: windy, dusty weather that is neither rain nor snow fills the air with a warm dust haze and sweeping grains, easing in and out over a few seconds. Costs nothing outside such weather.
-
-
 [_Shaders.ImageAdjust.Main]
 Brightness = 1.0                      # Overall image brightness.
 Saturation = 1.0                      # Overall image saturation.
