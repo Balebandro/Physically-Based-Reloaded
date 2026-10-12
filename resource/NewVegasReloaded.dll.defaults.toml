@@ -903,18 +903,6 @@ UseNormals = false                  # EXPERIMENTAL-Uses the R & G channels of th
 SphericalNormals = false            # EXPERIMENTAL-Uses this setting if the normals of the clouds point to the center of the panoramic texture
 Transparency = 1.0                  # Clouds base transparency
 Brightness = 1.0                    # Clouds base brightness
-Volumetric = 1                      # [0-1] 1 draws the clouds as a thick slab lit by the sun: bright silver edges when the sun is behind them, darker undersides, and sunset colour. Above about 9 degrees the slab replaces the flat shading, UseNormals included. The game's cloud textures still decide where the clouds are. 0 draws the flat clouds as before.
-Steps = 8                           # [2-16] Samples through the cloud layer for each pixel. 16 gives smoother edges at about twice the cost.
-CloudHeight = 6000.0                # [500-20000] Height of the base of the cloud layer above the camera, in game units (one cell is 4096 units across). The game's cloud texture is laid on this base. The height only changes the scale of the erosion noise (higher gives finer wisps). The depth of the layer comes from CloudThickness and UVScale.
-CloudThickness = 2500.0             # [100-10000] Depth of the cloud layer in game units. Thicker clouds are more opaque when you look through them.
-Density = 1.0                       # [0.0-3.0] How much of the texture's coverage becomes cloud. It acts before the erosion, so it grows or shrinks the outlines of the clouds.
-Absorption = 1.0                    # [0.0-4.0] How strongly the clouds absorb light, both for the view through them and for the sun reaching their insides. Higher is more opaque and darker underneath.
-DetailScale = 2.0                   # [0.2-10.0] Size of the procedural noise that erodes the edges, in cells per 1000 game units. Higher gives finer wisps.
-UVScale = 0.025                     # [0.001-0.2] How far the cloud texture is carried through the layer, in texture units per 1000 game units of horizontal travel. 0.025 is one repeat per 40000 units, the default. The sky mesh's UVs are in the NIF, so tune this: raise it if the depth looks too flat, lower it if clouds smear at low elevations.
-Scattering = 0.4                    # [0.0-0.9] Forward scattering (Henyey-Greenstein g). Higher gives a stronger glow where the clouds are backlit by the sun.
-SilverLining = 1.0                  # [0.0-3.0] Brightness of the thin edges of the clouds when the sun is behind them. 0 turns the silver lining off.
-AmbientStrength = 1.0               # [0.0-3.0] Brightness of the sky light on the clouds. At night the clouds are lit by this alone.
-DetailSpeed = 0.02                  # [0.0-0.2] How fast the erosion noise drifts, in cells per second.
 
 [_Shaders.Sky.Status]
 Enabled = true                      # Replaces the sky and cloud shaders to add more subtle sky shading.
