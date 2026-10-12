@@ -37,8 +37,8 @@ void HeatHazeEffect::UpdateConstants() {
 	float weatherTarget = 1.0f;
 	if (TheShaderManager->GameState.isCloudy) weatherTarget = Settings.CloudyScale;
 	if (TheShaderManager->GameState.isRainy || TheShaderManager->GameState.isSnow) weatherTarget = 0.0f;
-	WetWorldEffect* wet = TheShaderManager->Effects.WetWorld;
-	if (wet) weatherTarget *= 1.0f - std::clamp(max(wet->Constants.Data.x, wet->Constants.Data.z), 0.0f, 1.0f);
+	WetnessEffectsShaders* wet = TheShaderManager->Shaders.Wetness;
+	if (wet) weatherTarget *= 1.0f - std::clamp(wet->RainFactor(), 0.0f, 1.0f);
 	// Eased over about ten seconds, so a weather change fades the haze rather than switching it.
 	float ease = min(1.0f, elapsed / 10.0f);
 	WeatherHeat += (weatherTarget - WeatherHeat) * ease;

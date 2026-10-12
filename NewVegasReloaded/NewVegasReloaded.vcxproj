@@ -128,6 +128,7 @@
     <ClCompile Include="..\src\core\PresetManager.cpp" />
     <ClCompile Include="..\src\core\RenderManager.cpp" />
     <ClCompile Include="..\src\core\RenderPass.cpp" />
+    <ClCompile Include="..\src\core\DrawProfiler.cpp" />
     <ClCompile Include="..\src\core\SettingManager.cpp" />
     <ClCompile Include="..\src\core\ShaderCollection.cpp" />
     <ClCompile Include="..\src\core\ShaderManager.cpp" />
@@ -167,6 +168,8 @@
     <ClCompile Include="..\src\effects\ShadowsInteriors.cpp" />
     <ClCompile Include="..\src\effects\Sharpening.cpp" />
     <ClCompile Include="..\src\effects\HeatHaze.cpp" />
+    <ClCompile Include="..\src\effects\Sandstorm.cpp" />
+    <ClCompile Include="..\src\effects\WetnessReflections.cpp" />
     <ClCompile Include="..\src\effects\SkinScattering.cpp" />
     <ClCompile Include="..\src\effects\DynamicCubemaps.cpp" />
     <ClCompile Include="..\src\effects\Skin.cpp" />
@@ -183,7 +186,6 @@
     <ClCompile Include="..\src\effects\Water.cpp" />
     <ClCompile Include="..\src\effects\WaterLens.cpp" />
     <ClCompile Include="..\src\effects\HudRaindrops.cpp" />
-    <ClCompile Include="..\src\effects\WetWorld.cpp" />
     <ClCompile Include="..\lib\Detours\detours.cpp" />
     <ClCompile Include="..\lib\Detours\disasm.cpp" />
     <ClCompile Include="..\lib\Detours\modules.cpp" />
@@ -238,6 +240,7 @@
     <ClInclude Include="..\src\core\PresetManager.h" />
     <ClInclude Include="..\src\core\RenderManager.h" />
     <ClInclude Include="..\src\core\RenderPass.h" />
+    <ClInclude Include="..\src\core\DrawProfiler.h" />
     <ClInclude Include="..\src\core\SettingManager.h" />
     <ClInclude Include="..\src\core\ShaderCollection.h" />
     <ClInclude Include="..\src\core\ShaderManager.h" />
@@ -280,6 +283,8 @@
     <ClInclude Include="..\src\effects\ShadowsInteriors.h" />
     <ClInclude Include="..\src\effects\Sharpening.h" />
     <ClInclude Include="..\src\effects\HeatHaze.h" />
+    <ClInclude Include="..\src\effects\Sandstorm.h" />
+    <ClInclude Include="..\src\effects\WetnessReflections.h" />
     <ClInclude Include="..\src\effects\SkinScattering.h" />
     <ClInclude Include="..\src\effects\DynamicCubemaps.h" />
     <ClInclude Include="..\src\effects\Skin.h" />
@@ -296,7 +301,6 @@
     <ClInclude Include="..\src\effects\Water.h" />
     <ClInclude Include="..\src\effects\WaterLens.h" />
     <ClInclude Include="..\src\effects\HudRaindrops.h" />
-    <ClInclude Include="..\src\effects\WetWorld.h" />
     <ClInclude Include="..\lib\Bink\bink.h" />
     <ClInclude Include="..\lib\Bink\radbase.h" />
     <ClInclude Include="..\lib\Detours\detours.h" />

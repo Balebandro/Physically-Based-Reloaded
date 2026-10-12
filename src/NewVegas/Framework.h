@@ -36,6 +36,7 @@
 #include "Defines.h"
 #include "Base.h"
 #include "Managers.h"
+#include "../core/DrawProfiler.h"
 #include "../Core/Hooks/GameCommon.h"
 #include "../Core/Hooks/FormsCommon.h"
 #include "../NewVegas/Hooks/Settings.h"

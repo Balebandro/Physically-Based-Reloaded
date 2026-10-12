@@ -611,6 +611,13 @@ void __fastcall NiD3DVertexShaderEx::Free(NiD3DVertexShaderEx* shader) {
 */
 void NiD3DPixelShaderEx::SetupShader(IDirect3DPixelShader9* CurrentPixelHandle) {
 
+	// The draw call profiler's shader list: this shader's name for the game's own and NVR's handles.
+	if (DrawProfiler::Active) {
+		DrawProfiler::NameShader((void*)ShaderHandleBackup, Name, true);
+		for (ShaderRecordType Type : { ShaderRecordType::Exterior, ShaderRecordType::Interior, ShaderRecordType::Default })
+			if (ShaderRecordPixel* Record = GetShaderRecord(Type)) DrawProfiler::NameShader(Record->ShaderHandle, Name, false);
+	}
+
 	if (!Enabled || !TheSettingManager->SettingsMain.Main.RenderEffects) {
 		ShaderHandle = (IDirect3DPixelShader9*)ShaderHandleBackup;
 		return;
@@ -667,7 +674,8 @@ ShaderRecordVertex::ShaderRecordVertex(const char* shaderName) {
 
 ShaderRecordVertex::~ShaderRecordVertex() {
 
-	ShaderHandle->Release();
+	// Null when CreateVertexShader failed: the record is deleted right after (ShaderRecord::LoadShader).
+	if (ShaderHandle) ShaderHandle->Release();
 
 }
 
@@ -680,7 +688,7 @@ ShaderRecordPixel::ShaderRecordPixel(const char* shaderName) {
 
 ShaderRecordPixel::~ShaderRecordPixel() {
 
-	ShaderHandle->Release();
+	if (ShaderHandle) ShaderHandle->Release();
 
 }
 
@@ -695,4 +703,4 @@ void ShaderRecordPixel::SetShaderConstantF(UInt32 RegisterIndex, D3DXVECTOR4* Va
 
 	TheRenderManager->device->SetPixelShaderConstantF(RegisterIndex, (const float*)Value, RegisterCount);
 
-}
+}

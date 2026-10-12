@@ -29,7 +29,7 @@ extern VirtFuncDetour kNoLightingPrepareGeometryDetour;
 extern VirtFuncDetour kNoLightingPostGeometryDetour;
 void* __fastcall NoLightingShader__PrepareGeometryForRendering(void* apThis, void*, void* apGeometry, void* apPartition, void* apRendererData, void* apState);
 void __fastcall NoLightingShader__PostGeometry(void* apThis, void*, void* apProperties);
-namespace RainParticles { void SetRainSource(NiNode* Root); }
+namespace RainParticles { void SetRainSource(NiNode* Root, bool Cull, float Density); }
 void UpdateFaceGenInteriorFlag();
 extern void(__thiscall* TestFrustumCull)(ShadowSceneLight*, NiCullingProcess*);
 void __fastcall TestFrustumCullHook(ShadowSceneLight* This, void*, NiCullingProcess* Culler);

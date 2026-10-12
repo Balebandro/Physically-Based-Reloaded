@@ -208,7 +208,17 @@ float OpenSky(float4 ortho) {
 
 float4 main(PS_INPUT IN) : COLOR0 {
     float4 texel = tex2D(DiffuseMap, IN.uv.xy);
-    float open = OpenSky(IN.ortho);
+    float4 c = texel * IN.color * MaterialColor;
+    // Most of a rain quad is see-through: those pixels add nothing, so they skip the cover test's
+    // taps (and the soft fade's depth read) and are dropped. Premultiplied, the alpha alone says so;
+    // otherwise the colour must be black too, in case the pass blends additively.
+#ifdef PMA
+    float visible = c.a * IN.uv.z;
+#else
+    float visible = max(c.a * IN.uv.z, max(c.r, max(c.g, c.b)));
+#endif
+    float open = 0.0f;
+    [branch] if (visible > 0.002f) open = OpenSky(IN.ortho);
     clip(open - 0.001f);
     float fog = IN.uv.w;
 #ifdef SOFT
@@ -217,12 +227,10 @@ float4 main(PS_INPUT IN) : COLOR0 {
 
 #ifdef PMA
     // NOLIGHTTEXVCPMA: premultiplied, faded by the fog.
-    float4 c = texel * IN.color * MaterialColor;
     float alpha = c.a * IN.uv.z * open;
     return float4(c.rgb * (1.0f - fog) * alpha, 1.0f);
 #else
     // NOLIGHTTEX / NOLIGHTTEXVC.
-    float4 c = texel * IN.color * MaterialColor;
     float3 fogged = lerp(c.rgb, FogColor.rgb, fog);     // fog to the fog colour
     float3 faded = c.rgb * (1.0f - fog);                 // fog to black (additive)
     float3 mode = lerp(fogged, faded, Toggles.x);

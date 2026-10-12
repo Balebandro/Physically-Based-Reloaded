@@ -634,6 +634,7 @@ void ShadowsExteriorEffect::RecreateTextures(bool cascades, bool ortho, bool cub
 		Constants.ShadowBlur.x = 1.0f / (float)ShadowAtlasSize;
 
 		TheShaderManager->Effects.SunShadows->ClearSampler("TESR_ShadowAtlas", 16);
+		TheShaderManager->Effects.Sandstorm->ClearSampler("TESR_ShadowAtlas", 16);
 
 		// Game shaders sample the atlas too when forward sun shadows are on, and each holds
 		// its own cached pointer to the texture just released above. Clearing only the
@@ -668,7 +669,7 @@ void ShadowsExteriorEffect::RecreateTextures(bool cascades, bool ortho, bool cub
 		TheShaderManager->Effects.Rain->ClearSampler("TESR_OrthoMapBuffer", 19);
 		TheShaderManager->Effects.Snow->ClearSampler("TESR_OrthoMapBuffer", 19);
 		TheShaderManager->Effects.SnowAccumulation->ClearSampler("TESR_OrthoMapBuffer", 19);
-		TheShaderManager->Effects.WetWorld->ClearSampler("TESR_OrthoMapBuffer", 19);
+		TheShaderManager->Effects.Sandstorm->ClearSampler("TESR_OrthoMapBuffer", 19);
 		// The object and terrain shaders sample it too (wetness occlusion, Includes/Wetness.hlsl).
 		TheShaderManager->ClearShaderSamplers("TESR_OrthoMapBuffer", 19);
 	}

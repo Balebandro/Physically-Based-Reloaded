@@ -598,6 +598,7 @@ void ShadowManager::RecalculateBillboardVectors(D3DXVECTOR3* SunDir) {
 * Renders the different shadow maps: Near, Far, Ortho.
 */
 void ShadowManager::RenderShadowMaps() {
+	DrawProfiler::Scope ProfilerScope(DrawProfiler::PhaseShadows);
 	if (!TheSettingManager->SettingsMain.Main.RenderEffects) return; // cancel out if rendering effects is disabled
 
 	// track point lights for interiors and exteriors

@@ -20,7 +20,7 @@ float4 TESR_HorizonColor : register(c18);
 float4 TESR_SkyLowColor : register(c19);
 float4 TESR_SunDirection : register(c20);
 float4 TESR_ReciprocalResolution : register(c21);
-float4 TESR_WetWorldData : register(c22);
+float4 TESR_WetnessData : register(c22);   // Wetness Effects: z how hard it rains (ripples)
 float4 TESR_WaterShorelineParams : register(c23);
 float4 TESR_SunColor : register(c24);
 float4 TESR_CameraPosition : register(c25);
@@ -68,7 +68,7 @@ PS_OUTPUT main(PS_INPUT IN) {
     float exteriorRefractionModifier = TESR_WaterSettings.w;	// reduce refraction because of the way interior depth is encoded
 
     float3 surfaceNormal = getWaveTexture(IN, distance, TESR_WaveParams).xyz;
-    surfaceNormal = getRipples(IN, TESR_RippleSampler, surfaceNormal, distance, TESR_WetWorldData.x) * -1;
+    surfaceNormal = getRipples(IN, TESR_RippleSampler, surfaceNormal, distance, TESR_WetnessData.z) * -1;
 
     float4 refractionPos = getReflectionSamplePosition(IN, surfaceNormal, exteriorRefractionModifier);
     refractionPos.y = refractionPos.w - refractionPos.y;

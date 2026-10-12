@@ -98,6 +98,7 @@ HRESULT __fastcall SetSamplerStateHook(NiDX9RenderState* This, UInt32 edx, UInt3
 
 void (__thiscall* RenderWorldSceneGraph)(Main*, Sun*, UInt8, UInt8, UInt8) = (void (__thiscall*)(Main*, Sun*, UInt8, UInt8, UInt8))Hooks::RenderWorldSceneGraph;
 void __fastcall RenderWorldSceneGraphHook(Main* This, UInt32 edx, Sun* SkySun, UInt8 IsFirstPerson, UInt8 WireFrame, UInt8 Arg4) {
+	DrawProfiler::Scope ProfilerScope(DrawProfiler::PhaseWorld);
 	// TAA sub-pixel jitter covers the world scene and nothing else -- see TAAEffect::BeginJitter.
 	TAAEffect* TAA = TheShaderManager->Effects.TAA;
 	if (TAA) TAA->BeginJitter();
@@ -162,6 +163,7 @@ void __fastcall RenderWorldSceneGraphHook(Main* This, UInt32 edx, Sun* SkySun, U
 
 void (__thiscall* RenderFirstPerson)(Main*, NiDX9Renderer*, NiGeometry*, Sun*, BSRenderedTexture*) = (void (__thiscall*)(Main*, NiDX9Renderer*, NiGeometry*, Sun*, BSRenderedTexture*))Hooks::RenderFirstPerson;
 void __fastcall RenderFirstPersonHook(Main* This, UInt32 edx, NiDX9Renderer* Renderer, NiGeometry* Geo, Sun* SkySun, BSRenderedTexture* RenderedTexture) {
+	DrawProfiler::Scope ProfilerScope(DrawProfiler::PhaseFirstPerson);
 	// Clear the depth buffer before rendering first person model to prevent clipping with world objects & other artefacts
 	TheRenderManager->Clear(NULL, NiRenderer::kClear_ZBUFFER);
 	//ThisCall(0x00874C10, Global);
@@ -218,6 +220,7 @@ private:
 };
 void (__thiscall* RenderReflections)(WaterManager*, NiCamera*, ShadowSceneNode*) = (void (__thiscall*)(WaterManager*, NiCamera*, ShadowSceneNode*))Hooks::RenderReflections;
 void __fastcall RenderReflectionsHook(WaterManager* This, UInt32 edx, NiCamera* Camera, ShadowSceneNode* SceneNode) {
+	DrawProfiler::Scope ProfilerScope(DrawProfiler::PhaseReflections);
 	ReflectionPassScope scope;
 	if (DWNode::Get()) DWNode::AddNode("BEGIN REFLECTIONS RENDERING", NULL, NULL);
 	(*RenderReflections)(This, Camera, SceneNode);
@@ -225,6 +228,7 @@ void __fastcall RenderReflectionsHook(WaterManager* This, UInt32 edx, NiCamera* 
 }
 void (__thiscall* RenderPipboy)(Main*, NiGeometry*, NiDX9Renderer*) = (void (__thiscall*)(Main*, NiGeometry*, NiDX9Renderer*))Hooks::RenderPipboy;
 void __fastcall RenderPipboyHook(Main* This, UInt32 edx, NiGeometry* Geo, NiDX9Renderer* Renderer) {
+	DrawProfiler::Scope ProfilerScope(DrawProfiler::PhaseInterface);
 	WorldSceneGraph->UpdateParticleShaderFoV(Player->firstPersonFoV);
 //	Player->SetFoV(Player->firstPersonFoV);
 	(*RenderPipboy)(This, Geo, Renderer);
@@ -244,6 +248,7 @@ bool bDoneRender_LockPickMenu = false;
 
 void(__cdecl* ProcessImageSpaceShaders)(NiDX9Renderer*, BSRenderedTexture*, BSRenderedTexture*) = (void(__cdecl*)(NiDX9Renderer*, BSRenderedTexture*, BSRenderedTexture*))Hooks::ProcessImageSpaceShaders;
 void __cdecl ProcessImageSpaceShadersHook(NiDX9Renderer* Renderer, BSRenderedTexture* SourceTarget, BSRenderedTexture* DestinationTarget) {
+	DrawProfiler::Scope ProfilerScope(DrawProfiler::PhaseImageSpace);
 	if (TheShaderManager->Effects.SkinScattering) TheShaderManager->Effects.SkinScattering->Unbind();
 	bool bLiveRenderedMenu = false; // FORenderedMenu, FOPipBoyManager
 	bool bLive3DMenu = false; // Normal menus, but 3D, lockpick etc
@@ -340,6 +345,7 @@ static void RenderMainMenuMovie() {
 
 CallDetour kRenderInterfaceDetour;
 void __fastcall RenderInterfaceHook(void* apThis, void*, void* apCuller, bool abPipboyVisible) {
+	DrawProfiler::Scope ProfilerScope(DrawProfiler::PhaseInterface);
 	RenderMainMenuMovie();
 	ImGuiManager::NewFrame();
 	ThisCall(kRenderInterfaceDetour.GetOverwrittenAddr(), apThis, apCuller, abPipboyVisible);

@@ -18,7 +18,7 @@ float4 TESR_GameTime : register(c17);
 float4 TESR_HorizonColor : register(c18);
 float4 TESR_SunDirection : register(c19);
 float4 TESR_ReciprocalResolution : register(c20);
-float4 TESR_WetWorldData : register(c21);
+float4 TESR_WetnessData : register(c21);   // Wetness Effects: z how hard it rains (ripples)
 float4 TESR_WaterShorelineParams : register(c22);
 float4 TESR_WaterLODColor : register(c23);
 float4 TESR_DebugVar : register(c24);
@@ -68,7 +68,7 @@ PS_OUTPUT main(PS_INPUT IN, float2 PixelPos : VPOS) {
     float exteriorDepthModifier = 1;			// reduce depth value for fog because of the way interior depth is encoded
 
     float3 surfaceNormal = getWaveTexture(IN, distance, TESR_WaveParams).xyz;
-    surfaceNormal = getRipples(IN, TESR_RippleSampler, surfaceNormal, distance, TESR_WetWorldData.x);
+    surfaceNormal = getRipples(IN, TESR_RippleSampler, surfaceNormal, distance, TESR_WetnessData.z);
 
     float refractionCoeff = (waterDepth.y * depthFog) * ((saturate(distance * 0.002) * (-4 + VarAmounts.w)) + 4);
     float4 reflectionPos = getReflectionSamplePosition(IN, surfaceNormal, refractionCoeff * exteriorRefractionModifier);
@@ -98,4 +98,4 @@ PS_OUTPUT main(PS_INPUT IN, float2 PixelPos : VPOS) {
     OUT.color_0.a = color.a;
     
     return OUT;
-};
+};

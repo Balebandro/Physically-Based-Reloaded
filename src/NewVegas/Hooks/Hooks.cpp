@@ -86,7 +86,7 @@ void AttachHooks() {
 	if (TheSettingManager->SettingsMain.Main.ReplaceIntro) 
 		WriteRelJump(Jumpers::SetTileShaderConstants::Hook, SetTileShaderConstantsHook);
 
-	// [Shaders.WetnessEffects.Rain] RemovePrecipitations is applied, and undone, live by
+	// [Main.Main.Precipitations] RemovePrecipitations is applied, and undone, live by
 	// RainEffect::ApplyVanillaPrecipitations (a one-byte patch there, so it can be reverted).
 
 	// Vanilla fog remover.

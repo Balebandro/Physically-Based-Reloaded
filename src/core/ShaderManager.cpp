@@ -68,6 +68,8 @@ void ShaderManager::Initialize() {
 	TheShaderManager->RegisterEffect<RainEffect>(&TheShaderManager->Effects.Rain);
 	TheShaderManager->RegisterEffect<SharpeningEffect>(&TheShaderManager->Effects.Sharpening);
 	TheShaderManager->RegisterEffect<HeatHazeEffect>(&TheShaderManager->Effects.HeatHaze);
+	TheShaderManager->RegisterEffect<SandstormEffect>(&TheShaderManager->Effects.Sandstorm);
+	TheShaderManager->RegisterEffect<WetnessReflectionsEffect>(&TheShaderManager->Effects.WetnessReflections);
 	TheShaderManager->RegisterEffect<ShadowsExteriorEffect>(&TheShaderManager->Effects.ShadowsExteriors);
 	TheShaderManager->RegisterEffect<ShadowsInteriorsEffect>(&TheShaderManager->Effects.ShadowsInteriors);
 	TheShaderManager->RegisterEffect<PointShadowsEffect>(&TheShaderManager->Effects.PointShadows);
@@ -79,7 +81,6 @@ void ShaderManager::Initialize() {
 	TheShaderManager->RegisterEffect<VolumetricLightEffect>(&TheShaderManager->Effects.VolumetricLight);
 	TheShaderManager->RegisterEffect<VolumetricFogEffect>(&TheShaderManager->Effects.VolumetricFog);
 	TheShaderManager->RegisterEffect<WaterLensEffect>(&TheShaderManager->Effects.WaterLens);
-	TheShaderManager->RegisterEffect<WetWorldEffect>(&TheShaderManager->Effects.WetWorld);
 	TheShaderManager->RegisterEffect<HudRaindropsEffect>(&TheShaderManager->Effects.HudRaindrops);
 	TheShaderManager->RegisterEffect<DitherBusterEffect>(&TheShaderManager->Effects.DitherBuster);
 	TheShaderManager->RegisterEffect<SMAAEffect>(&TheShaderManager->Effects.SMAA);
@@ -500,14 +501,13 @@ void ShaderManager::UpdateConstants() {
 
 	// The object and terrain shaders read the wetness whether or not it is on: off, it must read dry.
 	if (!Shaders.Wetness->Enabled) Shaders.Wetness->UpdateConstants();
-
-	// Rain is part of Wetness Effects ([Shaders.WetnessEffects.Rain]): its switch turns all of it on or off.
-	Effects.Rain->ApplySwitch(Shaders.Wetness->Enabled);
+	// The grass and leaf shaders read the sandstorm's wind whether or not it is on: off, there is no storm.
+	if (!Effects.Sandstorm->Enabled) Effects.Sandstorm->Constants.WindBoost = D3DXVECTOR4(1.0f, 1.0f, 0.0f, 0.0f);
 
 	// The game's rain particles are culled under cover with the ortho map (Hooks/Shaders.cpp, RainParticles).
 	if (Effects.Rain->ParticlesDrawnRecently()) orthoRequired = true;
 
-	// RemovePrecipitations, applied and undone live.
+	// [Main.Main.Precipitations] RemovePrecipitations, applied and undone live.
 	Effects.Rain->ApplyVanillaPrecipitations();
 	Effects.Rain->UpdateRainMesh();   // NVR's own rain mesh (3D Rain's), on the player while it rains
 	// Underwater effect uses constants from the water shader
@@ -825,6 +825,7 @@ void ShaderManager::RenderEffectToRT(IDirect3DSurface9* RenderTarget, EffectReco
 
 
 void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget) {
+	DrawProfiler::Scope ProfilerScope(DrawProfiler::PhaseEffects);
 	if (!TheSettingManager->SettingsMain.Main.RenderEffects) return; // Main toggle
 	if (!Player->parentCell) return;
 	if (GameState.OverlayIsOn && TESMain::IsMenuBackgroundReady()) return; // disable all effects during terminal/lockpicking sequences
@@ -883,7 +884,8 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 
 	Effects.SnowAccumulation->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 	Effects.AmbientOcclusion->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
-	Effects.WetWorld->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	// After the shadows and AO, so what wet surfaces reflect is shaded as it is seen.
+	Effects.WetnessReflections->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 	// The wetness the first-person arms' and weapon's raindrops read next frame (HudRaindropsEffect).
 	Effects.HudRaindrops->UpdateWetness(Device);
 	Device->SetRenderTarget(0, RenderTarget);
@@ -915,6 +917,8 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 	Effects.Underwater->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 	Effects.VolumetricLight->Render(Device, RenderTarget, RenderedSurface, 1, false, SourceSurface);
 	Effects.VolumetricFog->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	// After the fog, which it thickens into dust; before the god rays, so the sun shafts shine through it.
+	Effects.Sandstorm->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
 	Effects.GodRays->Render(Device, RenderTarget, RenderedSurface, 0, true, SourceSurface);
 
 	// calculate average luma for use by shaders
@@ -938,6 +942,7 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 * Renders the effect that have been set to enabled.
 */
 void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
+	DrawProfiler::Scope ProfilerScope(DrawProfiler::PhaseEffects);
 	if (!TheSettingManager->SettingsMain.Main.RenderEffects) return; // Main toggle
 	if (!Player->parentCell) return;
 	if (GameState.OverlayIsOn) return; // disable all effects during terminal/lockpicking sequences because they bleed through the overlay

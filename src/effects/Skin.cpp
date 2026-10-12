@@ -23,7 +23,7 @@ void SkinShaders::UpdateConstants() {
 	Constants.ExtraData.x = isExterior ? SkyReflectionScale : 0.0f;
 
 	// Rain wets skin: smoother and shinier. Same rain/puddle factor the PBR and terrain shaders use.
-	float rainFactor = max(TheShaderManager->Effects.WetWorld->Constants.Data.x, TheShaderManager->Effects.WetWorld->Constants.Data.z);
+	float rainFactor = TheShaderManager->Shaders.Wetness ? TheShaderManager->Shaders.Wetness->RainFactor() : 0.0f;
 	Constants.ExtraData.y = isExterior ? std::clamp(rainFactor * RainWetness, 0.0f, 1.0f) : 0.0f;
 	// Wetness Effects' SkinWetness (effects/WetnessEffects.h), whichever is wetter.
 	if (TheShaderManager->Shaders.Wetness)

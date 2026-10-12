@@ -371,8 +371,9 @@ struct PS_OUTPUT {
 };
 
 PS_OUTPUT main(PS_INPUT IN) {
-    // Raindrops on the first-person arms (Includes/HudRaindrops.hlsl): the textures are read under them.
-    HudRaindrops(IN.uv.xy, IN.shadowWorldPos.xyz, normalize(IN.normal.xyz).z);
+    // Raindrops on the arms and on anyone out in the rain (Includes/HudRaindrops.hlsl): the textures
+    // are read under them.
+    HudRaindrops(IN.uv.xy, IN.shadowWorldPos.xyz, normalize(IN.normal.xyz).z, IN.shadowWorldPos.xyz, 1.0f);
     float2 uv = IN.uv.xy + hudRainOffset;
 
     // --- material
@@ -410,7 +411,7 @@ PS_OUTPUT main(PS_INPUT IN) {
     // Wet: water is smooth and shines at least as a full specular mask would (Includes/HudRaindrops.hlsl).
     skinRoughness = HudRainRoughness(skinRoughness);
     skinSpecScale = lerp(skinSpecScale, max(skinSpecScale, 1.0f), hudRainGloss);
-    float3 albedo = decodeColor(baseColor.rgb);
+    float3 albedo = decodeColor(HudRainAlbedo(baseColor.rgb));   // darker under the raindrops
 
     // --- shadows (top level: both take derivatives)
     #if !defined(DIFFUSE)

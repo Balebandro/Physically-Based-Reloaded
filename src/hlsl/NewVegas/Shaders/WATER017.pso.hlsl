@@ -19,7 +19,7 @@ float4 TESR_WaterSettings : register(c16); // x: caustic strength, y:depthDarkne
 float4 TESR_GameTime : register(c17);
 float4 TESR_HorizonColor : register(c18);
 float4 TESR_SunDirection : register(c19);
-float4 TESR_WetWorldData : register(c20);
+float4 TESR_WetnessData : register(c20);   // Wetness Effects: z how hard it rains (ripples)
 float4 TESR_WaterShorelineParams : register(c21);
 float4 TESR_WaterLODColor : register(c22);
 float4 TESR_DebugVar : register(c23);
@@ -58,7 +58,7 @@ PS_OUTPUT main(PS_INPUT IN) {
     float2 fadedDepth = saturate(lerp(waterDepth, 1, invlerp(0, 4096, distance)));
 
     float3 surfaceNormal = getWaveTexture(IN, distance, TESR_WaveParams).xyz;
-    surfaceNormal = getRipples(IN, TESR_RippleSampler, surfaceNormal, distance, TESR_WetWorldData.x);
+    surfaceNormal = getRipples(IN, TESR_RippleSampler, surfaceNormal, distance, TESR_WetnessData.z);
     surfaceNormal = getDisplacement(IN, BlendRadius.w, surfaceNormal);
 
     float LODfade = saturate(smoothstep(4096,4096 * 2, distance));
@@ -91,4 +91,4 @@ PS_OUTPUT main(PS_INPUT IN) {
     OUT.color_0.rgb = fogStrength * (FogColor.rgb - color.rgb) + color.rgb;
     OUT.color_0.a = lerp(color.a, 1, LODfade); // fade to full opacity to hide LOD seam
     return OUT;
-};
+};

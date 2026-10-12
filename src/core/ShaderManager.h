@@ -103,6 +103,8 @@ public:
 		RainEffect*				Rain;
 		SharpeningEffect*		Sharpening;
 		HeatHazeEffect*			HeatHaze;
+		SandstormEffect*		Sandstorm;
+		WetnessReflectionsEffect*	WetnessReflections;
 		SnowEffect*				Snow;
 		SnowAccumulationEffect*	SnowAccumulation;
 		ShadowsExteriorEffect*	ShadowsExteriors;
@@ -115,7 +117,6 @@ public:
 		VolumetricFogEffect*	VolumetricFog;
 		WaterLensEffect*		WaterLens;
 		HudRaindropsEffect*		HudRaindrops;
-		WetWorldEffect*			WetWorld;
 		DitherBusterEffect*		DitherBuster;
 		SMAAEffect*				SMAA;
 		TAAEffect*				TAA;

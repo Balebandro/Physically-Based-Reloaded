@@ -804,7 +804,7 @@ void __fastcall HairShader__PostGeometry(void* apThis, void*, void* apProperties
 // the game's NOLIGHT vertex and pixel shaders reproduced on their own registers, so the engine's
 // constant uploads still land where they are read, plus a test against NVR's top-down ortho depth map
 // that fades the rain out under anything above it. A rain draw is a geometry under a node named in
-// [Shaders.WetnessEffects.Rain] RainMeshRoots (3D Rain's mesh root is "FlameStripTest"). Every
+// [Shaders.Precipitations.Particles] RainMeshRoots (3D Rain's mesh root is "FlameStripTest"). Every
 // other NoLighting draw, and rain drawn with a NOLIGHT variant the pair does not cover (skinned,
 // untextured), keeps the game's shaders. Both shaders are swapped together: a 3.0 shader cannot pair
 // with a 2.x one.
@@ -1014,6 +1014,8 @@ namespace RainParticles {
     static IDirect3DBaseTexture9* sRainTextures[8] = {};
     static int sRainTextureCount = 0;
     static bool sDeviceActive = false;
+    static bool sDeviceCull = false;      // CullUnderCover: rain draws get NVR's shaders
+    static float sDeviceDensity = 1.0f;   // RainMeshDensity: the share of each rain draw's primitives drawn
     static std::unordered_map<void*, int> sVariants;   // shader handle -> variant (see VariantOf), -1 none
 
     typedef HRESULT (STDMETHODCALLTYPE* DrawPrimitiveFn)(IDirect3DDevice9*, D3DPRIMITIVETYPE, UINT, UINT);
@@ -1062,7 +1064,8 @@ namespace RainParticles {
         return Variant;
     }
 
-    static bool BeginDeviceDraw(IDirect3DDevice9* Device) {
+    static bool BeginDeviceDraw(IDirect3DDevice9* Device, bool& IsRain) {
+        IsRain = false;
         if (!sDeviceActive || sSwapped || sHidden) return false;
         IDirect3DBaseTexture9* Texture = nullptr;
         Device->GetTexture(0, &Texture);
@@ -1070,6 +1073,8 @@ namespace RainParticles {
         for (int i = 0; i < sRainTextureCount; i++) if (Texture == sRainTextures[i]) Rain = true;
         if (Texture) Texture->Release();
         if (!Rain) return false;
+        IsRain = true;
+        if (!sDeviceCull) return false;
 
         IDirect3DVertexShader9* GameVertex = nullptr;
         IDirect3DPixelShader9* GamePixel = nullptr;
@@ -1124,27 +1129,41 @@ namespace RainParticles {
         return sSwapped;
     }
 
+    // RainMeshDensity: a rain draw keeps the first share of its primitives. The particles are laid out
+    // one after another, so this drops whole particles (a quad's two triangles together); what the rain
+    // costs is mostly its overdraw, which falls with them.
+    static UINT Thin(bool IsRain, D3DPRIMITIVETYPE Type, UINT Count) {
+        if (!IsRain || sDeviceDensity >= 1.0f || Count < 4) return Count;
+        UINT Kept = (UINT)(Count * sDeviceDensity);
+        if (Type == D3DPT_TRIANGLELIST) Kept &= ~1u;
+        return max(Kept, 2u);
+    }
+
     static HRESULT STDMETHODCALLTYPE DrawPrimitiveHook(IDirect3DDevice9* Device, D3DPRIMITIVETYPE Type, UINT Start, UINT Count) {
-        bool Swapped = BeginDeviceDraw(Device);
-        HRESULT Result = sDrawPrimitive(Device, Type, Start, Count);
+        bool IsRain;
+        bool Swapped = BeginDeviceDraw(Device, IsRain);
+        HRESULT Result = sDrawPrimitive(Device, Type, Start, Thin(IsRain, Type, Count));
         if (Swapped) EndDraw();
         return Result;
     }
     static HRESULT STDMETHODCALLTYPE DrawIndexedPrimitiveHook(IDirect3DDevice9* Device, D3DPRIMITIVETYPE Type, INT Base, UINT MinIndex, UINT Vertices, UINT Start, UINT Count) {
-        bool Swapped = BeginDeviceDraw(Device);
-        HRESULT Result = sDrawIndexedPrimitive(Device, Type, Base, MinIndex, Vertices, Start, Count);
+        bool IsRain;
+        bool Swapped = BeginDeviceDraw(Device, IsRain);
+        HRESULT Result = sDrawIndexedPrimitive(Device, Type, Base, MinIndex, Vertices, Start, Thin(IsRain, Type, Count));
         if (Swapped) EndDraw();
         return Result;
     }
     static HRESULT STDMETHODCALLTYPE DrawPrimitiveUPHook(IDirect3DDevice9* Device, D3DPRIMITIVETYPE Type, UINT Count, CONST void* Data, UINT Stride) {
-        bool Swapped = BeginDeviceDraw(Device);
-        HRESULT Result = sDrawPrimitiveUP(Device, Type, Count, Data, Stride);
+        bool IsRain;
+        bool Swapped = BeginDeviceDraw(Device, IsRain);
+        HRESULT Result = sDrawPrimitiveUP(Device, Type, Thin(IsRain, Type, Count), Data, Stride);
         if (Swapped) EndDraw();
         return Result;
     }
     static HRESULT STDMETHODCALLTYPE DrawIndexedPrimitiveUPHook(IDirect3DDevice9* Device, D3DPRIMITIVETYPE Type, UINT MinIndex, UINT Vertices, UINT Count, CONST void* Indices, D3DFORMAT Format, CONST void* Data, UINT Stride) {
-        bool Swapped = BeginDeviceDraw(Device);
-        HRESULT Result = sDrawIndexedPrimitiveUP(Device, Type, MinIndex, Vertices, Count, Indices, Format, Data, Stride);
+        bool IsRain;
+        bool Swapped = BeginDeviceDraw(Device, IsRain);
+        HRESULT Result = sDrawIndexedPrimitiveUP(Device, Type, MinIndex, Vertices, Thin(IsRain, Type, Count), Indices, Format, Data, Stride);
         if (Swapped) EndDraw();
         return Result;
     }
@@ -1195,10 +1214,12 @@ namespace RainParticles {
     }
 
     // Each frame from RainEffect::UpdateRainMesh: the rain mesh drawn now (null when none).
-    void SetRainSource(NiNode* Root) {
+    void SetRainSource(NiNode* Root, bool Cull, float Density) {
         sRainTextureCount = 0;
         sDeviceActive = false;
-        if (!Root) return;
+        sDeviceCull = Cull;
+        sDeviceDensity = Density;
+        if (!Root || (!Cull && Density >= 1.0f)) return;
         CollectTextures(Root, 0);
         if (!sRainTextureCount) return;
         InstallDeviceHooks();

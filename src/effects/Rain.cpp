@@ -2,7 +2,22 @@
 
 #include "Rain.h"
 
-namespace RainParticles { void SetRainSource(NiNode* Root); }   // Hooks/Shaders.cpp
+namespace RainParticles { void SetRainSource(NiNode* Root, bool Cull, float Density); }   // Hooks/Shaders.cpp
+
+// The selective update flags off, down the whole copy, so the game's per-frame selective update of the
+// scene skips it: UpdateRainMesh's full update below is then the only one that runs its particles, on
+// one clock. (Run by both, the emitters would see time jump between the two clocks every frame.)
+static void ClearSelectiveUpdate(NiAVObject* Object, int Depth) {
+	if (!Object || Depth > 12) return;
+	Object->m_flags &= ~(NiAVObject::SELECTIVE_UPDATE | NiAVObject::SELECTIVE_UPDATE_TRANSFORMS |
+		NiAVObject::SELECTIVE_UPDATE_CONTROLLER | NiAVObject::SELECTIVE_UPDATE_RIGID);
+	UInt32 Vtbl = *(UInt32*)Object;
+	if (Vtbl == 0x109B5AC || Vtbl == 0x10A8F90) {   // NiNode, BSFadeNode
+		NiAVObject** Children = *(NiAVObject***)((char*)Object + 0xA0);
+		UInt16 Count = *(UInt16*)((char*)Object + 0xA6);
+		for (UInt16 i = 0; Children && i < Count; i++) ClearSelectiveUpdate(Children[i], Depth + 1);
+	}
+}
 
 void RainEffect::UpdateConstants() {
 	if (TheShaderManager->GameState.isRainy && Constants.RainAnimator.switched == false) {
@@ -28,13 +43,14 @@ void RainEffect::UpdateSettings() {
 	Constants.Aspect.y = TheSettingManager->GetSettingF("Shaders.Precipitations.Main", "Coloring");
 	Constants.Aspect.z = TheSettingManager->GetSettingF("Shaders.Precipitations.Main", "Bloom");
 
-	// Rain lives in Wetness Effects' section: [Shaders.WetnessEffects.Rain].
-	const char* rain = "Shaders.WetnessEffects.Rain";
-	settingRemove = TheSettingManager->GetSettingI(rain, "RemovePrecipitations") != 0;
-	settingCull = TheSettingManager->GetSettingI(rain, "CullUnderCover") != 0;
-	settingMesh = TheSettingManager->GetSettingI(rain, "UseRainMesh") != 0;
-	settingForce = TheSettingManager->GetSettingI(rain, "ForceRain") != 0;
-	ApplySwitch(TheShaderManager->Shaders.Wetness && TheShaderManager->Shaders.Wetness->Enabled);
+	RemoveVanilla = TheSettingManager->GetSettingI("Main.Main.Precipitations", "RemovePrecipitations") != 0;
+	const char* rain = "Shaders.Precipitations.Particles";
+	CullParticles = TheSettingManager->GetSettingI(rain, "CullUnderCover") != 0;
+	UseRainMesh = TheSettingManager->GetSettingI(rain, "UseRainMesh") != 0;
+	ForceRain = TheSettingManager->GetSettingI(rain, "ForceRain") != 0;
+	// 0 (a missing key) reads as the default 1.
+	float density = TheSettingManager->GetSettingF(rain, "RainMeshDensity");
+	MeshDensity = density > 0.0f ? std::clamp(density, 0.1f, 1.0f) : 1.0f;
 	char path[MAX_PATH] = "";
 	TheSettingManager->GetSettingS(rain, "RainMesh", path);
 	std::string meshPath = path;
@@ -115,13 +131,76 @@ void RainEffect::ApplyVanillaPrecipitations() {
 			culledNodes[i] = nullptr;
 		}
 	}
+
+	// The rain meshes rain scripts place (3D Rain's in Zion, Honest Hearts', Climate Control's): looked
+	// for four times a second, as a script may enable or move one at any time.
+	DWORD Now = GetTickCount();
+	if (RemoveVanilla && Now - lastRainScan >= 250) {
+		lastRainScan = Now;
+		HideGameRainMeshes(true);
+	}
+	else if (!RemoveVanilla && !hiddenGameRain.empty())
+		HideGameRainMeshes(false);
 }
 
-void RainEffect::ApplySwitch(bool On) {
-	CullParticles = settingCull && On;
-	RemoveVanilla = settingRemove && On;
-	UseRainMesh = settingMesh && On;
-	ForceRain = settingForce && On;
+// A reference's 3D that is a rain mesh: its root, or a node right below it, named in RainMeshRoots.
+static bool IsRainMesh(NiNode* Node, const std::vector<std::string>& Roots) {
+	auto Named = [&Roots](NiAVObject* Object) {
+		const char* Name = Object ? Object->m_pcName : nullptr;
+		if (!Name || !*Name) return false;
+		for (const std::string& Root : Roots)
+			if (!_stricmp(Name, Root.c_str())) return true;
+		return false;
+	};
+	if (Named(Node)) return true;
+	UInt32 Vtbl = *(UInt32*)Node;
+	if (Vtbl != 0x109B5AC && Vtbl != 0x10A8F90) return false;   // NiNode, BSFadeNode
+	NiAVObject** Children = *(NiAVObject***)((char*)Node + 0xA0);
+	UInt16 Count = *(UInt16*)((char*)Node + 0xA6);
+	for (UInt16 i = 0; Children && i < Count; i++)
+		if (Named(Children[i])) return true;
+	return false;
+}
+
+// Hides (APP_CULLED) the game's rain meshes in the loaded cells and the worldspace's persistent cell,
+// or shows again the ones this hid. NVR's own copy is never one of them. Only nodes found in the cells
+// now are touched: a hidden node whose reference has gone is just forgotten.
+void RainEffect::HideGameRainMeshes(bool Hide) {
+	std::unordered_set<NiNode*> Found;
+	auto ScanCell = [&](TESObjectCELL* Cell) {
+		if (!Cell) return;
+		for (TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First; Entry; Entry = Entry->next) {
+			TESObjectREFR* Ref = Entry->item;
+			NiNode* Node = Ref ? Ref->GetNode() : nullptr;
+			if (!Node || Node == OwnRainRoot || !IsRainMesh(Node, ParticleRoots)) continue;
+			bool Ours = hiddenGameRain.count(Node) != 0;
+			if (Hide) {
+				if (!(Node->m_flags & NiAVObject::APP_CULLED)) {
+					Node->m_flags |= NiAVObject::APP_CULLED;
+					Ours = true;
+					static UInt32 sLogged = 0;
+					if (sLogged++ < 8) Logger::Log("RainParticles: RemovePrecipitations hid the game's rain mesh %s (reference %08X)",
+						Node->m_pcName ? Node->m_pcName : "?", Ref->refID);
+				}
+				if (Ours) Found.insert(Node);
+			}
+			else if (Ours)
+				Node->m_flags &= ~NiAVObject::APP_CULLED;
+		}
+	};
+
+	if (Player && Tes) {
+		TESWorldSpace* World = Player->GetWorldSpace();
+		if (World) {
+			GridCellArray* CellArray = Tes->gridCellArray;
+			UInt32 CellCount = CellArray ? CellArray->size * CellArray->size : 0;
+			for (UInt32 i = 0; i < CellCount; i++) ScanCell(CellArray->GetCell(i));
+			ScanCell(World->cell);   // persistent references
+		}
+		else
+			ScanCell(Player->parentCell);
+	}
+	hiddenGameRain = Hide ? std::move(Found) : std::unordered_set<NiNode*>();
 }
 
 // Raining, as Honest Hearts' rain script decides it: past the middle of the transition, the incoming
@@ -159,6 +238,7 @@ void RainEffect::UpdateRainMesh() {
 			if (Copy) {
 				InterlockedIncrement((LONG*)&Copy->m_uiRefCount);   // NVR's own reference: never freed
 				Copy->m_flags &= ~NiAVObject::APP_CULLED;
+				ClearSelectiveUpdate(Copy, 0);
 				OwnRainRoot = Copy;
 				Logger::Log("RainParticles: NVR rain mesh %s loaded (root %s)", RainMeshPath, Copy->m_pcName ? Copy->m_pcName : "?");
 			}
@@ -170,13 +250,13 @@ void RainEffect::UpdateRainMesh() {
 	}
 	if (!OwnRainRoot || !want) {
 		if (OwnRainRoot) OwnRainRoot->m_flags |= NiAVObject::APP_CULLED;
-		RainParticles::SetRainSource(nullptr);
+		RainParticles::SetRainSource(nullptr, false, 1.0f);
 		return;
 	}
 
-	// Culled under cover at the draw (Hooks/Shaders.cpp, RainParticles): the mesh's textures mark its
-	// draws, and the ortho map is needed while it falls.
-	RainParticles::SetRainSource(CullParticles ? OwnRainRoot : nullptr);
+	// Culled under cover and thinned to RainMeshDensity at the draw (Hooks/Shaders.cpp, RainParticles):
+	// the mesh's textures mark its draws, and the ortho map is needed while it falls.
+	RainParticles::SetRainSource(OwnRainRoot, CullParticles, MeshDensity);
 	if (CullParticles) TheShaderManager->orthoRequired = true;
 
 	if (!rainMeshAttached) {

@@ -31,6 +31,12 @@
 // SM3004.vso define SHADOW_INVPROJ_REG/SHADOW_INVVIEW_REG as c240/c244 before including this file
 // (upstream PR #79); pixel shaders keep c100/c104.
 // ---------------------------------------------------------------------------
+// A host short of registers can define SHADOW_INVVIEWPROJ_REG instead: the two matrices folded into one, the inverse
+// view-projection, in 4 registers. The grass vertex shaders do -- There Stands The Grass NVSE writes c248-c249 before
+// every grass batch, so they keep only c252-c255.
+#ifdef SHADOW_INVVIEWPROJ_REG
+row_major float4x4 TESR_InvViewProjectionTransform : register(SHADOW_INVVIEWPROJ_REG);
+#else
 #ifndef SHADOW_INVPROJ_REG
     #define SHADOW_INVPROJ_REG c100
 #endif
@@ -40,6 +46,7 @@
 
 row_major float4x4 TESR_InvProjectionTransform : register(SHADOW_INVPROJ_REG);
 row_major float4x4 TESR_InvViewTransform       : register(SHADOW_INVVIEW_REG);
+#endif
 
 row_major float4x4 TESR_ShadowCameraToLightTransformNear   : register(c108);
 row_major float4x4 TESR_ShadowCameraToLightTransformMiddle : register(c112);
@@ -216,9 +223,15 @@ float SampleShadowAtlas(float4 lightSpace, float2 quadrantOffset, float bias, fl
 // under perspective-correct interpolation and costs one interpolator.
 // ---------------------------------------------------------------------------
 float3 GetShadowWorldPos(float4 clipPos) {
+#ifdef SHADOW_INVVIEWPROJ_REG
+    // The view is affine, so dividing after it is the same as dividing before.
+    float4 worldPos = mul(clipPos, TESR_InvViewProjectionTransform);
+    return worldPos.xyz / worldPos.w;
+#else
     float4 viewPos = mul(clipPos, TESR_InvProjectionTransform);
     viewPos /= viewPos.w;
     return mul(viewPos, TESR_InvViewTransform).xyz;
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -228,7 +241,11 @@ float3 GetShadowWorldPos(float4 clipPos) {
 // matrix for. No divide: a direction keeps w = 0.
 // ---------------------------------------------------------------------------
 float3 GetShadowWorldDir(float4 clipDir) {
+#ifdef SHADOW_INVVIEWPROJ_REG
+    return mul(clipDir, TESR_InvViewProjectionTransform).xyz;
+#else
     return mul(mul(clipDir, TESR_InvProjectionTransform), TESR_InvViewTransform).xyz;
+#endif
 }
 
 // ---------------------------------------------------------------------------

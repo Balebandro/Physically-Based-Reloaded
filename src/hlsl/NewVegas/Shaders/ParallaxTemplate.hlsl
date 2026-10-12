@@ -522,7 +522,8 @@ PS_OUTPUT main(PS_INPUT IN)
 
     // Raindrops on first-person geometry (Includes/HudRaindrops.hlsl), placed on the surface itself
     // (its own coordinates, not the relief's): they sit on top of it.
-    HudRaindrops(IN.uv.xy, IN.shadowWorldPos.xyz, shadowWorldPosValid > 0.0f ? rebuildUpTS(IN.uv.zw, sunShadowNormal).z : 1.0f);
+    HudRaindrops(IN.uv.xy, IN.shadowWorldPos.xyz, shadowWorldPosValid > 0.0f ? rebuildUpTS(IN.uv.zw, sunShadowNormal).z : 1.0f,
+        IN.shadowWorldPos.xyz, shadowWorldPosValid);
 
     // Parallax.
     float3 viewDir = normalize(IN.viewDir.xyz);
@@ -624,7 +625,7 @@ PS_OUTPUT main(PS_INPUT IN)
             // The highlight passes merged in (Includes/MergedLights.hlsl): only flagged materials have them.
             mergedSpecular = TESR_MergedLightCount.y > 0.0f && ObjectMaterial.x >= 0.5f;
         #endif
-        baseColor.rgb = decodeColor(baseColor.rgb);
+        baseColor.rgb = decodeColor(HudRainAlbedo(baseColor.rgb));   // darker under the raindrops
 
         // Normal-mapped ambient and reflections (Object.hlsl, getAmbientNormal).
         float3 ambientNormal = getAmbientNormal(normal.xyz, rebuildUpTS(IN.uv.zw, sunShadowNormal), sunShadowNormal, shadowWorldPosValid);

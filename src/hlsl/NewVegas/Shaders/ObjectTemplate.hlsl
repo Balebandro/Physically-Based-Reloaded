@@ -678,8 +678,9 @@ float4 PSLightColor[10] : register(c3);
 PS_OUTPUT main(PS_INPUT IN) {
     PS_OUTPUT OUT;
 
-    // Raindrops on first-person geometry (Includes/HudRaindrops.hlsl): the textures are read under them.
-    HudRaindrops(IN.uv.xy, IN.shadowWorldPos.xyz, SHADOW_VS_PRESENT(IN.shadowWorldPos.w) ? IN.viewDir.w : 1.0f);
+    // Raindrops (Includes/HudRaindrops.hlsl): the textures are read under them.
+    HudRaindrops(IN.uv.xy, IN.shadowWorldPos.xyz, SHADOW_VS_PRESENT(IN.shadowWorldPos.w) ? IN.viewDir.w : 1.0f,
+        IN.shadowWorldPos.xyz, SHADOW_VS_PRESENT(IN.shadowWorldPos.w) ? 1.0f : 0.0f);
     float2 uv = IN.uv.xy + hudRainOffset;
 
     #if !defined(DIFFUSE) && !defined(ONLY_SPECULAR)
@@ -749,7 +750,7 @@ PS_OUTPUT main(PS_INPUT IN) {
     #endif
 
     // Linear lighting decodes the albedo here, once; see "Lighting space" in PBR.hlsl.
-    baseColor.rgb = decodeColor(baseColor.rgb);
+    baseColor.rgb = decodeColor(HudRainAlbedo(baseColor.rgb));   // darker under the raindrops
 
     // Vanilla shadows.
     float3 shadowMultiplier = 1.0;
@@ -1028,7 +1029,7 @@ PS_OUTPUT main(PS_INPUT IN) {
     #else
         float hudRainUp = sqrt(saturate(1.0f - dot(IN.uv.zw, IN.uv.zw)));
     #endif
-    HudRaindrops(IN.uv.xy, IN.lPosition.xyz, SHADOW_WP_VALID(IN) ? hudRainUp : 1.0f);
+    HudRaindrops(IN.uv.xy, IN.lPosition.xyz, SHADOW_WP_VALID(IN) ? hudRainUp : 1.0f, SHADOW_WP_LOAD(IN), SHADOW_WP_VALID(IN) ? 1.0f : 0.0f);
     float2 uv = IN.uv.xy + hudRainOffset;
 
     float4 baseColor = tex2D(BaseMap, uv);
@@ -1064,7 +1065,7 @@ PS_OUTPUT main(PS_INPUT IN) {
     pbrRoughness = HudRainRoughness(pbrRoughness);
     vanillaMask = lerp(vanillaMask, 1.0f, hudRainGloss * 0.5f);
     vanillaShine = lerp(vanillaShine, 150.0f, hudRainGloss);
-    baseColor.rgb = decodeColor(baseColor.rgb);
+    baseColor.rgb = decodeColor(HudRainAlbedo(baseColor.rgb));   // darker under the raindrops
 
     // ddx/ddy must stay at pixel-shader top level. Ahead of the lights: the wetness needs them.
     float3 ambNormal = GetShadowGeometricNormal(SHADOW_WP_LOAD(IN));

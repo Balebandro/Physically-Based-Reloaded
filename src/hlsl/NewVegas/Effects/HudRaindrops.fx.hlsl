@@ -27,7 +27,7 @@ sampler2D TESR_HudRainTexture : register(s4) < string ResourceName = "Effects\hu
 // How far above the camera the cover test looks (game units): above the player's own head, which the
 // ortho map may hold, and below any roof worth the name.
 #define COVER_HEIGHT 48.0f
-// The ortho map's depth slack (Effects/WetWorld.fx uses the same).
+// The ortho map's depth slack.
 #define COVER_THICKNESS 0.003f
 
 struct VSOUT {
@@ -74,11 +74,12 @@ float4 KeepWetness(VSOUT IN) : COLOR0 {
     return tex2D(TESR_HudRainNew, float2(0.5f, 0.5f));
 }
 
-// One layer, as Shaders/Includes/HudRaindrops.hlsl's HudRainLayer.
-float3 ScreenDropLayer(float4 texel, float speed) {
+// One layer, as Shaders/Includes/HudRaindrops.hlsl's HudRainLayer; the threshold raised as the screen
+// dries (HudRainThreshold there), so the drops shrink away.
+float3 ScreenDropLayer(float4 texel, float speed, float threshold) {
     float2 slope = texel.gb * 2.0f - 1.0f;
     float life = 1.0f - frac(texel.a + TESR_HudRainScreen.y * speed);
-    float strength = saturate(life * texel.r - TESR_HudRainScreen.x);
+    float strength = saturate(life * texel.r - threshold);
     return float3(slope * strength, strength);
 }
 
@@ -87,9 +88,10 @@ float4 ScreenDrops(VSOUT IN) : COLOR0 {
     float wet = tex2D(TESR_HudRainState, float2(0.5f, 0.5f)).r;
     float2 aspect = float2(1.0f, 0.75f);   // the menu is drawn 1280 x 960 (FORenderedMenu::Render)
     float2 p = uv * aspect * TESR_HudRainScreen.w;
-    float3 drops = ScreenDropLayer(tex2D(TESR_HudRainTexture, p), 0.2f)
-                 + ScreenDropLayer(tex2D(TESR_HudRainTexture, (p + float2(0.23f, 0.46f)) * 1.87f), 0.1f);
-    drops *= wet;
+    float threshold = lerp(1.0f, TESR_HudRainScreen.x, saturate(wet * 1.5f));
+    float3 drops = ScreenDropLayer(tex2D(TESR_HudRainTexture, p), 0.2f, threshold)
+                 + ScreenDropLayer(tex2D(TESR_HudRainTexture, (p + float2(0.23f, 0.46f)) * 1.87f), 0.1f, threshold);
+    drops *= saturate(wet * 2.0f);
     drops.xy = clamp(drops.xy, -1.0f, 1.0f);
 
     // The menu under the drop, shifted along its slope (in screen coordinates, back from the tiles).

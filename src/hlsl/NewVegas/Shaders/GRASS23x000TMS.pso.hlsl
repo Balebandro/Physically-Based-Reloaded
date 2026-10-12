@@ -7,6 +7,10 @@
 #include "includes/Shadow.hlsl"
 #include "includes/PBRScale.hlsl"
 
+// The grass brightness setting (Shaders.Grass.Main Brightness): multiplies the lit colour, before fog. c146 is past
+// PBRScale's sky irradiance (c137-c145).
+float4 TESR_GrassBrightness : register(c146);
+
 sampler2D DiffuseMap : register(s0);
 
 struct PS_INPUT {
@@ -40,7 +44,7 @@ PS_OUTPUT main(PS_INPUT IN) {
     float3 lighting = PBRLight(sun) + PBRAmbient(IN.ambient.xyz) + SkyAmbient(shadowNormal, SHADOW_VS_PRESENT(IN.shadowWorldPos.w) ? 1.0f : 0.0f);
 
     float4 albedo = tex2D(DiffuseMap, IN.uv.xy);
-    float3 litColor = lighting * albedo.rgb;
+    float3 litColor = lighting * albedo.rgb * TESR_GrassBrightness.x;
 
     OUT.color.rgb = lerp(litColor, IN.fog.rgb, IN.fog.w);
     OUT.color.a = saturate(albedo.a * 1.75f) * IN.sun.w;

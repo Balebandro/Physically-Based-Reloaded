@@ -140,4 +140,4 @@ public:
 	ShaderRecordPixel*		GetShaderRecord(ShaderRecordType Type);
 
 	static void __fastcall Free(NiD3DPixelShaderEx* shader);
-};
+};

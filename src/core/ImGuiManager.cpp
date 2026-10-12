@@ -1918,6 +1918,7 @@ void ImGuiManager::NewFrame() {
 }
 
 void ImGuiManager::Render() {
+	DrawProfiler::Scope ProfilerScope(DrawProfiler::PhaseOverlay);
 	if (!Initialized || DeviceLost) return;
 	BuildUI();
 	ImGui::EndFrame();
@@ -2754,6 +2755,7 @@ void ImGuiManager::BuildUI() {
 	}
 
 	RenderFrameCounter();
+	DrawProfiler::Frame();   // [Main.Main.DrawProfiler]: draw calls a frame, below the frame counter
 
 	if (!Visible) return;
 

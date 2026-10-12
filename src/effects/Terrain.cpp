@@ -117,8 +117,8 @@ void TerrainShaders::UpdateSettings() {
 }
 
 void TerrainShaders::UpdateConstants() {
-	// get max value between rain animator and puddle animator
-	float rainFactor = max(TheShaderManager->Effects.WetWorld->Constants.Data.x, TheShaderManager->Effects.WetWorld->Constants.Data.z);
+	// how wet the weather has made things (Wetness Effects' rain and wetness)
+	float rainFactor = TheShaderManager->Shaders.Wetness ? TheShaderManager->Shaders.Wetness->RainFactor() : 0.0f;
 
 	if (!TheShaderManager->GameState.isExterior) return;
 

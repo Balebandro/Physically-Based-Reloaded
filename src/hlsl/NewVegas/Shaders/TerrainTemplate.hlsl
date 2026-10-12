@@ -38,6 +38,8 @@
 // (NVR binds it with the shader), the seventh normal map's otherwise (see TERRAIN_FLAT_NORMAL7 above).
 #ifdef PS
     #define WETNESS_ORTHO_REG s13
+    #define WETNESS_RAINDROPS   // raindrop ripples: on the land only
+    #define WETNESS_HEIGHT      // the land's height maps shape the wetness: water gathers in the crevices
     #include "includes/Wetness.hlsl"
 #endif
 
@@ -241,8 +243,21 @@ PS_OUTPUT main(PS_INPUT IN) {
     [branch] if (TESR_TerrainExtraData.x)
         skyReflection = getTerrainSkyReflection(shadowWorldPos, shadowNormal, ambientNormal, terrainRoughness, gloss);
 
-    // Wetness: the albedo darkens before any light sees it (land is porous: full darkening).
-    Wetness wet = GetWetness(shadowWorldPos, shadowNormal, terrainWorldNormal);
+    // The surface's height where it is seen (the parallax's coordinates): the layers' height maps
+    // (their diffuse alpha, where LandHeight says they have one; flat 0.5 where not), blended by the
+    // same weights as the colour. The textures were just read there, so these reads hit the cache.
+    float surfaceHeight = 0.0f;
+    float heightWeight = 0.0f;
+    [unroll] for (int h = 0; h < texCount; h++) {
+        surfaceHeight += weights[h] * (heightStatus[h] ? tex2Dgrad(BaseMap[h], offsetUV, dx, dy).a : 0.5f);
+        heightWeight += weights[h];
+    }
+    surfaceHeight = heightWeight > 0.0f ? surfaceHeight / heightWeight : 0.5f;
+
+    // Wetness: the albedo darkens before any light sees it (land is porous: full darkening). It reads
+    // the land's own normals: the smooth vertex normal (world-aligned, as above) rather than the
+    // per-triangle one rebuilt from screen derivatives, and the normal-mapped one.
+    Wetness wet = GetWetness(shadowWorldPos, normal, terrainWorldNormal, surfaceHeight);
     baseColor = WetAlbedo(baseColor, wet.darkening, 1.0f);
 
     float3 lighting = getSunLighting(lightTS, SunColor.rgb, eyeDir, combinedNormal, AmbientColor.rgb, baseColor, gloss, specExponent, 1.0, parallaxShadowMultiplier, ambientNormal);

@@ -20,6 +20,9 @@ float4 CameraRight   : register(c13);
 float4 CameraUp      : register(c14);
 float4 WindA         : register(c15);
 float4 WindB         : register(c16);
+// The sandstorm's wind (SandstormEffect): y leaf strength at the storm's height, z time (s), w how hard the storm
+// blows, 0 with no storm. c134 is past the shadow constants (c100-c133) and LeafData (c34-c81).
+float4 TESR_WindBoost : register(c134);
 float4 NormalAdjust  : register(c17);  // .y
 
 float4 BranchRows[16] : register(c18);
@@ -51,14 +54,18 @@ VS_OUTPUT main(VS_INPUT IN) {
     float4 v0 = IN.position;
     float4 v3 = IN.blendIndices;
 
+    // In a sandstorm the leaves swing harder and flutter fast; with no storm this is the vanilla motion.
+    float storm = TESR_WindBoost.w;
+    float leafStrength = lerp(1.0f, TESR_WindBoost.y, storm);
+    float flutter = storm * 0.12f * TESR_WindBoost.y * sin(TESR_WindBoost.z * 13.0f + v3.z * 1.7f);
     float a = WrapPi(v3.z * 0.020833334f + WindB.y, 0.499999583f);
-    a = WrapPi(sin(a) * WindB.z * WindB.x, 0.159154937f);
+    a = WrapPi(sin(a) * WindB.z * WindB.x * leafStrength + flutter, 0.159154937f);
     // xy rotation of the camera basis. Identity at zero wind: offset = p*Right + q*Up.
     float3 axis1 = float3(cos(a), -sin(a), 0.0f);
     float3 tan1  = float3(sin(a),  cos(a), 0.0f);
 
     float b = WrapPi(v3.z * 0.020833334f + WindA.y, 0.499999583f);
-    b = WrapPi(sin(b) * WindA.z * WindA.x, 0.159154937f);
+    b = WrapPi(sin(b) * WindA.z * WindA.x * leafStrength + flutter * 0.7f, 0.159154937f);
     float3 axis2 = float3(0.0f, cos(b), -sin(b));
     float3 tan2  = float3(0.0f, sin(b), cos(b));
 

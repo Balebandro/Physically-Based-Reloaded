@@ -1,10 +1,12 @@
 #pragma once
 
-// Raindrops on the first-person arms and weapon, after Screen Space Shaders' HUD raindrops (STALKER
-// Anomaly, Ascii1457). The drops are drawn by those meshes' own shaders (Shaders/Includes/
-// HudRaindrops.hlsl, in SkinTemplate and ObjectTemplate), so they stay on the surface through every
-// animation: the game's shader hooks (NewVegas/Hooks/Shaders.cpp) call SetDrawConstants for each draw,
-// which turns them on for first-person geometry only, and ClearDrawConstants after it.
+// Raindrops on the first-person arms and weapon, and (AllObjects) on every object out in the rain but
+// the land, after Screen Space Shaders' HUD raindrops (STALKER Anomaly, Ascii1457). The drops are drawn
+// by the meshes' own shaders (Shaders/Includes/HudRaindrops.hlsl, in SkinTemplate, ObjectTemplate and
+// ParallaxTemplate), so they stay on the surface through every animation: the game's shader hooks
+// (NewVegas/Hooks/Shaders.cpp) call SetDrawConstants for each draw, and ClearDrawConstants after it.
+// First-person geometry takes the camera's wetness (below); the world's objects the rain's, where the
+// top-down ortho map says they are open to the sky.
 //
 // This effect keeps the wetness they read: Effects/HudRaindrops.fx eases a 1 x 1 value every frame
 // (technique 0, as AutoExposure keeps its exposure) and keeps it (1). It rises while the player stands
@@ -35,6 +37,8 @@ public:
 		float WetGloss;     // the wet surface's around them
 		float AnimSpeed;
 		int   DebugView;
+		float Darkness;     // how much a drop darkens the surface under it
+		bool  AllObjects;   // drops on every object out in the rain (not the land), not just the arms and weapon
 	};
 	HudRaindropsSettings	Settings = {};
 
@@ -58,7 +62,7 @@ public:
 	bool	ShouldRender();
 	void	UpdateWetness(IDirect3DDevice9* Device);
 
-	// The per-draw constants of Shaders/Includes/HudRaindrops.hlsl (c218-c219).
+	// The per-draw constants of Shaders/Includes/HudRaindrops.hlsl (c218-c220).
 	void	SetDrawConstants(NiGeometry* Geometry);
 	void	ClearDrawConstants();
 	// The drops on the Pip-Boy's screen, drawn into its texture once the game has rendered the menu
@@ -69,5 +73,6 @@ private:
 	bool	Cleared = false;     // the wetness reset to 0 once its texture exists; until then no drops
 	float	Clock = 0.0f;        // the drops' clock: runs while it rains
 	float	DryingLeft = 0.0f;   // seconds the drops may still be drying (the passes run until then)
+	float	WorldWet = 0.0f;     // the world's objects' wetness (AllObjects): rain eased over WetTime / DryTime, 0 indoors
 	bool	DrawSet = false;     // the hooks' constants are nonzero on the device
 };
