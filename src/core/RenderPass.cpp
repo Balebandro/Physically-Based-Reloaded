@@ -11,7 +11,9 @@ void RenderPass::RenderAccum() {
 
 	// Render normal geometry
 	while (!GeometryList.empty()) {
-		NiGeometry* Geo = GeometryList.top();
+		// Pop before the null check: the old top()/continue order left a null entry on the list and never ended the loop.
+		NiGeometry* Geo = GeometryList.back();
+		GeometryList.pop_back();
 		if (!Geo) continue;
 
 		UpdateConstants(Geo);
@@ -19,7 +21,6 @@ void RenderPass::RenderAccum() {
 		VertexShader->SetCT();
 
 		RenderGeometry(Geo);
-		GeometryList.pop();
 	}
 }
 
@@ -107,7 +108,7 @@ bool ShadowRenderPass::AccumObject(NiGeometry* Geo) {
 	BSShaderProperty* ShaderProperty = (BSShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Shade);
 	if (!ShaderProperty || !ShaderProperty->IsLightingProperty()) return false;
 
-	GeometryList.push(Geo);
+	GeometryList.push_back(Geo);
 	return true;
 }
 
@@ -144,7 +145,7 @@ bool AlphaShadowRenderPass::AccumObject(NiGeometry* Geo) {
 	if (!AProp) return false;
 	if (!(AProp->flags & NiAlphaProperty::AlphaFlags::ALPHA_BLEND_MASK) && !(AProp->flags & NiAlphaProperty::AlphaFlags::TEST_ENABLE_MASK)) return false;
 
-	GeometryList.push(Geo);
+	GeometryList.push_back(Geo);
 	return true;
 }
 
@@ -162,7 +163,8 @@ void AlphaShadowRenderPass::UpdateConstants(NiGeometry* Geo) {
 	BSShaderProperty* ShaderProperty = (BSShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Shade);
 	NiTexture* Texture = *((BSShaderPPLightingProperty*)ShaderProperty)->ppTextures[0];
 
-	if (Texture && Texture->rendererData->dTexture) {
+	// rendererData can be null for a texture the renderer has not created yet; the old check dereferenced it.
+	if (Texture && Texture->rendererData && Texture->rendererData->dTexture) {
 
 		ShadowConstants->Data.y = 1.0f; // Alpha Control
 //			Constants.DiffuseMap = Texture->rendererData->dTexture;
@@ -199,7 +201,7 @@ bool SkinnedGeoShadowRenderPass::AccumObject(NiGeometry* Geo) {
 
 		// only accum if valid data preset
 		//if (Geo->skinInstance->SkinPartition->Partitions[0].BuffData)
-			GeometryList.push(Geo);
+			GeometryList.push_back(Geo);
 	
 		// we return true in any case because we still found skinned geo either way
 		return true;
@@ -325,7 +327,7 @@ bool SpeedTreeShadowRenderPass::AccumObject(NiGeometry* Geo) {
 	NiShadeProperty* shaderProp = static_cast<NiShadeProperty*>(Geo->GetProperty(NiProperty::kType_Shade));
 	if (shaderProp->m_eShaderType != NiShadeProperty::kProp_SpeedTreeLeaf) return false;
 
-	GeometryList.push(Geo);
+	GeometryList.push_back(Geo);
 	return true;
 }
 
@@ -357,7 +359,8 @@ void SpeedTreeShadowRenderPass::UpdateConstants(NiGeometry* Geo) {
 	Device->SetVertexShaderConstantF(83, STProp->leafData->leafBase, 48);
 	
 	// Set diffuse texture at register 0
-	RenderState->SetTexture(0, Texture->dTexture);
+	// Texture can be null when the leaves texture has no renderer data yet; the old code dereferenced it. Bind nothing then.
+	RenderState->SetTexture(0, Texture ? Texture->dTexture : nullptr);
 	RenderState->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP, false);
 	RenderState->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP, false);
 	RenderState->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT, false);
@@ -379,7 +382,7 @@ bool TerrainLODPass::AccumObject(NiGeometry* Geo) {
 	BSShaderProperty* ShaderProperty = (BSShaderProperty*)Geo->GetProperty(NiProperty::PropertyType::kType_Shade);
 	if (!ShaderProperty || !ShaderProperty->IsLightingProperty()) return false;
 
-	GeometryList.push(Geo);
+	GeometryList.push_back(Geo);
 	return true;
 }
 

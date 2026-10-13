@@ -9,6 +9,7 @@ EffectRecord::EffectRecord(const char* effectName) {
 	Enabled = false;
 	renderTime = 0;
 	constantUpdateTime = 0;
+	ReadsSourceBuffer = true; // conservative until CreateCT has read the shader source
 }
 
 /*Shader Values arrays are freed in the superclass Destructor*/
@@ -220,6 +221,15 @@ void EffectRecord::CreateCT(ID3DXBuffer* ShaderSource, ID3DXConstantTable* Const
 	UInt32 FloatIndex = 0;
 	UInt32 TextureIndex = 0;
 
+	// A sampler that is only declared appears once in the preprocessed text; a second occurrence means some code samples it.
+	ReadsSourceBuffer = true;
+	if (ShaderSource) {
+		std::string source((const char*)ShaderSource->GetBufferPointer(), ShaderSource->GetBufferSize());
+		size_t occurrences = 0;
+		for (size_t at = source.find("TESR_SourceBuffer"); at != std::string::npos; at = source.find("TESR_SourceBuffer", at + 1)) occurrences++;
+		ReadsSourceBuffer = occurrences > 1;
+	}
+
 	Effect->GetDesc(&ConstantTableDesc);
 	for (UINT c = 0; c < ConstantTableDesc.Parameters; c++) {
 		Handle = Effect->GetParameter(NULL, c);
@@ -353,7 +363,7 @@ void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTar
 	}
 
 	auto timer = TimeLogger();
-	if (SourceBuffer) Device->StretchRect(RenderTarget, NULL, SourceBuffer, NULL, D3DTEXF_LINEAR);
+	if (SourceBuffer && ReadsSourceBuffer && SourceBuffer != RenderTarget) Device->StretchRect(RenderTarget, NULL, SourceBuffer, NULL, D3DTEXF_LINEAR); // only samplers read it; a target is never copied onto itself
 
 	try {
 		D3DXHANDLE technique = Effect->GetTechnique(techniqueIndex);
@@ -366,7 +376,13 @@ void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTar
 			Effect->BeginPass(p);
 			Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
 			Effect->EndPass();
-			if (RenderedSurface) Device->StretchRect(RenderTarget, NULL, RenderedSurface, NULL, D3DTEXF_LINEAR); // copy the result from the pass into the texture
+			if (RenderedSurface && RenderedSurface != RenderTarget) { // copy the result from the pass into the texture
+				RECT copyRect;
+				if (p + 1 < Passes && PartialCopyRect(RenderTarget, RenderedSurface, &copyRect)) // intermediate passes may copy only the region they wrote
+					Device->StretchRect(RenderTarget, &copyRect, RenderedSurface, &copyRect, D3DTEXF_LINEAR);
+				else
+					Device->StretchRect(RenderTarget, NULL, RenderedSurface, NULL, D3DTEXF_LINEAR);
+			}
 		}
 		Effect->End();
 	}
@@ -374,6 +390,7 @@ void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTar
 		Logger::Log("Error during rendering of effect %s: %s", Name, e.what());
 	}
 
-	std::string name = "EffectRecord::Render " + std::string(Name);
-	renderTime = timer.LogTime(name.c_str());
+	char label[128]; // stack buffer: same text as before, without a heap string per effect per frame
+	snprintf(label, sizeof(label), "EffectRecord::Render %s", Name);
+	renderTime = timer.LogTime(label);
 }

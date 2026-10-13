@@ -76,6 +76,7 @@ RemovePrecipitations = false   # Disables vanilla rain and other precipitations:
 
 [_Main.Main.Water]
 ForceReflections = true     # Always render the full world in reflection for HD reflections.
+ReflectionClipFix = true    # Re-issue the water clip plane while the water reflection is drawn. Without it, looking level or up, far LOD buildings vanish from water reflections and terrain below the water surface shows in them. Same clip plane, re-set after the pass's shaders are bound.
 RemoveUnderwater = false    # Disables fog underwater. Not compatible with custom underwater shader.
 
 [_Main.Main.ReducedQuality]
@@ -754,6 +755,7 @@ Containers = true                    # Whether to include objects with "Containe
 Doors = true                         # Whether to include objects with "Doors" flag when rendering shadowmaps.
 Furniture = true                     # Whether to include objects with "Furniture" flag when rendering shadowmaps.
 Lod = false                          # Whether to include objects with "Lod" flag when rendering shadowmaps.
+LodSkipLoaded = true                 # Skip object LOD inside the loaded cells: those references are walked as full models instead, subject to the flags above. Also skips culled or faded active LOD levels. false: the old behaviour.
 MinRadius = 1.0                      # Whether to include objects with a radius of less than x pixels on the screen in the shadowmaps.
 Misc = true                          # Whether to include objects with misc flags when rendering shadowmaps.
 Statics = true                       # Whether to include objects with "Statics" flag when rendering shadowmaps.
@@ -770,6 +772,7 @@ Containers = true                    # Whether to include objects with "Containe
 Doors = true                         # Whether to include objects with "Doors" flag when rendering shadowmaps.
 Furniture = true                     # Whether to include objects with "Furniture" flag when rendering shadowmaps.
 Lod = false                          # Whether to include objects with "Lod" flag when rendering shadowmaps.
+LodSkipLoaded = true                 # Skip object LOD inside the loaded cells: those references are walked as full models instead, subject to the flags above. Also skips culled or faded active LOD levels. false: the old behaviour.
 MinRadius = 1.0                      # Whether to include objects with a radius of less than x pixels on the screen in the shadowmaps.
 Misc = true                          # Whether to include objects with misc flags when rendering shadowmaps.
 Statics = true                       # Whether to include objects with "Statics" flag when rendering shadowmaps.
@@ -786,6 +789,7 @@ Containers = true                    # Whether to include objects with "Containe
 Doors = true                         # Whether to include objects with "Doors" flag when rendering shadowmaps.
 Furniture = true                     # Whether to include objects with "Furniture" flag when rendering shadowmaps.
 Lod = true                           # Whether to include objects with "Lod" flag when rendering shadowmaps.
+LodSkipLoaded = true                 # Skip object LOD inside the loaded cells: those references are walked as full models instead, subject to the flags above. Also skips culled or faded active LOD levels. false: the old behaviour.
 MinRadius = 10.0                     # Whether to include objects with a radius of less than x pixels on the screen in the shadowmaps.
 Misc = true                          # Whether to include objects with misc flags when rendering shadowmaps.
 Statics = true                       # Whether to include objects with "Statics" flag when rendering shadowmaps.
@@ -802,6 +806,7 @@ Containers = false                   # Whether to include objects with "Containe
 Doors = true                         # Whether to include objects with "Doors" flag when rendering shadowmaps.
 Furniture = false                    # Whether to include objects with "Furniture" flag when rendering shadowmaps.
 Lod = true                           # Whether to include objects with "Lod" flag when rendering shadowmaps.
+LodSkipLoaded = true                 # Skip object LOD inside the loaded cells: those references are walked as full models instead, subject to the flags above. Also skips culled or faded active LOD levels. false: the old behaviour.
 MinRadius = 10.0                     # Whether to include objects with a radius of less than x pixels on the screen in the shadowmaps.
 Misc = false                         # Whether to include objects with misc flags when rendering shadowmaps.
 Statics = true                       # Whether to include objects with "Statics" flag when rendering shadowmaps.
@@ -818,6 +823,7 @@ Containers = false                   # Whether to include objects with "Containe
 Doors = false                        # Whether to include objects with "Doors" flag when rendering ortho map.
 Furniture = false                    # Whether to include objects with "Furniture" flag when rendering ortho map.
 Lod = false                          # Whether to include objects with "Lod" flag when rendering ortho map.
+LodSkipLoaded = true                 # Skip object LOD inside the loaded cells: those references are walked as full models instead, subject to the flags above. Also skips culled or faded active LOD levels. false: the old behaviour.
 MinRadius = 1.0						 # Whether to include objects with a radius of less than x pixels on the screen in the ortho map.
 Misc = true                          # Whether to include objects with misc flags when rendering ortho map.
 Statics = true                       # Whether to include objects with "Statics" flag when rendering ortho map.
@@ -850,6 +856,9 @@ Anisotropy = 0						 # DISABLED. Anisotropic filteric for mipmaps, 0: disabled, 
 Distance = 6000                      # Distance to render shadows for. The unit is the same as the game uses for i.e. fog values. 
 CascadeLambda = 0.9					 # [0.0-1.0] Controls how cascades are split, higher value means nearer cascades get higher resolution.
 LimitFrequency = true				 # Limit the update frequency of the furthest cascade (once per four frames).
+FarLimitFrequency = false				 # [0-1] Also limit the far cascade (the one before LOD) to one update per four frames. Moving casters in that cascade update up to three frames late.
+SkipLowProcessActors = true          # Leave actors the engine is not animating (process level MiddleLow or Low) out of the shadow maps, so a frozen pose is never drawn as a shadow. Trade-off: those actors cast no shadow.
+ActorMaxDistance = 0                 # [0-20000] Actors farther than this from the camera (game units) cast no shadow; 0 means no limit. A test knob for the creature animation issue: if a distant creature's shadow looks frozen or wrong, lower this until it disappears.
 
 [_Shaders.ShadowsExteriors.Ortho]
 Resolution = 2						 # Resolution of the texture used to store the ortho map. 0: 128, 1: 256, 2: 512, 3: 1024, 4: 2048

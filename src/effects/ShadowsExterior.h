@@ -78,6 +78,7 @@ public:
 		bool				Terrain;
 		bool				Trees;
 		bool				Lod;
+		bool				LodSkipLoaded;
 		float				MinRadius;
 		float				OrigMinRadius;
 	};
@@ -96,6 +97,8 @@ public:
 		float					ShadowMapRadius;
 		float					ShadowMapNear;
 		bool					CustomClearRequired;
+		// Set once RenderShadowMaps has drawn this cascade. ShadowMaps[] is not zeroed (RegisterEffect uses new T()).
+		bool					HasRendered = false;
 	};
 
 	struct ShadowMapStruct {
@@ -107,9 +110,13 @@ public:
 		bool				MSAA;
 		bool				Mipmaps;
 		bool				LimitFrequency;
+		// Far cascade limit (FarLimitFrequency in the TOML). Off by default; see RenderShadowMaps.
+		bool				FarLimitFrequency;
 		int					Anisotropy;
 		float				Distance;
 		float				CascadeLambda;
+		bool				SkipLowProcessActors;	// actors in MiddleLow/Low process cast no shadow (not animated by the engine)
+		float				ActorMaxDistance;		// actors farther than this from the camera cast no shadow; 0 = no limit
 	};
 
 	struct OrthoStruct {

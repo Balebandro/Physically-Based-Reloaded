@@ -171,6 +171,8 @@ bool ShadowsExteriorEffect::UpdateSettingsFromQuality(int quality) {
 		Settings.ShadowMaps.Distance = max(TheSettingManager->GetSettingF("Shaders.ShadowsExteriors.ShadowMaps", "Distance"), 100.0f);
 		Settings.ShadowMaps.CascadeLambda = std::clamp(TheSettingManager->GetSettingF("Shaders.ShadowsExteriors.ShadowMaps", "CascadeLambda"), 0.0f, 1.0f);
 		Settings.ShadowMaps.LimitFrequency = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.ShadowMaps", "LimitFrequency");
+		// Far cascade limit. Off unless the key is set, so existing configs keep updating it every frame.
+		Settings.ShadowMaps.FarLimitFrequency = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.ShadowMaps", "FarLimitFrequency");
 
 		// 0..5 -> 1024, 1536, 2048, 2560, 3072, 3584 per cascade. The atlas packs 2x2 cascades,
 		// so the texture is twice this in each dimension: index 5 is a 7168x7168 atlas.
@@ -203,6 +205,8 @@ bool ShadowsExteriorEffect::UpdateSettingsFromQuality(int quality) {
 		Settings.ShadowMaps.Anisotropy = (std::clamp(TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.ShadowMaps", "Anisotropy"), 0, 2)) * 8;*/
 
 		Settings.ShadowMaps.Prefilter = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.ShadowMaps", "Prefilter");
+		Settings.ShadowMaps.SkipLowProcessActors = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.ShadowMaps", "SkipLowProcessActors");
+		Settings.ShadowMaps.ActorMaxDistance = max(0.0f, TheSettingManager->GetSettingF("Shaders.ShadowsExteriors.ShadowMaps", "ActorMaxDistance"));
 
 		for (int shadowType = 0; shadowType <= MapLod; shadowType++) {
 			char sectionName[256] = "Shaders.ShadowsExteriors.Forms";
@@ -238,6 +242,7 @@ bool ShadowsExteriorEffect::UpdateSettingsFromQuality(int quality) {
 			ShadowMap->Forms.Terrain = TheSettingManager->GetSettingI(sectionName, "Terrain");
 			ShadowMap->Forms.Trees = TheSettingManager->GetSettingI(sectionName, "Trees");
 			ShadowMap->Forms.Lod = TheSettingManager->GetSettingI(sectionName, "Lod");
+			ShadowMap->Forms.LodSkipLoaded = TheSettingManager->GetSettingI(sectionName, "LodSkipLoaded");
 			ShadowMap->Forms.MinRadius = TheSettingManager->GetSettingF(sectionName, "MinRadius");
 			ShadowMap->Forms.OrigMinRadius = TheSettingManager->GetSettingF(sectionName, "MinRadius");
 		};
@@ -277,14 +282,18 @@ bool ShadowsExteriorEffect::UpdateSettingsFromQuality(int quality) {
 			ShadowMap->Forms.Terrain = 1;
 			ShadowMap->Forms.Trees = 1;
 			ShadowMap->Forms.Lod = quality < 2 ? 0 : 1;
+			ShadowMap->Forms.LodSkipLoaded = TheSettingManager->GetSettingI(sectionName, "LodSkipLoaded");
 			ShadowMap->Forms.MinRadius = (MapFar <= shadowType && shadowType <= MapLod) ? 10.0f : 1.0f;
 			ShadowMap->Forms.OrigMinRadius = (MapFar <= shadowType && shadowType <= MapLod) ? 10.0f : 1.0f;
 		};
 
 		Settings.ShadowMaps.CascadeLambda = 0.9f;
 		Settings.ShadowMaps.LimitFrequency = 1;
+		Settings.ShadowMaps.FarLimitFrequency = false; // Presets keep updating the far cascade every frame.
 		Settings.ShadowMaps.MSAA = 1;
 		Settings.ShadowMaps.Prefilter = 1;
+		Settings.ShadowMaps.SkipLowProcessActors = 1;
+		Settings.ShadowMaps.ActorMaxDistance = 0.0f;
 
 		switch (quality) {
 		case 0:
@@ -433,6 +442,7 @@ void ShadowsExteriorEffect::UpdateSettings() {
 	ShadowMaps[MapOrtho].Forms.Terrain = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.FormsOrtho", "Terrain");
 	ShadowMaps[MapOrtho].Forms.Trees = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.FormsOrtho", "Trees");
 	ShadowMaps[MapOrtho].Forms.Lod = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.FormsOrtho", "Lod");
+	ShadowMaps[MapOrtho].Forms.LodSkipLoaded = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.FormsOrtho", "LodSkipLoaded");
 	ShadowMaps[MapOrtho].Forms.MinRadius = TheSettingManager->GetSettingF("Shaders.ShadowsExteriors.FormsOrtho", "MinRadius");
 	ShadowMaps[MapOrtho].Forms.OrigMinRadius = TheSettingManager->GetSettingF("Shaders.ShadowsExteriors.FormsOrtho", "MinRadius");
 
@@ -772,6 +782,8 @@ void ShadowsExteriorEffect::GetCascadeDepths() {
 
 	// Reset blur constant for handling limited refresh rate.
 	Constants.ShadowBlur.y = 1.0f;
+	// The far cascade is blurred unless the sun loop reused it this frame (FarLimitFrequency).
+	Constants.ShadowBlur.z = 1.0f;
 }
 
 // Banker round helper.

@@ -28,12 +28,12 @@ static D3DXVECTOR3 Linearize(const D3DXVECTOR4& c) {
 }
 
 
-static D3DXVECTOR3 EvalSky(const D3DXVECTOR3& dir, const D3DXVECTOR4& sunPos, const D3DXVECTOR4& skyData,
+static D3DXVECTOR3 EvalSky(const D3DXVECTOR3& dir, float verticality, float athPow, const D3DXVECTOR4& sunPos, const D3DXVECTOR4& skyData,
 	const D3DXVECTOR3& skyC, const D3DXVECTOR3& skyLowC, const D3DXVECTOR3& horizonC,
 	const D3DXVECTOR3& sunColor, float sunHeight, float isDayTime) {
 
-	float verticality = powf(fabsf(dir.z * 0.5f + 0.5f), 3.0f);
-	float athmosphere = powf(fabsf(1.0f - verticality), 8.0f) * skyData.x;
+	// verticality and athPow depend only on dir, so UpdateConstants tabulates them (same expressions, same bits)
+	float athmosphere = athPow * skyData.x;
 	float sunDot = (dir.x * sunPos.x + dir.y * sunPos.y + dir.z * sunPos.z) * 0.5f + 0.5f;
 	float sunInfluence = powf(fabsf(sunDot), 1.0f / skyData.y);
 
@@ -86,35 +86,67 @@ void SkyShaders::UpdateConstants() {
 	const float dTheta = (D3DX_PI * 0.5f) / STEPS_T;
 	const float dPhi = (2.0f * D3DX_PI) / STEPS_P;
 
+	// The integral is a pure function of the inputs below. When every one matches the previous
+	// integral bit for bit, the stored Irradiance is already exactly what a recompute gives, so it is
+	// kept. SunsetColor.w is left out because the integral never reads it.
+	D3DXVECTOR4 sunsetKey = Constants.SunsetColor;
+	sunsetKey.w = 0.0f;
+	const D3DXVECTOR4 key[8] = { sunPos, Constants.SkyData, TheShaderManager->ShaderConst.skyColor,
+		TheShaderManager->ShaderConst.skyLowColor, TheShaderManager->ShaderConst.horizonColor,
+		TheShaderManager->ShaderConst.sunDiskColor, sunsetKey, D3DXVECTOR4(dayTime, 0.0f, 0.0f, 0.0f) };
+	static D3DXVECTOR4 lastKey[8];
+	static bool haveLastKey = false;
+	if (haveLastKey && memcmp(key, lastKey, sizeof(key)) == 0) return;
+	memcpy(lastKey, key, sizeof(key));
+	haveLastKey = true;
+
+	// The direction-dependent terms never change, so they are tabulated once: the unit direction,
+	// the solid angle and the nine basis values, each formed exactly as the loop used to form it.
+	struct SHSample { D3DXVECTOR3 d; float dOmega; float vertical; float athPow; float basis[9]; };
+	static SHSample samples[STEPS_T * STEPS_P];
+	static bool samplesBuilt = false;
+	if (!samplesBuilt) {
+		for (int i = 0; i < STEPS_T; i++) {
+			float theta = (i + 0.5f) * dTheta;
+			float st = sinf(theta), ct = cosf(theta);
+			float dOmega = st * dTheta * dPhi;
+			for (int j = 0; j < STEPS_P; j++) {
+				float phi = (j + 0.5f) * dPhi;
+				const D3DXVECTOR3 d(st * cosf(phi), st * sinf(phi), ct);
+				SHSample& s = samples[i * STEPS_P + j];
+				s.d = d;
+				s.dOmega = dOmega;
+				s.vertical = powf(fabsf(d.z * 0.5f + 0.5f), 3.0f);
+				s.athPow = powf(fabsf(1.0f - s.vertical), 8.0f);
+				s.basis[0] = 0.282095f;
+				s.basis[1] = 0.488603f * d.y;
+				s.basis[2] = 0.488603f * d.z;
+				s.basis[3] = 0.488603f * d.x;
+				s.basis[4] = 1.092548f * d.x * d.y;
+				s.basis[5] = 1.092548f * d.y * d.z;
+				s.basis[6] = 0.315392f * (3.0f * d.z * d.z - 1.0f);
+				s.basis[7] = 1.092548f * d.x * d.z;
+				s.basis[8] = 0.546274f * (d.x * d.x - d.y * d.y);
+			}
+		}
+		samplesBuilt = true;
+	}
+
 	D3DXVECTOR3 sh[9];
 	for (int i = 0; i < 9; i++) sh[i] = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
 
-	for (int i = 0; i < STEPS_T; i++) {
-		float theta = (i + 0.5f) * dTheta;
-		float st = sinf(theta), ct = cosf(theta);
-		float dOmega = st * dTheta * dPhi;
-		for (int j = 0; j < STEPS_P; j++) {
-			float phi = (j + 0.5f) * dPhi;
-			D3DXVECTOR3 d(st * cosf(phi), st * sinf(phi), ct);
+	for (int k = 0; k < STEPS_T * STEPS_P; k++) {
+		const SHSample& s = samples[k];
 
-			// LINEAR radiance, as GetSkyColor returns and as the integral requires. The shader
-			// encodes on reconstruction. Integrating encoded values instead was measurably
-			// wrong -- it cost walls about a third of their brightness, since their lobe spans
-			// the widest range of sky and a concave curve pulls an average of spread values
-			// down hardest.
-			D3DXVECTOR3 L = EvalSky(d, sunPos, Constants.SkyData, skyC, skyLowC, horizonC,
-				sunColor, sunHeight, isDayTime) * dOmega;
+		// LINEAR radiance, as GetSkyColor returns and as the integral requires. The shader
+		// encodes on reconstruction. Integrating encoded values instead was measurably
+		// wrong -- it cost walls about a third of their brightness, since their lobe spans
+		// the widest range of sky and a concave curve pulls an average of spread values
+		// down hardest.
+		D3DXVECTOR3 L = EvalSky(s.d, s.vertical, s.athPow, sunPos, Constants.SkyData, skyC, skyLowC, horizonC,
+			sunColor, sunHeight, isDayTime) * s.dOmega;
 
-			sh[0] += L * 0.282095f;
-			sh[1] += L * (0.488603f * d.y);
-			sh[2] += L * (0.488603f * d.z);
-			sh[3] += L * (0.488603f * d.x);
-			sh[4] += L * (1.092548f * d.x * d.y);
-			sh[5] += L * (1.092548f * d.y * d.z);
-			sh[6] += L * (0.315392f * (3.0f * d.z * d.z - 1.0f));
-			sh[7] += L * (1.092548f * d.x * d.z);
-			sh[8] += L * (0.546274f * (d.x * d.x - d.y * d.y));
-		}
+		for (int i = 0; i < 9; i++) sh[i] += L * s.basis[i];
 	}
 
 	// Convolve, and fold in each basis function's constant plus the 1/pi that converts

@@ -1,4 +1,5 @@
 #define RESZ_CODE 0x7FA05000
+#include <algorithm> // std::stable_sort in GetNearbyLights
 
 /**
 * Initializes the Shader Manager Singleton.
@@ -659,8 +660,8 @@ void ShaderManager::GetNearbyLights(ShadowSceneLight* ShadowLightsList[], NiPoin
 	//Logger::Log(" ==== Getting lights ====");
 	auto timer = TimeLogger();
 
-	// create a map of all nearby valid lights and sort them per distance to player
-	std::map<int, ShadowSceneLight*> SceneLights;
+	// create a list of all nearby valid lights and sort them per distance to player; a reused vector, as the std::map this replaces allocated a node per light every call
+	SceneLightsScratch.clear();
 	NiTList<ShadowSceneLight>::Entry* Entry = SceneNode->lights.start;
 
 	ShadowsExteriorEffect::InteriorsStruct* Settings = &Effects.ShadowsExteriors->Settings.Interiors;
@@ -693,11 +694,22 @@ void ShaderManager::GetNearbyLights(ShadowSceneLight* ShadowLightsList[], NiPoin
 		// select lights that will be tracked by removing culled lights and lights entirely behind the camera
 		float drawDistance = 8000;//TheShaderManager->GameState.isExterior ? TheSettingManager->SettingsShadows.Exteriors.ShadowMapRadius[TheShadowManager->ShadowMapTypeEnum::MapLod] : TheSettingManager->SettingsShadows.Interiors.DrawDistance;
 		if ((inFront || Distance < radius) && (Distance + radius) < drawDistance) {
-			SceneLights[(int)(Distance * 10000)] = Entry->data; // multiplying distance (used as key) before conversion to avoid overwriting in case of similar values
+			SceneLightsScratch.emplace_back((int)(Distance * 10000), Entry->data); // multiplying distance (used as key) before conversion to avoid overwriting in case of similar values
 		}
 
 		Entry = Entry->next;
 	}
+
+	// Ascending by distance key, as the map ordered them. Where two lights share a key the one added last wins, as when
+	// assigning into the map. stable_sort keeps insertion order within a key, so the last entry of each run is that light.
+	std::stable_sort(SceneLightsScratch.begin(), SceneLightsScratch.end(),
+		[](const std::pair<int, ShadowSceneLight*>& a, const std::pair<int, ShadowSceneLight*>& b) { return a.first < b.first; });
+	size_t uniqueCount = 0;
+	for (size_t k = 0; k < SceneLightsScratch.size(); k++) {
+		if (k + 1 < SceneLightsScratch.size() && SceneLightsScratch[k + 1].first == SceneLightsScratch[k].first) continue;
+		SceneLightsScratch[uniqueCount++] = SceneLightsScratch[k];
+	}
+	SceneLightsScratch.resize(uniqueCount);
 
 	// save only the n first lights (based on #define TrackedLightsMax)
 	memset(&TheShaderManager->LightPosition, 0, TrackedLightsMax * sizeof(D3DXVECTOR4)); // clear previous lights from array
@@ -735,10 +747,10 @@ void ShaderManager::GetNearbyLights(ShadowSceneLight* ShadowLightsList[], NiPoin
 		SpotLightList[0] = nullptr;
 	}
 
-	std::map<int, ShadowSceneLight*>::iterator v = SceneLights.begin();
+	size_t v = 0; // index into SceneLightsScratch
 	for (int i = 0; i < TrackedLightsMax + ShadowCubeMapsMax; i++) {
 		// set null values if we reached the end of lights in the scene and current index is lower than max amount
-		if (v == SceneLights.end()) {
+		if (v >= SceneLightsScratch.size()) {
 			if (ShadowIndex < ShadowCubeMapsMax) {
 				//Logger::Log("clearing shadow casting light at index %i", ShadowIndex);
 				ShadowLightsList[ShadowIndex] = NULL;
@@ -757,7 +769,7 @@ void ShaderManager::GetNearbyLights(ShadowSceneLight* ShadowLightsList[], NiPoin
 			continue;
 		}
 
-		NiPointLight* Light = v->second->sourceLight;
+		NiPointLight* Light = SceneLightsScratch[v].second->sourceLight;
 		if (!Light) {
 			v++;
 			continue;
@@ -781,7 +793,7 @@ void ShaderManager::GetNearbyLights(ShadowSceneLight* ShadowLightsList[], NiPoin
 
 			if (CastShadow && ShadowIndex < ShadowLightsMax && radius > 10) {
 				// add found light to list of lights that cast shadows
-				ShadowLightsList[ShadowIndex] = v->second;
+				ShadowLightsList[ShadowIndex] = SceneLightsScratch[v].second;
 				ShadowsConstants->ShadowLightPosition[ShadowIndex] = LightPos;
 				LightColor[ShadowIndex] = D3DXVECTOR4(Light->Diff.r, Light->Diff.g, Light->Diff.b, Light->Dimmer);
 
@@ -864,9 +876,8 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 
 	Device->SetRenderTarget(0, RenderTarget);
 
-	// copy the source render target to both the rendered and source textures (rendered gets updated after every pass, source once per effect)
+	// copy the source render target to the rendered texture (updated after every pass); each effect copies its own source in EffectRecord::Render
 	Device->StretchRect(RenderTarget, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
-	Device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
 
 	// First, on the scene exactly as drawn: it recognises skin by comparing each pixel with the
 	// colour the skin shader wrote, which any effect before it would change. Screen-space shadows
@@ -963,9 +974,8 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 	// prepare device for effects
 	Device->SetRenderTarget(0, RenderTarget);
 
-	// copy the source render target to both the rendered and source textures (rendered gets updated after every pass, source once per effect)
+	// copy the source render target to the rendered texture (updated after every pass); each effect copies its own source in EffectRecord::Render
 	Device->StretchRect(RenderTarget, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
-	Device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
 
 	// TAA first: after tonemapping, so it resolves LDR values that cannot ghost as HDR highlights
 	// do, and ahead of everything below. Rain and snow are particles with no depth of their own
