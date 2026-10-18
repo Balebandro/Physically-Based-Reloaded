@@ -25,8 +25,8 @@
 // game's range (terrain's LandSpec[2] is c32-c33), and NVR uploads its constants only when the
 // shader changes, so a game write in between left the light scale wrong for the following draws.
 // Lamps and highlights went dark in interiors depending on draw order, and so on the view.
-float4 TESR_PBRData : register(c148);       // z: light scale, w: ambient scale
-float4 TESR_PBRExtraData : register(c149);  // y: skylight strength, w: linear lighting
+float4 TESR_PBRData : register(c148);       // x: _rmaos metalness scale, y: _rmaos AO strength, z: light scale, w: ambient scale
+float4 TESR_PBRExtraData : register(c149);  // x: _rmaos roughness scale, y: skylight strength, z: authored materials' linear lighting, w: linear lighting
 float4 TESR_PBRSpecularData : register(c151);   // x: lighting model of authored materials (1 Anomaly), y: 1 outdoors (the sky is the environment), 0 indoors
 float4 TESR_PBRDebugData : register(c153);  // x: DebugView (0 off)
 
@@ -137,9 +137,14 @@ void setupMaterial(float specularMask, float shine, float3 normalTS, float2 uv, 
         lightingGamma = 1.0f + saturate(TESR_PBRExtraData.z);
         linearLighting = lightingGamma > 1.001f;
     }
-    pbrRoughness = SpecularAA(normalTS, clamp(rmaos.r, 0.04f, 1.0f));
-    pbrMetalness = saturate(rmaos.g);
-    pbrAO = saturate(rmaos.b);
+    // [Shaders.PBR.*] RoughnessScale (TESR_PBRExtraData.x), per weather and time, before the floor and specular AA.
+    // OpenPBR only: Anomaly lighting reads the map's roughness as Anomaly does.
+    float roughnessScale = ANOMALY_LIGHTING ? 1.0f : TESR_PBRExtraData.x;
+    pbrRoughness = SpecularAA(normalTS, clamp(rmaos.r * roughnessScale, 0.04f, 1.0f));
+    // [Shaders.PBR.*] MetalnessScale (TESR_PBRData.x), per weather and time: a metal is lit almost
+    pbrMetalness = saturate(rmaos.g * TESR_PBRData.x);
+    // [Shaders.PBR.*] AOScale (TESR_PBRData.y): how much of the authored occlusion applies.
+    pbrAO = lerp(1.0f, saturate(rmaos.b), TESR_PBRData.y);
     pbrSpecularWeight = saturate(rmaos.a);
     pbrEta = OpenPBR_ModulatedIOR(pbrSpecularWeight);
     pbrAlbedo = decodeColor(albedoGamma);

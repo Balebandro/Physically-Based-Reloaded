@@ -652,6 +652,9 @@ Enabled = false                      # Blur in direction of the camera when turn
 LightingScale = 0.725              # Sun and point light strength.
 AmbientScale = 1.0                 # Weather ambient light strength.
 SkylightingScale = 0.5             # Sky-colour ambient light. 0 disables it.
+MetalnessScale = 1.0               # [0.0-1.0] Scales the metalness of materials with an _rmaos map (its G channel). Metals are lit almost only by what they reflect, so with little around to reflect (at night) they go near black: lower it to keep some of their colour.
+AOScale = 1.0                      # [0.0-1.0] How much of the ambient occlusion in _rmaos maps (their B channel) applies: 1 as authored, 0 none. Indoors, lit mostly by ambient light, full-strength baked AO can look too dark.
+RoughnessScale = 1.0               # [1.0-2.0] Multiplies the roughness of materials with an _rmaos map (their R channel): 1 as authored, 2 twice as rough. Never glossier than the map. The result stays at most 1. OpenPBR lighting only (LightingModel 0): Anomaly lighting ignores it.
 LinearLighting = true                # Light in linear space (correct falloff and light sums) instead of the game's gamma space, as Community Shaders' linear lighting. Objects and terrain.
 MergeLightPasses = true              # With LinearLighting: lamps and highlights the game would add in extra passes are lit in the mesh's first pass instead, so they sum in linear space like the rest. Removes the brightness seams between meshes lit in one pass and meshes lit in several. Objects, hair, parallax, skin and first person (not tree branches).
 LightingModel = 1                   # [0-1] How materials with an _rmaos map are lit. 1: as S.T.A.L.K.E.R. Anomaly does it (its GGX with Anomaly's sharper highlights, its diffuse falloff, its ambient and reflections), the maps still read from _rmaos. 0: OpenPBR, as before.
@@ -665,21 +668,33 @@ DebugView = 0                        # Material debug: 0 off, 1 roughness (autho
 LightingScale = 1.0                # Sun and point light strength.
 AmbientScale = 1.0                 # Weather ambient light strength.
 SkylightingScale = 0.5             # Sky-colour ambient light. 0 disables it.
+MetalnessScale = 1.0               # [0.0-1.0] Scales the metalness of materials with an _rmaos map (its G channel). Metals are lit almost only by what they reflect, so with little around to reflect (at night) they go near black: lower it to keep some of their colour.
+AOScale = 1.0                      # [0.0-1.0] How much of the ambient occlusion in _rmaos maps (their B channel) applies: 1 as authored, 0 none. Indoors, lit mostly by ambient light, full-strength baked AO can look too dark.
+RoughnessScale = 1.0               # [1.0-2.0] Multiplies the roughness of materials with an _rmaos map (their R channel): 1 as authored, 2 twice as rough. Never glossier than the map. The result stays at most 1. OpenPBR lighting only (LightingModel 0): Anomaly lighting ignores it.
 
 [_Shaders.PBR.Night]
 LightingScale = 1.0                # Sun and point light strength.
 AmbientScale = 1.0                 # Weather ambient light strength.
 SkylightingScale = 0.5             # Sky-colour ambient light. 0 disables it.
+MetalnessScale = 0.5               # [0.0-1.0] Scales the metalness of materials with an _rmaos map (its G channel). Metals are lit almost only by what they reflect, so with little around to reflect (at night) they go near black: lower it to keep some of their colour.
+AOScale = 1.0                      # [0.0-1.0] How much of the ambient occlusion in _rmaos maps (their B channel) applies: 1 as authored, 0 none. Indoors, lit mostly by ambient light, full-strength baked AO can look too dark.
+RoughnessScale = 1.0               # [1.0-2.0] Multiplies the roughness of materials with an _rmaos map (their R channel): 1 as authored, 2 twice as rough. Never glossier than the map. The result stays at most 1. OpenPBR lighting only (LightingModel 0): Anomaly lighting ignores it.
 
 [_Shaders.PBR.NightRain]
 LightingScale = 1.0                # Sun and point light strength.
 AmbientScale = 1.0                 # Weather ambient light strength.
 SkylightingScale = 0.5             # Sky-colour ambient light. 0 disables it.
+MetalnessScale = 0.5               # [0.0-1.0] Scales the metalness of materials with an _rmaos map (its G channel). Metals are lit almost only by what they reflect, so with little around to reflect (at night) they go near black: lower it to keep some of their colour.
+AOScale = 1.0                      # [0.0-1.0] How much of the ambient occlusion in _rmaos maps (their B channel) applies: 1 as authored, 0 none. Indoors, lit mostly by ambient light, full-strength baked AO can look too dark.
+RoughnessScale = 1.0               # [1.0-2.0] Multiplies the roughness of materials with an _rmaos map (their R channel): 1 as authored, 2 twice as rough. Never glossier than the map. The result stays at most 1. OpenPBR lighting only (LightingModel 0): Anomaly lighting ignores it.
 
 [_Shaders.PBR.Interiors]
 LightingScale = 1.0                # Sun and point light strength.
 AmbientScale = 1.0                 # Weather ambient light strength.
 SkylightingScale = 0.0             # Sky-colour ambient light. 0 disables it.
+MetalnessScale = 1.0               # [0.0-1.0] Scales the metalness of materials with an _rmaos map (its G channel). Metals are lit almost only by what they reflect, so with little around to reflect (at night) they go near black: lower it to keep some of their colour.
+AOScale = 0.5                      # [0.0-1.0] How much of the ambient occlusion in _rmaos maps (their B channel) applies: 1 as authored, 0 none. Indoors, lit mostly by ambient light, full-strength baked AO can look too dark.
+RoughnessScale = 1.0               # [1.0-2.0] Multiplies the roughness of materials with an _rmaos map (their R channel): 1 as authored, 2 twice as rough. Never glossier than the map. The result stays at most 1. OpenPBR lighting only (LightingModel 0): Anomaly lighting ignores it.
 
 [_Shaders.PBR.Status]
 Enabled = true                       # Object lighting as Community Shaders: true PBR for materials with an authored _rmaos map (R roughness, G metalness, B AO, A specular, next to the diffuse texture), vanilla shading for the rest.

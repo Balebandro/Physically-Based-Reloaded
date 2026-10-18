@@ -118,6 +118,9 @@ public:
 		float LightScale;
 		float AmbientScale;
 		float SkylightingScale;
+		float MetalnessScale;   // multiplies the _rmaos maps' metalness (G): metals go dark with little to reflect, at night above all
+		float AOScale;          // how much of the _rmaos maps' ambient occlusion (B) applies: 1 as authored, 0 none
+		float RoughnessScale;   // multiplies the _rmaos maps' roughness (R), 1-2: 1 as authored, above 1 rougher (never glossier)
 	};
 	struct PBRSettingsStruct {
 		PBRSettings Default;
@@ -142,8 +145,8 @@ public:
 	PBRMaterialSettings MaterialSettings;
 
 	struct PBRStruct {
-		D3DXVECTOR4		Data;           // x, y: 1 (unused), z: light scale, w: ambient scale
-		D3DXVECTOR4		ExtraData;      // x: 1 (unused), y: skylight strength, z: 0 (unused), w: linear lighting
+		D3DXVECTOR4		Data;           // x: _rmaos metalness scale, y: _rmaos AO strength, z: light scale, w: ambient scale
+		D3DXVECTOR4		ExtraData;      // x: _rmaos roughness scale, y: skylight strength, z: authored materials' linear lighting, w: linear lighting
 		D3DXVECTOR4		SpecularData;   // y: 1 outdoors (authored materials reflect the sky), 0 indoors (they reflect the ambient light)
 		D3DXVECTOR4		DebugData;      // x: material debug view (0 off)
 	};

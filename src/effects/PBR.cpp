@@ -13,6 +13,9 @@ static void ReadWeatherSettings(PBRShaders::PBRSettings* Settings, const char* S
 	Settings->LightScale = TheSettingManager->GetSettingF(Section, "LightingScale");
 	Settings->AmbientScale = TheSettingManager->GetSettingF(Section, "AmbientScale");
 	Settings->SkylightingScale = TheSettingManager->GetSettingF(Section, "SkylightingScale");
+	Settings->MetalnessScale = std::clamp(TheSettingManager->GetSettingF(Section, "MetalnessScale"), 0.0f, 1.0f);
+	Settings->AOScale = std::clamp(TheSettingManager->GetSettingF(Section, "AOScale"), 0.0f, 1.0f);
+	Settings->RoughnessScale = std::clamp(TheSettingManager->GetSettingF(Section, "RoughnessScale"), 1.0f, 2.0f);   // rougher only
 }
 
 void PBRShaders::UpdateSettings() {
@@ -42,12 +45,12 @@ void PBRShaders::UpdateConstants() {
 	// how wet the weather has made things (Wetness Effects' rain and wetness)
 	float rainFactor = TheShaderManager->Shaders.Wetness ? TheShaderManager->Shaders.Wetness->RainFactor() : 0.0f;
 
-	Constants.Data.x = 1.0f;
-	Constants.Data.y = 1.0f;
+	Constants.Data.x = Blend(&PBRSettings::MetalnessScale, rainFactor);   // the _rmaos metalness scale (Object.hlsl setupMaterial)
+	Constants.Data.y = Blend(&PBRSettings::AOScale, rainFactor);   // the _rmaos AO strength (Object.hlsl setupMaterial)
 	Constants.Data.z = Blend(&PBRSettings::LightScale, rainFactor);
 	Constants.Data.w = Blend(&PBRSettings::AmbientScale, rainFactor);
 
-	Constants.ExtraData.x = 1.0f;
+	Constants.ExtraData.x = Blend(&PBRSettings::RoughnessScale, rainFactor);   // the _rmaos roughness scale (Object.hlsl setupMaterial)
 	Constants.ExtraData.y = Blend(&PBRSettings::SkylightingScale, rainFactor);   // hemisphere skylight; 0 disables it
 	Constants.ExtraData.z = MaterialSettings.PBRLinearLighting;   // authored materials' linear lighting amount (Object.hlsl)
 	Constants.ExtraData.w = MaterialSettings.LinearLighting ? 1.0f : 0.0f;
