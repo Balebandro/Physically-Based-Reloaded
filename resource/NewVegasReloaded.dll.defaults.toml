@@ -398,6 +398,11 @@ FadePixels = 6.0                       # [0.5-200] It fades in over this many pi
 DetailVertices = 300.0                 # [1-65535] A grass mesh with this many vertices or more counts as fully detailed (rocks, flowers, dense clumps).
 DetailStrength = 1.0                   # [0-10] How much sooner fully detailed meshes go: their MinPixels is raised by up to this much (1: twice as soon). 0 treats every mesh alike.
 
+[_Shaders.Grass.Lights]
+Enabled = true                     # Placed lights and the Pip-Boy light light the grass (never the sun, which the grass already gets). Costs nothing where no lamp is near.
+MaxLights = 8                      # [0-8] The most lamps on the grass at once, nearest first.
+Strength = 1.0                     # [0.0-1.0] How bright the lamps are on the grass.
+
 [_Shaders.Grass.Status]
 Enabled = true                        # Replaces the grass shaders.
 

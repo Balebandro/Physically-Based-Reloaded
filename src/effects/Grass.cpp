@@ -9,6 +9,9 @@ void GrassShaders::RegisterConstants() {
 	TheShaderManager->RegisterConstant("TESR_GrassBend", &Constants.Bend);
 	TheShaderManager->RegisterConstant("TESR_GrassBendParams", &Constants.BendParams);
 	TheShaderManager->RegisterConstant("TESR_GrassLOD", &Constants.LOD);
+	TheShaderManager->RegisterConstant("TESR_GrassLightData", &Constants.LightData);
+	TheShaderManager->RegisterConstant("TESR_GrassLightPosition", LightPosition);
+	TheShaderManager->RegisterConstant("TESR_GrassLightColor", LightColor);
 	InstallHooks();
 }
 
@@ -38,6 +41,43 @@ void GrassShaders::UpdateSettings() {
 	LOD.FadePixels = std::clamp(TheSettingManager->GetSettingF(lod, "FadePixels"), 0.5f, 200.0f);
 	LOD.DetailVertices = std::clamp(TheSettingManager->GetSettingF(lod, "DetailVertices"), 1.0f, 65535.0f);
 	LOD.DetailStrength = std::clamp(TheSettingManager->GetSettingF(lod, "DetailStrength"), 0.0f, 10.0f);
+
+	const char* lights = "Shaders.Grass.Lights";
+	Lights.Enabled = TheSettingManager->GetSettingI(lights, "Enabled") != 0;
+	Lights.MaxLights = std::clamp(TheSettingManager->GetSettingI(lights, "MaxLights"), 0, MaxGrassLights);
+	Lights.Strength = std::clamp(TheSettingManager->GetSettingF(lights, "Strength"), 0.0f, 1.0f);
+}
+
+// The lamps nearest the camera that reach anything near it, from both of NVR's light lists (the shadow-casting ones,
+// ShadowsExteriors' ShadowLightPosition with colours in LightColor[0..], and the rest, LightPosition with colours after
+// them). A light's sphere edge counts, not its centre: a big lamp farther off can light more of the grass in view.
+void GrassShaders::UpdateLights() {
+	Constants.LightData = D3DXVECTOR4(0.0f, Lights.Strength, 0.0f, 0.0f);
+	if (!Lights.Enabled || Lights.MaxLights <= 0 || Lights.Strength <= 0.0f) return;
+
+	struct Candidate { float key; D3DXVECTOR4 pos; D3DXVECTOR4 color; };
+	Candidate found[ShadowCubeMapsMax + TrackedLightsMax];
+	int count = 0;
+	const D3DXVECTOR4 cam = TheRenderManager->CameraPosition;
+	auto add = [&](const D3DXVECTOR4& pos, const D3DXVECTOR4& color) {
+		const float radius = pos.w;
+		const float brightness = (color.x + color.y + color.z) * color.w;
+		if (radius <= 1.0f || brightness <= 0.01f) return;
+		const float dx = pos.x - cam.x, dy = pos.y - cam.y, dz = pos.z - cam.z;
+		found[count++] = { sqrtf(dx * dx + dy * dy + dz * dz) - radius, D3DXVECTOR4(dx, dy, dz, radius),
+			D3DXVECTOR4(color.x * color.w, color.y * color.w, color.z * color.w, 0.0f) };
+	};
+	const D3DXVECTOR4* shadowLights = TheShaderManager->Effects.ShadowsExteriors->Constants.ShadowLightPosition;
+	for (int i = 0; i < ShadowCubeMapsMax; i++) add(shadowLights[i], TheShaderManager->LightColor[i]);
+	for (int i = 0; i < TrackedLightsMax; i++) add(TheShaderManager->LightPosition[i], TheShaderManager->LightColor[ShadowCubeMapsMax + i]);
+
+	std::sort(found, found + count, [](const Candidate& a, const Candidate& b) { return a.key < b.key; });
+	const int used = min(count, Lights.MaxLights);
+	for (int i = 0; i < used; i++) {
+		LightPosition[i] = found[i].pos;
+		LightColor[i] = found[i].color;
+	}
+	Constants.LightData.x = (float)used;
 }
 
 // There Stands The Grass NVSE's PlayerBend::Update, line for line (core/PlayerBend.cpp, Into-The-Rough): the bend origin
@@ -96,6 +136,8 @@ void GrassShaders::UpdateConstants() {
 
 	// Pixels a unit covers at a depth of 1: half the screen height times the projection's vertical scale.
 	Constants.LOD = D3DXVECTOR4(0.5f * (float)TheRenderManager->height * TheRenderManager->projMatrix._22, LOD.MinPixels, LOD.FadePixels, LOD.Enabled ? 1.0f : 0.0f);
+
+	UpdateLights();
 
 	if (s.Debug && (DebugClock += max(dt, 0.0f)) >= 2.0f) {
 		DebugClock = 0.0f;

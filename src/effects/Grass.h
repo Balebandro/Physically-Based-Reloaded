@@ -11,8 +11,22 @@ public:
 		D3DXVECTOR4		Bend;			// xyz: the bend origin (camera-relative world, as GetShadowWorldPos rebuilds positions), w: 1 / reach
 		D3DXVECTOR4		BendParams;		// x: push per unit of blade height (strength / 90 * 0.5), w: 1 for the debug tint
 		D3DXVECTOR4		LOD;			// x: pixels per unit at a depth of 1, y: MinPixels, z: FadePixels, w: 1 when on
+		D3DXVECTOR4		LightData;		// x: lamps in LightPosition (0: none, the shader skips them), y: Strength
 	};
 	GrassStruct	Constants;
+
+	// Lamps on the grass ([Shaders.Grass.Lights]): placed lights and the Pip-Boy light, never the sun. The nearest of the
+	// lights NVR tracks each frame (ShaderManager::GetNearbyLights), into pixel c160-c176 of GRASS23x000TMS.pso.
+	static const int MaxGrassLights = 8;
+	D3DXVECTOR4	LightPosition[MaxGrassLights];	// xyz: camera-relative world, as the grass rebuilds positions; w: radius
+	D3DXVECTOR4	LightColor[MaxGrassLights];		// rgb: colour times dimmer
+	struct LightSettings {
+		bool	Enabled;
+		int		MaxLights;
+		float	Strength;
+	};
+	LightSettings	Lights = {};
+	void	UpdateLights();
 
 	// Grass bending away from the player, as There Stands The Grass NVSE does it (that plugin stands down when NVR owns the
 	// grass shaders): within Radius of the player's feet the blades lean away, more the faster they move, and spring back
