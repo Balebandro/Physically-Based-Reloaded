@@ -129,6 +129,7 @@
     <ClCompile Include="..\src\core\RenderManager.cpp" />
     <ClCompile Include="..\src\core\RenderPass.cpp" />
     <ClCompile Include="..\src\core\DrawProfiler.cpp" />
+    <ClCompile Include="..\src\core\AudioTweaks.cpp" />
     <ClCompile Include="..\src\core\SettingManager.cpp" />
     <ClCompile Include="..\src\core\ShaderCollection.cpp" />
     <ClCompile Include="..\src\core\ShaderManager.cpp" />

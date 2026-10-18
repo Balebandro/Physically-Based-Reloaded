@@ -71,6 +71,10 @@ Position = 0                # [0-3] Corner: 0 top left, 1 top right, 2 bottom le
 TopShaders = 10             # [0-30] How many pixel shaders to list, the most drawn first. NVR's shaders by name (the game's own marked vanilla); effects' shaders show as unnamed.
 LogInterval = 0.0           # Seconds between copies of the numbers in NewVegasReloaded.log, to compare setups afterwards. 0 off.
 
+[_Main.Main.Audio]
+ListenerRate = 30.0         # [0.0-240.0] How many times a second the game refreshes where you are hearing from (DirectSound recomputes every playing 3D sound each time). The game does it every frame, costly in busy fights. 30 is inaudible; 0 restores every frame.
+SkipRedundantVolume = true  # Sounds set their volume every frame, mostly to the volume they already have, and each call waits on DirectSound. Unchanged volumes are not sent again.
+
 [_Main.Main.Precipitations]
 RemovePrecipitations = false   # Disables vanilla rain and other precipitations: the weather's own rain and snow, and the rain meshes rain scripts place on the player (3D Rain, Honest Hearts, Climate Control: [Shaders.Precipitations.Particles] RainMeshRoots). Takes effect immediately, no restart.
 
