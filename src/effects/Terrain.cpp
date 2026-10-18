@@ -11,7 +11,7 @@ void TerrainShaders::RegisterConstants() {
 	TheShaderManager->RegisterConstant("TESR_TerrainParallaxData", &ParallaxConstants.Data);
 	TheShaderManager->RegisterConstant("TESR_TerrainParallaxExtraData", &ParallaxConstants.ExtraData);
 	TheShaderManager->RegisterConstant("TESR_TerrainBlendData", &BlendingConstants.Data);
-	TheShaderManager->RegisterConstant("TESR_TerrainBlendFrame", &BlendingConstants.Frame);
+	TheShaderManager->RegisterConstant("TESR_TerrainBlendShape", &BlendingConstants.Shape);
 }
 
 // Runs as a land shader binds (ShaderRecord::SetCT), before its constants upload. In the world scene the first
@@ -38,6 +38,44 @@ void TerrainShaders::PrepareBlending() {
 		TheTextureManager->TerrainBlendDepthState = 2;
 	}
 	BlendingConstants.Data.x = 1.0f;
+}
+
+// The states the land's blending changes, as set on the device and in the game's cache together: the cache
+// skips a state it believes already set, so changing the device alone desyncs them (as NVR's shadow code once did
+// with the depth test).
+static const D3DRENDERSTATETYPE LandBlendStates[7] = {
+	D3DRS_ALPHABLENDENABLE, D3DRS_SRCBLEND, D3DRS_DESTBLEND, D3DRS_BLENDOP,
+	D3DRS_SEPARATEALPHABLENDENABLE, D3DRS_SRCBLENDALPHA, D3DRS_DESTBLENDALPHA,
+};
+
+static void SetLandRenderState(D3DRENDERSTATETYPE State, DWORD Value) {
+	TheRenderManager->renderState->SetRenderState(State, Value, RenderStateArgs);
+	TheRenderManager->device->SetRenderState(State, Value);
+}
+
+// The land's pixel shaders: SLS2092-SLS2146 (TerrainShaders::Templates, TerrainTemplate.hlsl). The shader writes
+// alpha 1 wherever it does not fade, so blending changes nothing there. The colour blends over the objects drawn
+// before the land; the target's alpha is kept as it was.
+void TerrainShaders::BeginLandDraw(const char* PixelShaderName) {
+	if (!BlendingSettings.Enabled || !TheShaderManager->GameState.isExterior || !PixelShaderName) return;
+	if (memcmp(PixelShaderName, "SLS2", 4)) return;
+	const int Number = atoi(PixelShaderName + 3);
+	if (Number < 2092 || Number > 2146) return;
+	for (int i = 0; i < 7; i++) LandBlendSaved[i] = TheRenderManager->renderState->GetRenderState(LandBlendStates[i]);
+	SetLandRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+	SetLandRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+	SetLandRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+	SetLandRenderState(D3DRS_BLENDOP, D3DBLENDOP_ADD);
+	SetLandRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE);
+	SetLandRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO);
+	SetLandRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_ONE);
+	LandBlendSet = true;
+}
+
+void TerrainShaders::EndLandDraw() {
+	if (!LandBlendSet) return;
+	for (int i = 0; i < 7; i++) SetLandRenderState(LandBlendStates[i], LandBlendSaved[i]);
+	LandBlendSet = false;
 }
 
 
@@ -105,12 +143,18 @@ void TerrainShaders::UpdateSettings() {
 	Constants.PBRData.w = (float)std::clamp(TheSettingManager->GetSettingI("Shaders.PBR.Main", "DebugView"), 0, 4);
 
 	BlendingSettings.Enabled = TheSettingManager->GetSettingI("Shaders.Terrain.Blending", "Enabled");
-	BlendingSettings.Debug = TheSettingManager->GetSettingI("Shaders.Terrain.Blending", "Debug");
-	BlendingSettings.BlendDistance = max(0.1f, TheSettingManager->GetSettingF("Shaders.Terrain.Blending", "BlendDistance"));
+	BlendingSettings.DebugView = TheSettingManager->GetSettingI("Shaders.Terrain.Blending", "DebugView");
+	// Capped at 20: deeper bands show too much of what the land covers.
+	BlendingSettings.BlendDistance = std::clamp(TheSettingManager->GetSettingF("Shaders.Terrain.Blending", "BlendDistance"), 0.5f, 20.0f);
+	BlendingSettings.GroundWidth = max(0.0f, TheSettingManager->GetSettingF("Shaders.Terrain.Blending", "GroundWidth"));
+	BlendingSettings.HeightBlend = max(0.0f, TheSettingManager->GetSettingF("Shaders.Terrain.Blending", "HeightBlend"));
+	BlendingSettings.SlopeBlend = max(0.0f, TheSettingManager->GetSettingF("Shaders.Terrain.Blending", "SlopeBlend"));
+	BlendingSettings.MinPixels = max(0.0f, TheSettingManager->GetSettingF("Shaders.Terrain.Blending", "MinPixels"));
+	BlendingConstants.Shape = D3DXVECTOR4(BlendingSettings.GroundWidth, BlendingSettings.HeightBlend, BlendingSettings.SlopeBlend, BlendingSettings.MinPixels);
 	BlendingSettings.MaxDistance = TheSettingManager->GetSettingF("Shaders.Terrain.Blending", "MaxDistance");
 	BlendingConstants.Data.y = BlendingSettings.BlendDistance;
 	BlendingConstants.Data.z = BlendingSettings.MaxDistance;
-	BlendingConstants.Data.w = BlendingSettings.Debug ? 1.0f : 0.0f;
+	BlendingConstants.Data.w = (float)BlendingSettings.DebugView;
 
 	LODSettings.NoiseScale = TheSettingManager->GetSettingF("Shaders.Terrain.LOD", "LODNoiseScale");
 	LODSettings.NoiseTile = TheSettingManager->GetSettingF("Shaders.Terrain.LOD", "LODNoiseTile");
@@ -121,8 +165,6 @@ void TerrainShaders::UpdateConstants() {
 	float rainFactor = TheShaderManager->Shaders.Wetness ? TheShaderManager->Shaders.Wetness->RainFactor() : 0.0f;
 
 	if (!TheShaderManager->GameState.isExterior) return;
-
-	BlendingConstants.Frame.x = fmodf(BlendingConstants.Frame.x + 1.0f, 64.0f);
 
 	Constants.ExtraData.x = usePBR;
 	Constants.ExtraData.y = std::lerp(TheShaderManager->GetTransitionValue(Settings.Default.Saturation, Settings.Night.Saturation, 0.0),

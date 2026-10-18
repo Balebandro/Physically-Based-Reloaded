@@ -93,19 +93,23 @@ public:
 	ParallaxStruct  ParallaxConstants;
 
 	// Terrain blending ([Shaders.Terrain.Blending]), after Community Shaders' Terrain Blending: where the land
-	// covers an object by less than BlendDistance, the land fades out (dithered, TAA smooths it), so the
+	// covers an object by less than BlendDistance, the land fades out (alpha blended), so the
 	// object sinks softly into the ground instead of ending in a hard line.
 	struct BlendingSettingsStruct {
 		bool Enabled;
-		bool Debug;
+		int DebugView;		// 1 band magenta, 2 land kept, 3 depth below the surface, 4 fade depth
 		float BlendDistance;
 		float MaxDistance;
+		float GroundWidth;	// the band's width across the ground at most (shallow objects)
+		float HeightBlend;	// how much the land texture's height map shapes the edge
+		float SlopeBlend;	// BlendDistance multiplier on steep land
+		float MinPixels;	// the fade's minimum width on screen
 	};
 	BlendingSettingsStruct BlendingSettings;
 
 	struct BlendingStruct {
 		D3DXVECTOR4		Data;		// x: on for this draw, y: blend distance, z: max distance, w: debug view
-		D3DXVECTOR4		Frame;		// x: frame index (moves the dither every frame)
+		D3DXVECTOR4		Shape;		// x: ground width, y: height blend, z: slope blend, w: minimum pixels
 	};
 	BlendingStruct	BlendingConstants;
 
@@ -115,4 +119,10 @@ public:
 	void	RegisterConstants();
 	void	UpdateSettings();
 	void	PrepareBlending();
+	// Alpha blending for the land's own draws while terrain blending fades it (ShadowLightShader's per-geometry
+	// hooks, Hooks/Shaders.cpp): on before a draw with a land pixel shader, the states put back after it.
+	void	BeginLandDraw(const char* PixelShaderName);
+	void	EndLandDraw();
+	bool	LandBlendSet = false;
+	DWORD	LandBlendSaved[7] = {};
 };
