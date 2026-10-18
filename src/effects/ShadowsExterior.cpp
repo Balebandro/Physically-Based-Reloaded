@@ -167,6 +167,7 @@ bool ShadowsExteriorEffect::UpdateSettingsFromQuality(int quality) {
 	Settings.ShadowMaps.CasterCulling = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.ShadowMaps", "CasterCulling") != 0;
 	Settings.ShadowMaps.CasterMargin = std::clamp(TheSettingManager->GetSettingF("Shaders.ShadowsExteriors.ShadowMaps", "CasterMargin"), 0.0f, 4096.0f);
 	Settings.ShadowMaps.CasterDrop = std::clamp(TheSettingManager->GetSettingF("Shaders.ShadowsExteriors.ShadowMaps", "CasterDrop"), 0.0f, 65536.0f);
+	Settings.ShadowMaps.Instancing = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.ShadowMaps", "Instancing") != 0;
 	Settings.ShadowMaps.SkipCoveredCasters = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.ShadowMaps", "SkipCoveredCasters") != 0;
 
 	// Custom settings.

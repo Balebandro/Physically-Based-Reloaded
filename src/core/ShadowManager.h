@@ -37,6 +37,7 @@ public:
 	NiVector4				BillboardRight;
 	NiVector4				BillboardUp;
 	ShaderRecordVertex*		ShadowMapVertex;
+	ShaderRecordVertex*		ShadowMapInstancedVertex = nullptr;	// ShadowMapVertex for many copies of one mesh per draw (ShadowRenderPass::RenderAccum)
 	ShaderRecordPixel*		ShadowMapPixel;
 	ShaderRecordVertex*		ShadowCubeMapVertex;
 	ShaderRecordPixel*		ShadowCubeMapPixel;

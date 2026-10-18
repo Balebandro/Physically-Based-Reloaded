@@ -115,6 +115,7 @@ public:
 		bool				CasterCulling;		// leave out casters whose shadow cannot reach the view
 		float				CasterMargin;
 		float				CasterDrop;
+		bool				Instancing;		// copies of one mesh drawn together (ShadowRenderPass::RenderAccum)
 		bool				SkipCoveredCasters;	// leave out of a cascade what only an earlier one shades
 	};
 

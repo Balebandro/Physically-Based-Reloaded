@@ -18,6 +18,7 @@ void ShadowManager::Initialize() {
 	// load the shaders
 	TheShadowManager->ShadowMapVertex = (ShaderRecordVertex*)ShaderRecord::LoadShader("ShadowMap.vso", "Shadows\\");
 	TheShadowManager->ShadowMapPixel = (ShaderRecordPixel*)ShaderRecord::LoadShader("ShadowMap.pso", "Shadows\\");
+	TheShadowManager->ShadowMapInstancedVertex = (ShaderRecordVertex*)ShaderRecord::LoadShader("ShadowMapInstanced.vso", "Shadows\\");   // optional: without it, no instancing
 	TheShadowManager->ShadowCubeMapVertex = (ShaderRecordVertex*)ShaderRecord::LoadShader("ShadowCubeMap.vso", "Shadows\\");
 	TheShadowManager->ShadowCubeMapPixel = (ShaderRecordPixel*)ShaderRecord::LoadShader("ShadowCubeMap.pso", "Shadows\\");
 

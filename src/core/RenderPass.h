@@ -34,6 +34,12 @@ public:
 	bool AccumObject(NiGeometry* Geo);
 	void RegisterConstants();
 	void UpdateConstants(NiGeometry* Geo);
+	void RenderAccum();		// hides RenderPass::RenderAccum: in the sun's cascades, copies of one mesh are drawn together
+
+private:
+	void RenderSingle(NiGeometry* Geo);
+	bool RenderInstanced(NiGeometry** Group, UInt32 Count);
+	std::vector<NiGeometry*> Items;
 };
 
 class AlphaShadowRenderPass : public RenderPass {

@@ -874,6 +874,7 @@ LimitFrequency = true				 # Limit the update frequency of the furthest cascade (
 CasterCulling = true				 # Skip shadow casters whose shadow cannot fall anywhere you can see (e.g. behind you with the sun in front). Saves shadow-map draw calls. Not applied to the furthest cascade while LimitFrequency is on.
 CasterMargin = 256.0				 # [0.0-4096.0] Game units added around the view when deciding, so shadows at the screen edges and in blurred cascade borders stay.
 CasterDrop = 2048.0				 # [0.0-65536.0] How far below an object its shadow is followed (terrain dropping away). Larger is safer, culls less.
+Instancing = true					 # Draw copies of the same mesh (rocks, posts, walls) into the sun's shadow maps together, one draw call per mesh instead of one per copy (hardware instancing).
 SkipCoveredCasters = true			 # Leave a caster out of a cascade when its whole shadow falls where an earlier (sharper) cascade already answers for every pixel. Nearby NPCs and objects were drawn into the near, middle and far maps alike.
 
 [_Shaders.ShadowsExteriors.Ortho]
