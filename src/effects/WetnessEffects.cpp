@@ -27,7 +27,6 @@ void WetnessEffectsShaders::UpdateSettings() {
 	Settings.PuddleMaxAngle = std::clamp(TheSettingManager->GetSettingF(main, "PuddleMaxAngle"), 0.6f, 1.0f);
 	Settings.PuddleMinWetness = std::clamp(TheSettingManager->GetSettingF(main, "PuddleMinWetness"), 0.0f, 1.0f);
 	Settings.MinRainWetness = std::clamp(TheSettingManager->GetSettingF(main, "MinRainWetness"), 0.0f, 0.9f);
-	Settings.SkinWetness = std::clamp(TheSettingManager->GetSettingF(main, "SkinWetness"), 0.0f, 1.0f);
 	Settings.WeatherTransitionSpeed = std::clamp(TheSettingManager->GetSettingF(main, "WeatherTransitionSpeed"), 0.2f, 8.0f);
 	Settings.HeightAwareness = std::clamp(TheSettingManager->GetSettingF(main, "HeightAwareness"), 0.0f, 1.0f);
 	Settings.CreviceFill = std::clamp(TheSettingManager->GetSettingF(main, "CreviceFill"), 0.0f, 1.0f);
@@ -136,7 +135,6 @@ void WetnessEffectsShaders::UpdateConstants() {
 	}
 
 	bool active = on && (Wetness > 0.0f || PuddleWetness > 0.0f || Raining > 0.0f || waterHeight > -1e8f);
-	SkinWetnessValue = on ? Wetness * Settings.SkinWetness : 0.0f;
 
 	Constants.Data = D3DXVECTOR4(Wetness, PuddleWetness, Raining, (float)RainTime);
 	Constants.Params = D3DXVECTOR4(Settings.MaxRainWetness, Settings.MaxPuddleWetness, Settings.MinRainWetness, Settings.PuddleRadius);

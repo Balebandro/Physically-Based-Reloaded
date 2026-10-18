@@ -3,8 +3,8 @@
 // Wetness Effects, ported from Community Shaders (features/Wetness Effects, GPL-3.0): surfaces getting
 // wet in the rain and drying after it -- darkening, a water film with its own highlight and reflection,
 // puddles, shore wetness, raindrop ripples on the land, nothing wet under cover. The shading is in
-// Shaders/Includes/Wetness.hlsl, used by the object and terrain templates; skin and hair take
-// SkinWetness through the skin shaders. This collection holds the settings and works out from the
+// Shaders/Includes/Wetness.hlsl, used by the object and terrain templates (skin gets wet by its own
+// RainWetness, effects/Skin.cpp). This collection holds the settings and works out from the
 // weather how wet the world is, as CS's WetnessEffects::GetCommonBufferData does.
 class WetnessEffectsShaders : public ShaderCollection
 {
@@ -20,7 +20,6 @@ public:
 		float	PuddleMaxAngle;
 		float	PuddleMinWetness;
 		float	MinRainWetness;
-		float	SkinWetness;
 		float	WeatherTransitionSpeed;
 		float	HeightAwareness;	// how much the land's height maps shape the wetness (0 off)
 		float	CreviceFill;		// the water line in the crevices at full wetness, as a height (0-1)
@@ -61,7 +60,6 @@ public:
 	float	Wetness = 0.0f;			// eased, 0-1
 	float	PuddleWetness = 0.0f;
 	float	Raining = 0.0f;
-	float	SkinWetnessValue = 0.0f;	// for the skin shaders: Wetness x SkinWetness, exteriors only
 	double	RainTime = 0.0;
 
 	// How wet the weather has made things, 0-1, for the rest of NVR (PBR, skin, terrain and water

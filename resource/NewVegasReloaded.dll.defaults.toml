@@ -1276,7 +1276,6 @@ PuddleRadius = 1.0                  # [0.1-3.0] Puddle size.
 PuddleMaxAngle = 0.95               # [0.6-1.0] How flat ground must be to hold a puddle (the up component of its normal).
 PuddleMinWetness = 0.85             # [0.0-1.0] The wetness at which puddles start to form.
 MinRainWetness = 0.65               # [0.0-0.9] The least a surface gets wet in the rain: walls and undersides, which the rain does not fall straight on.
-SkinWetness = 0.95                  # [0.0-1.0] How wet skin and hair get in the rain.
 WeatherTransitionSpeed = 3.0        # [0.2-8.0] How fast things get wet when the rain starts and dry after it stops (3: about 20 seconds; puddles take three times as long to dry).
 HeightAwareness = 1.0               # [0.0-1.0] Terrain only: how much the land textures' height maps shape the wetness. Water runs off the ridges and gathers in the crevices, which fill with standing water first. 0 off.
 CreviceFill = 0.5                   # [0.0-1.0] Terrain only: how high the standing water rises in the crevices at full wetness, as a height (0 the deepest point of a texture, 1 its highest). Higher floods more of the ground.
