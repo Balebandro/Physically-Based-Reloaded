@@ -557,6 +557,7 @@ TreeWind = 2.5                         # [1.0-10.0] How much harder tree leaves 
 LightScattering = 1.0                  # [0.0-20.0] How strongly lamps, fires, signs and other nearby lights glow through the dust, the way the sun does: a halo around each, dimmed by the dust between you and it, stopping at walls. 0 off.
 EmissiveThreshold = 3.0                # [0.0-50.0] Fire, sparks and other glowing effects are drawn without depth, so the storm would bury them as deep as whatever is behind them. A pixel this many times brighter than lit dust counts as glowing in front of it and only gets EmissiveDistance of dust. Lower catches dimmer effects (too low and bright sunlit walls pierce the storm too); 0 off.
 EmissiveDistance = 400.0               # [0-5000] How much dust, in game units, such a glowing pixel is still seen through.
+ThroughBlended = 1                     # [0-1] While the storm blows, glass and other see-through blended surfaces write no depth, so the world behind a window gets its own dust. Cut-outs (fences, wire, torn sheets) and water keep their depth. 0: as before, which left the world behind a window clear.
 Force = 0                              # [0-1] Debugging: 1 shows the full storm outdoors in any weather.
 
 [_Shaders.Sandstorm.Status]

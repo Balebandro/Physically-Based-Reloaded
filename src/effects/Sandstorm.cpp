@@ -13,6 +13,7 @@ void SandstormEffect::RegisterConstants() {
 	TheShaderManager->RegisterConstant("TESR_WindBoost", &Constants.WindBoost);
 	TheShaderManager->RegisterConstant("TESR_SandstormLights", &Constants.Lights);
 	TheShaderManager->RegisterConstant("TESR_SandstormEmissive", &Constants.Emissive);
+	TheShaderManager->RegisterConstant("TESR_SandstormWater", &Constants.Water);
 }
 
 void SandstormEffect::UpdateSettings() {
@@ -45,6 +46,7 @@ void SandstormEffect::UpdateSettings() {
 	Settings.EmissiveThreshold = std::clamp(TheSettingManager->GetSettingF(main, "EmissiveThreshold"), 0.0f, 50.0f);
 	Settings.EmissiveDistance = std::clamp(TheSettingManager->GetSettingF(main, "EmissiveDistance"), 0.0f, 5000.0f);
 	Settings.Force = TheSettingManager->GetSettingI(main, "Force") != 0;
+	Settings.ThroughBlended = TheSettingManager->GetSettingI(main, "ThroughBlended") != 0;
 }
 
 // A sandstorm by name: the weather's editor ID holds the keyword, in any case.
@@ -60,7 +62,8 @@ bool SandstormEffect::IsSandstorm(TESWeather* Weather) {
 void SandstormEffect::UpdateConstants() {
 	float elapsed = std::clamp((float)TheFrameRateManager->ElapsedTime, 0.0f, 0.1f);
 	Sky* WorldSky = Tes ? Tes->sky : nullptr;
-	bool exterior = TheShaderManager->GameState.isExterior && !TheShaderManager->GameState.isUnderwater;
+	// Underwater the storm still blows above the surface: the shader puts dust only on what is seen past it.
+	bool exterior = TheShaderManager->GameState.isExterior;
 
 	// How much of the weather is the storm: the current weather fading in over the transition, the last one
 	// fading out. Names are looked at only when the weathers change.
@@ -108,6 +111,18 @@ void SandstormEffect::UpdateConstants() {
 	Constants.WindBoost = D3DXVECTOR4(Settings.GrassWind, Settings.TreeWind, Time, Intensity);
 	Constants.Lights = D3DXVECTOR4(Settings.LightScattering, 0.0f, 0.0f, 0.0f);
 	Constants.Emissive = D3DXVECTOR4(Settings.EmissiveThreshold, Settings.EmissiveDistance, 0.0f, 0.0f);
+	Underwater = TheShaderManager->GameState.isUnderwater && Tes && Player && WorldSceneGraph;
+	Constants.Water = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+	if (Underwater) {
+		TESWaterForm* water = nullptr;
+		const float surface = Tes->GetWaterHeight(Player, WorldSceneGraph, &water);
+		Constants.Water = D3DXVECTOR4(1.0f, max(surface - TheRenderManager->CameraPosition.z, 0.0f), 0.0f, 0.0f);
+		static bool logged = false;
+		if (!logged) {
+			Logger::Log("Sandstorm: underwater, the surface at %.0f, the camera at %.0f", surface, TheRenderManager->CameraPosition.z);
+			logged = true;
+		}
+	}
 
 	// The streaks keep out of the lee of walls and rocks by NVR's top-down depth map, asked for while they show.
 	ShadowsExteriorEffect* shadows = TheShaderManager->Effects.ShadowsExteriors;

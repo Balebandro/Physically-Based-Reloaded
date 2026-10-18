@@ -27,6 +27,7 @@ public:
 		float	LightScattering;	// how strongly lamps, fires and other nearby lights glow through the dust (0 off)
 		float	EmissiveThreshold;	// a pixel this many times brighter than lit dust counts as glowing in front (fire drawn without depth); 0 off
 		float	EmissiveDistance;	// how much dust such a pixel is seen through (units)
+		bool	ThroughBlended;	// glass and other see-through blended surfaces write no depth while the storm blows
 		bool	Force;			// debugging: the full storm outdoors in any weather
 	};
 	SandstormSettingsStruct	Settings;
@@ -40,6 +41,7 @@ public:
 		D3DXVECTOR4	WindBoost;	// for the grass and leaf shaders: x grass, y trees, z time (s), w how hard the storm blows (0 off)
 		D3DXVECTOR4	Lights;		// x: LightScattering
 		D3DXVECTOR4	Emissive;	// x: EmissiveThreshold, y: EmissiveDistance
+		D3DXVECTOR4	Water;		// x: 1 with the camera underwater, y: the water surface's height above the camera
 	};
 	SandstormStruct	Constants;
 
@@ -52,6 +54,10 @@ public:
 	void*	LoggedWeather = nullptr;	// the weathers last written to the log
 	void*	LoggedSecond = nullptr;
 
+	// While the storm blows (ThroughBlended), glass and other see-through blended surfaces leave the world's depth to what
+	// lies behind them, so the dust is measured to that (RenderBlendedHook in Render.cpp).
+	bool	HidesBlendedDepth() const { return Enabled && Settings.ThroughBlended && Intensity > 0.0f; }
+	bool	Underwater = false;		// the camera is underwater (the storm only above the surface)
 	void	UpdateConstants();
 	void	RegisterConstants();
 	void	UpdateSettings();

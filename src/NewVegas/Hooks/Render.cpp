@@ -96,6 +96,76 @@ HRESULT __fastcall SetSamplerStateHook(NiDX9RenderState* This, UInt32 edx, UInt3
 
 }
 
+// Inside RenderWorldSceneGraphHook's call of the game's world render.
+static bool InWorldScene = false;
+
+// Glass in a sandstorm. The sandstorm measures each pixel's dust to the depth there; glass wrote its own, so the world
+// seen through a window (blended in before the storm is drawn) kept only the dust between the camera and the glass,
+// and stayed clear. While the storm blows, in the world scene's blended stage (0xB650C0: the accumulator's back-to-front
+// lists, after every opaque group), see-through surfaces draw without writing depth: alpha blended, and not cut out by
+// an alpha test of any strength (fences, wire and torn sheets are solid where drawn and keep their depth). Water keeps
+// its own (the water effects read its surface).
+static bool InBlendedStage = false;
+
+typedef HRESULT (STDMETHODCALLTYPE* DrawIndexedPrimitiveFn)(IDirect3DDevice9*, D3DPRIMITIVETYPE, INT, UINT, UINT, UINT, UINT);
+static DrawIndexedPrimitiveFn DrawIndexedPrimitiveNext = nullptr;
+
+static bool IsSeeThroughPass(IDirect3DDevice9* Device) {
+	DWORD blend = FALSE, zwrite = FALSE, test = FALSE, reference = 0;
+	Device->GetRenderState(D3DRS_ALPHABLENDENABLE, &blend);
+	Device->GetRenderState(D3DRS_ZWRITEENABLE, &zwrite);
+	if (!blend || !zwrite) return false;
+	Device->GetRenderState(D3DRS_ALPHATESTENABLE, &test);
+	Device->GetRenderState(D3DRS_ALPHAREF, &reference);
+	if (test && reference >= 32) return false;   // a cut-out (some glass tests at a near-zero reference)
+	void* pass = *(void**)0x011F91E0;   // BSShaderManager::pCurrentRenderPass; its first member is the geometry
+	NiGeometry* geometry = pass ? *(NiGeometry**)pass : nullptr;
+	// Water keeps its depth, the water effects read its surface; except from underwater, where the world above is seen
+	// through it as through glass and must get the dust of its own distance.
+	SandstormEffect* sandstorm = TheShaderManager->Effects.Sandstorm;
+	if (geometry && !(sandstorm && sandstorm->Underwater))
+		if (NiShadeProperty* shade = (NiShadeProperty*)geometry->GetProperty(NiProperty::kType_Shade))
+			if (shade->m_eShaderType == NiShadeProperty::kProp_Water) return false;
+	return true;
+}
+
+static HRESULT STDMETHODCALLTYPE DrawIndexedPrimitiveHook(IDirect3DDevice9* Device, D3DPRIMITIVETYPE Type, INT Base, UINT MinIndex, UINT Vertices, UINT Start, UINT Count) {
+	if (InBlendedStage && IsSeeThroughPass(Device)) {
+		Device->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);   // set back at once: the render state cache never sees it
+		const HRESULT result = DrawIndexedPrimitiveNext(Device, Type, Base, MinIndex, Vertices, Start, Count);
+		Device->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
+		return result;
+	}
+	return DrawIndexedPrimitiveNext(Device, Type, Base, MinIndex, Vertices, Start, Count);
+}
+
+void (__thiscall* RenderBlended)(void*, UInt32) = (void (__thiscall*)(void*, UInt32))Hooks::RenderBlended;
+void __fastcall RenderBlendedHook(void* This, UInt32 edx, UInt32 Arg) {
+	SandstormEffect* Sandstorm = TheShaderManager->Effects.Sandstorm;
+	bool hide = false;
+	if (InWorldScene && Sandstorm && Sandstorm->HidesBlendedDepth()) {
+		// The world's own depth surface, not a reflection's or cube map's.
+		IDirect3DSurface9* depth = nullptr;
+		TheRenderManager->device->GetDepthStencilSurface(&depth);
+		if (depth) {
+			hide = depth == TheTextureManager->TerrainBlendWorldDepth;
+			depth->Release();
+		}
+	}
+	if (hide && !DrawIndexedPrimitiveNext) {
+		// Chained in the device's vtable (DrawProfiler patches the same slot, once, keeping what it finds).
+		void** vtbl = *(void***)TheRenderManager->device;
+		DWORD old;
+		VirtualProtect(&vtbl[82], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
+		DrawIndexedPrimitiveNext = (DrawIndexedPrimitiveFn)vtbl[82];
+		vtbl[82] = (void*)DrawIndexedPrimitiveHook;
+		VirtualProtect(&vtbl[82], sizeof(void*), old, &old);
+	}
+	InBlendedStage = hide;
+	RenderBlended(This, Arg);
+	InBlendedStage = false;
+}
+
 void (__thiscall* RenderWorldSceneGraph)(Main*, Sun*, UInt8, UInt8, UInt8) = (void (__thiscall*)(Main*, Sun*, UInt8, UInt8, UInt8))Hooks::RenderWorldSceneGraph;
 void __fastcall RenderWorldSceneGraphHook(Main* This, UInt32 edx, Sun* SkySun, UInt8 IsFirstPerson, UInt8 WireFrame, UInt8 Arg4) {
 	DrawProfiler::Scope ProfilerScope(DrawProfiler::PhaseWorld);
@@ -123,7 +193,9 @@ void __fastcall RenderWorldSceneGraphHook(Main* This, UInt32 edx, Sun* SkySun, U
 	TheTextureManager->TerrainBlendLogScene = TheShaderManager->GameState.isExterior && (++sceneCount % 2000) == 300;
 	TheTextureManager->TerrainBlendLog.clear();
 
+	InWorldScene = true;
 	(*RenderWorldSceneGraph)(This, SkySun, IsFirstPerson, WireFrame, Arg4);
+	InWorldScene = false;
 
 	if (TheTextureManager->TerrainBlendLogScene)
 		Logger::Log("[TerrainBlend] world scene shader order: %s", TheTextureManager->TerrainBlendLog.c_str());

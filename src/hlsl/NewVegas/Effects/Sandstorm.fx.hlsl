@@ -21,6 +21,7 @@ float4 TESR_SandstormColor; // rgb: sand albedo, w: brightness
 float4 TESR_SandstormCover; // x: the ortho map is there
 float4 TESR_SandstormLights;     // x: how strongly the nearby lights glow through the dust (0 off)
 float4 TESR_SandstormEmissive;   // x: EmissiveThreshold (0 off), y: EmissiveDistance
+float4 TESR_SandstormWater;      // x: 1 with the camera underwater, y: the water surface's height above the camera
 float4 TESR_LightPosition[12];       // NVR's nearby lights (ShaderManager::GetNearbyLights): world position, w radius
 float4 TESR_ShadowLightPosition[12]; // the shadow-casting ones
 float4 TESR_LightColor[24];          // rgb, w dimmer: the shadow-casting lights first, then the others
@@ -175,7 +176,9 @@ float InTheWindCoarse(float3 relative, float2 wind)
 }
 
 
-// How far along the view ray a pixel's surface is; the sky lies well beyond what the storm lets through.
+// How far along the view ray a pixel's surface is; the sky lies well beyond what the storm lets through. Past glass:
+// while the storm blows, see-through blended surfaces write no depth (Render.cpp, RenderBlendedHook), so what lies
+// behind a window gets its own dust; cut-outs (fences, wire) keep theirs.
 float ViewDistance(float2 coord, float visibility)
 {
 	float depth = readDepth(coord);
@@ -229,6 +232,35 @@ float4 SandstormPS(VSOUT IN) : COLOR0
 	float distance = min(-log(max(shown / 16.0f, 1e-9f)) / fullDensity, visibility * 6.0f);
 	float3 camera = TESR_CameraPosition.xyz;
 
+	// Underwater the dust lies only above the surface: the march starts where the view ray leaves the water, and a ray
+	// that never does (down, sideways, or onto something under the water first) gets none. Positions handed to the
+	// shadow and shelter lookups stay relative to the real camera (start + the distance along the march).
+	// Seen from below, the surface itself is what the depth holds: the world above shows on it as its refraction, a
+	// picture drawn before the storm. A pixel whose depth is the surface, looking up through it, is taken to show the world
+	// above far off, as the open sky in the storm. Its ripples would go under the dust with it: the surface's own fine
+	// light and dark (each pixel against the mean of four 3 pixels around it) is laid back over the dusted colour. Only
+	// gentle differences: the hard edges of what the refraction shows (mountains against the sky) would let the world
+	// through the storm, so differences past 12% fade out and past 30% are dropped.
+	float start = 0.0f;
+	float surfaceDetail = 1.0f;
+	[branch] if (TESR_SandstormWater.x > 0.0f) {
+		start = dir.z > 1e-3f ? TESR_SandstormWater.y / dir.z : 1e9f;
+		[branch] if (start < 1e8f && abs(distance - start) <= max(64.0f, start * 0.05f)) {
+			distance = start + visibility * 6.0f;
+			float2 spread = TESR_ReciprocalResolution.xy * 3.0f;
+			const float3 toLuma = float3(0.2126f, 0.7152f, 0.0722f);
+			float around = dot(linearize(tex2Dlod(TESR_RenderedBuffer, float4(uv + float2(spread.x, 0.0f), 0.0f, 0.0f))).rgb, toLuma)
+				+ dot(linearize(tex2Dlod(TESR_RenderedBuffer, float4(uv - float2(spread.x, 0.0f), 0.0f, 0.0f))).rgb, toLuma)
+				+ dot(linearize(tex2Dlod(TESR_RenderedBuffer, float4(uv + float2(0.0f, spread.y), 0.0f, 0.0f))).rgb, toLuma)
+				+ dot(linearize(tex2Dlod(TESR_RenderedBuffer, float4(uv - float2(0.0f, spread.y), 0.0f, 0.0f))).rgb, toLuma);
+			float difference = dot(color.rgb, toLuma) / max(around * 0.25f, 1e-4f) - 1.0f;
+			surfaceDetail = 1.0f + 0.8f * difference * (1.0f - smoothstep(0.12f, 0.3f, abs(difference)));
+		}
+		[branch] if (start >= distance) return delinearize(color);
+		distance -= start;
+		camera += dir * start;
+	}
+
 	// The light on the dust: the weather's fog colour and ambient all round, the sun scattered forward.
 	float daytime = smoothstep(0.1f, 0.6f, TESR_SunAmount.x);
 	float3 ambient = (linearize(TESR_FogColor.rgb) * 0.6f + linearize(TESR_SunAmbient.rgb) * 0.4f) * TESR_PBRData.w;
@@ -261,9 +293,9 @@ float4 SandstormPS(VSOUT IN) : COLOR0
 		float local = density * height * lerp(1.0f, saturate(clouds * 2.2f - 0.35f) * 1.8f, billowing) * (t1 - t0);
 		// In the lee of a wall or a rock the air near the camera is calmer: some dust hangs in it, less blows through.
 		float middle = 0.5f * (t0 + t1);
-		[branch] if (middle < 500.0f) local *= lerp(lerp(0.35f, 1.0f, InTheWindCoarse(dir * middle, wind)), 1.0f, smoothstep(350.0f, 500.0f, middle));
+		[branch] if (start + middle < 500.0f) local *= lerp(lerp(0.35f, 1.0f, InTheWindCoarse(dir * (start + middle), wind)), 1.0f, smoothstep(350.0f, 500.0f, start + middle));
 		float absorbed = 1.0f - exp(-local);
-		float3 light = dustAmbient + dustSun * SunVisibility(dir * middle);
+		float3 light = dustAmbient + dustSun * SunVisibility(dir * (start + middle));
 		scattered += transmittance * absorbed * light * (0.8f + 0.4f * clouds);
 		transmittance *= 1.0f - absorbed;
 		float nearShare = saturate((nearCut - t0) / max(t1 - t0, 1e-3f));
@@ -283,7 +315,7 @@ float4 SandstormPS(VSOUT IN) : COLOR0
 	// out before the surface behind, and where the wind reaches (InTheWind): none in the lee of a wall or a rock.
 	float3 streaks = 0.0f;
 	float2 across = float2(-wind.y, wind.x);
-	[unroll] for (int s = 0; s < 3; s++) {
+	[unroll] for (int s = 0; s < 3 && start <= 0.0f; s++) {   // (none underwater: the camera is in the water)
 		float t = 50.0f + 120.0f * s + 30.0f * jitter;
 		if (t < distance) {
 			float3 p = camera + dir * t - float3(wind * speed * time * (2.5f + s), 0.0f);
@@ -296,7 +328,7 @@ float4 SandstormPS(VSOUT IN) : COLOR0
 	scattered += streaks * TESR_SandstormShape.z * intensity * 0.25f;
 
 	// The nearby lights glowing through the dust, as the sun does (lamps, fires, signs).
-	[branch] if (TESR_SandstormLights.x > 0.0f) {
+	[branch] if (TESR_SandstormLights.x > 0.0f && start <= 0.0f) {   // (not underwater)
 		float3 glow = 0.0f;
 		[loop] for (int l = 0; l < 12; l++) {
 			glow += PointGlow(TESR_ShadowLightPosition[l], TESR_LightColor[l], camera, dir, distance, density);
@@ -319,6 +351,7 @@ float4 SandstormPS(VSOUT IN) : COLOR0
 		float3 nearResult = color.rgb * nearTransmittance + nearScattered + (scattered - dustScattered);
 		result = lerp(result, nearResult, emissive);
 	}
+	result *= surfaceDetail;   // the water surface's ripples, seen from below (1 elsewhere)
 	return delinearize(float4(result, color.a));
 }
 
