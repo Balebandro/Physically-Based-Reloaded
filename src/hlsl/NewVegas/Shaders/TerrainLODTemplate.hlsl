@@ -9,6 +9,7 @@
 #include "includes/Helpers.hlsl"
 #include "includes/Terrain.hlsl"
 #include "includes/Shadow.hlsl"
+#include "includes/TerrainErosion.hlsl"
 
 
 struct VS_INPUT {
@@ -141,6 +142,17 @@ PS_OUTPUT main(PS_INPUT IN) {
     // in PBR.hlsl. The albedo is decoded once here and the result encoded before fog.
     linearLighting = TESR_TerrainSkyData.z > 0.0f && TESR_TerrainExtraData.x;
     baseColor = decodeColor(baseColor);
+
+    // Erosion relief ([Shaders.Terrain.Erosion]): the LOD normal map's slopes carved with branching gullies; their floors
+    // darker. The pixel's footprint (top level: derivatives) fades the layers too fine to show.
+    float3 footprintX = ddx(IN.shadowWorldPos);
+    float3 footprintY = ddy(IN.shadowWorldPos);
+    float footprint = max(1.0f, max(length(footprintX.xy), length(footprintY.xy)));
+    [branch] if (TESR_TerrainErosionData.x > 0.0f) {
+        float cavity;
+        normal.xyz = GetErodedNormal(normal.xyz, IN.shadowWorldPos, footprint, cavity);
+        baseColor *= 1.0f - cavity * TESR_TerrainErosionData.z;
+    }
 
     // The LOD normal map is in the land's world-aligned object space (it is lit against the
     // sun direction as is), so it is the world normal for the sky light and reflections.

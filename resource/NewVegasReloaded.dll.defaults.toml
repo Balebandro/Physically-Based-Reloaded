@@ -1081,6 +1081,12 @@ MinPixels = 3.0                     # [0.0-8.0] The fade is at least this many p
 MaxDistance = 4096.0                # [512.0-16384.0] Blending stops beyond this distance from the camera.
 DebugView = 0                       # 0 off. 1 the blend band magenta. 2 how much land is kept (white: all). 3 how deep the object is below the surface (black at the surface, white at four times BlendDistance; dark blue: nothing behind the land). 4 how deep the fade reaches (white: the full BlendDistance, grey: a shallow object's seam, black: none).
 
+[_Shaders.Terrain.Erosion]
+Enabled = true              # Branching erosion gullies carved into the shading of distant (LOD) slopes, badlands relief following the land downhill. Only the lighting changes, not the outline.
+Depth = 1.0                 # [0.0-4.0] How deep the gullies look. 0 is off: the LOD normal maps as before.
+Spacing = 1024.0            # [128.0-16384.0] The widest gullies' spacing, in game units; three finer layers follow at half, quarter and eighth. Layers too fine for the distance fade out.
+GullyDarkening = 0.35       # [0.0-1.0] How much darker the gully floors are than the crests.
+
 [_Shaders.Terrain.LOD]
 LODNoiseScale = 0.7                # Amount of noise applied to LOD.
 LODNoiseTile = 2.7                  # LOD noise texture tiling modifier.

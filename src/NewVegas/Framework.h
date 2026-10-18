@@ -39,6 +39,7 @@
 #include "../core/DrawProfiler.h"
 #include "../core/CpuSampler.h"
 #include "../core/AudioTweaks.h"
+#include "../core/TerrainErosion.h"
 #include "../Core/Hooks/GameCommon.h"
 #include "../Core/Hooks/FormsCommon.h"
 #include "../NewVegas/Hooks/Settings.h"

@@ -16,6 +16,7 @@ void __fastcall RenderHook(Main* This, UInt32 edx, BSRenderedTexture* RenderedTe
 	TheRenderManager->SetupSceneCamera();
 
 	TheShaderManager->UpdateConstants();
+	TerrainErosion::Update();   // [Shaders.Terrain.Erosion]
 
 	// Reset the material pass queue for the frame. Passing false when the flashlight is
 	// not lit leaves it inactive, so the scene walk in RenderWorldSceneGraphHook costs
