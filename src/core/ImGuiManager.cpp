@@ -2277,26 +2277,35 @@ static void RenderSetting(SettingManager::Configuration::ConfigNode& node, bool 
 	}
 	case NodeType::Float: {
 		float val = (float)atof(node.Value);
-		if (ImGui::DragFloat(node.Key, &val, 0.001f, 0.0f, 0.0f, "%.4f")) {
-			TheSettingManager->SetSetting(node.Section, node.Key, val);
+		// A range at the start of the defaults' comment ("[0.0-1.0] ...") bounds the field and its steps.
+		float lo = 0.0f, hi = 0.0f;
+		bool ranged = false;
+		{
+			const char* d = node.Description.c_str();
+			while (*d == ' ' || *d == '#') d++;
+			ranged = *d == '[' && sscanf(d + 1, "%f-%f", &lo, &hi) == 2 && hi > lo;
+		}
+		auto bound = [&](float v) { return ranged ? std::clamp(v, lo, hi) : v; };
+		if (ImGui::DragFloat(node.Key, &val, 0.001f, ranged ? lo : 0.0f, ranged ? hi : 0.0f, "%.4f", ranged ? ImGuiSliderFlags_AlwaysClamp : 0)) {
+			TheSettingManager->SetSetting(node.Section, node.Key, bound(val));
 			TheSettingManager->LoadSettings();
 		}
 		bool hovered = ImGui::IsItemHovered();
 		if (hovered && (s_plusPressed || s_minusPressed)) {
-			val += s_plusPressed ? s_shaderStepSize : -s_shaderStepSize;
+			val = bound(val + (s_plusPressed ? s_shaderStepSize : -s_shaderStepSize));
 			TheSettingManager->SetSetting(node.Section, node.Key, val);
 			TheSettingManager->LoadSettings();
 		}
 		if (isShader) {
 			ImGui::SameLine();
 			if (ImGui::SmallButton("-")) {
-				val -= s_shaderStepSize;
+				val = bound(val - s_shaderStepSize);
 				TheSettingManager->SetSetting(node.Section, node.Key, val);
 				TheSettingManager->LoadSettings();
 			}
 			ImGui::SameLine();
 			if (ImGui::SmallButton("+")) {
-				val += s_shaderStepSize;
+				val = bound(val + s_shaderStepSize);
 				TheSettingManager->SetSetting(node.Section, node.Key, val);
 				TheSettingManager->LoadSettings();
 			}
