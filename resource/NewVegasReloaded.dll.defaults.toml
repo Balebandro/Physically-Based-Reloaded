@@ -75,6 +75,10 @@ LogInterval = 0.0           # Seconds between copies of the numbers in NewVegasR
 ListenerRate = 30.0         # [0.0-240.0] How many times a second the game refreshes where you are hearing from (DirectSound recomputes every playing 3D sound each time). The game does it every frame, costly in busy fights. 30 is inaudible; 0 restores every frame.
 SkipRedundantVolume = true  # Sounds set their volume every frame, mostly to the volume they already have, and each call waits on DirectSound. Unchanged volumes are not sent again.
 
+[_Main.Main.CpuSampler]
+Capture = false             # Turn on to record where the game's main thread spends its time for Seconds (AI, animation, physics, scripts, rendering...), into NewVegasReloaded_cpu.txt beside the plugin (with Mod Organizer: in its overwrite folder). Turn off and on again for another capture. Costs a little speed only while capturing.
+Seconds = 15.0              # [2.0-120.0] How long a capture lasts.
+
 [_Main.Main.Precipitations]
 RemovePrecipitations = false   # Disables vanilla rain and other precipitations: the weather's own rain and snow, and the rain meshes rain scripts place on the player (3D Rain, Honest Hearts, Climate Control: [Shaders.Precipitations.Particles] RainMeshRoots). Takes effect immediately, no restart.
 

@@ -9,6 +9,7 @@ void __fastcall RenderHook(Main* This, UInt32 edx, BSRenderedTexture* RenderedTe
 	
 	SettingsMainStruct* SettingsMain = &TheSettingManager->SettingsMain;
 
+	CpuSampler::Frame();   // [Main.Main.CpuSampler]: captures where the main thread's time goes
 	TheFrameRateManager->UpdatePerformance();
 	TheCameraManager->SetSceneGraph();
 	TheRenderManager->UpdateSceneCameraData();

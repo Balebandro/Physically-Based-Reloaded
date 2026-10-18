@@ -20,6 +20,7 @@ namespace DrawProfiler {
 	struct Counts {
 		UInt32 Draws[PhaseCount] = {};
 		UInt64 Primitives[PhaseCount] = {};
+		double Ms[PhaseCount] = {};		// main-thread time inside each phase (its own, not its nested phases')
 	};
 	static Counts sFrame;
 	static Counts sWindow;
@@ -31,6 +32,8 @@ namespace DrawProfiler {
 	struct Shown {
 		float Draws[PhaseCount] = {};
 		float Primitives[PhaseCount] = {};
+		float Ms[PhaseCount] = {};
+		float TotalMs = 0.0f;
 		float TotalDraws = 0.0f;
 		float TotalPrimitives = 0.0f;
 		std::vector<std::pair<std::string, float>> Shaders;   // name, draws a frame
@@ -38,8 +41,20 @@ namespace DrawProfiler {
 	};
 	static Shown sShown;
 
-	Scope::Scope(Phase P) : Previous(sPhase) { sPhase = P; }
-	Scope::~Scope() { sPhase = Previous; }
+	// The time since the last switch goes to the phase that was current.
+	static LARGE_INTEGER sMark = {};
+	static double sTicksToMs = 0.0;
+	static void Switch(Phase P) {
+		if (Active) {
+			LARGE_INTEGER now;
+			QueryPerformanceCounter(&now);
+			if (sMark.QuadPart) sFrame.Ms[sPhase] += (double)(now.QuadPart - sMark.QuadPart) * sTicksToMs;
+			sMark = now;
+		}
+		sPhase = P;
+	}
+	Scope::Scope(Phase P) : Previous(sPhase) { Switch(P); }
+	Scope::~Scope() { Switch(Previous); }
 
 	void NameShader(void* Handle, const char* Name, bool Vanilla) {
 		if (!Active || !Handle || !Name) return;
@@ -113,6 +128,8 @@ namespace DrawProfiler {
 			for (int p = 0; p < PhaseCount; p++) {
 				Next.Draws[p] = sWindow.Draws[p] * PerFrame;
 				Next.Primitives[p] = (float)sWindow.Primitives[p] * PerFrame;
+				Next.Ms[p] = (float)(sWindow.Ms[p] * PerFrame);
+				Next.TotalMs += Next.Ms[p];
 				Next.TotalDraws += Next.Draws[p];
 				Next.TotalPrimitives += Next.Primitives[p];
 			}
@@ -143,7 +160,7 @@ namespace DrawProfiler {
 		Logger::Log("DrawProfiler: %.0f draws, %.0fk primitives a frame", sShown.TotalDraws, sShown.TotalPrimitives / 1000.0f);
 		for (int p = 0; p < PhaseCount; p++)
 			if (sShown.Draws[p] >= 0.5f)
-				Logger::Log("DrawProfiler:   %-17s %6.0f draws  %8.1fk primitives", kPhaseNames[p], sShown.Draws[p], sShown.Primitives[p] / 1000.0f);
+				Logger::Log("DrawProfiler:   %-17s %6.0f draws  %8.1fk primitives  %5.2f ms", kPhaseNames[p], sShown.Draws[p], sShown.Primitives[p] / 1000.0f, sShown.Ms[p]);
 		for (const auto& Shader : sShown.Shaders)
 			Logger::Log("DrawProfiler:   shader %-32s %6.0f draws", Shader.first.c_str(), Shader.second);
 	}
@@ -152,11 +169,11 @@ namespace DrawProfiler {
 		if (!sShown.Valid) return;
 		std::vector<std::string> Lines;
 		char Line[160];
-		snprintf(Line, sizeof(Line), "Draw calls %.0f   primitives %.0fk", sShown.TotalDraws, sShown.TotalPrimitives / 1000.0f);
+		snprintf(Line, sizeof(Line), "Draw calls %.0f   primitives %.0fk   CPU ms", sShown.TotalDraws, sShown.TotalPrimitives / 1000.0f);
 		Lines.emplace_back(Line);
 		for (int p = 0; p < PhaseCount; p++) {
-			if (sShown.Draws[p] < 0.5f) continue;
-			snprintf(Line, sizeof(Line), "  %-17s %5.0f  %7.1fk", kPhaseNames[p], sShown.Draws[p], sShown.Primitives[p] / 1000.0f);
+			if (sShown.Draws[p] < 0.5f && sShown.Ms[p] < 0.05f) continue;
+			snprintf(Line, sizeof(Line), "  %-17s %5.0f  %7.1fk  %5.2f", p == PhaseOther ? "Other (game, waits)" : kPhaseNames[p], sShown.Draws[p], sShown.Primitives[p] / 1000.0f, sShown.Ms[p]);
 			Lines.emplace_back(Line);
 		}
 		if (!sShown.Shaders.empty()) Lines.emplace_back("Top pixel shaders (draws a frame)");
@@ -196,11 +213,17 @@ namespace DrawProfiler {
 		}
 		Active = Enabled;
 		if (!Active) return;
+		if (sTicksToMs == 0.0) {
+			LARGE_INTEGER frequency;
+			QueryPerformanceFrequency(&frequency);
+			sTicksToMs = 1000.0 / (double)frequency.QuadPart;
+		}
 		Install();
 
 		for (int p = 0; p < PhaseCount; p++) {
 			sWindow.Draws[p] += sFrame.Draws[p];
 			sWindow.Primitives[p] += sFrame.Primitives[p];
+			sWindow.Ms[p] += sFrame.Ms[p];
 		}
 		sFrame = Counts();
 		sWindowFrames++;

@@ -129,6 +129,7 @@
     <ClCompile Include="..\src\core\RenderManager.cpp" />
     <ClCompile Include="..\src\core\RenderPass.cpp" />
     <ClCompile Include="..\src\core\DrawProfiler.cpp" />
+    <ClCompile Include="..\src\core\CpuSampler.cpp" />
     <ClCompile Include="..\src\core\AudioTweaks.cpp" />
     <ClCompile Include="..\src\core\SettingManager.cpp" />
     <ClCompile Include="..\src\core\ShaderCollection.cpp" />
@@ -242,6 +243,7 @@
     <ClInclude Include="..\src\core\RenderManager.h" />
     <ClInclude Include="..\src\core\RenderPass.h" />
     <ClInclude Include="..\src\core\DrawProfiler.h" />
+    <ClInclude Include="..\src\core\CpuSampler.h" />
     <ClInclude Include="..\src\core\SettingManager.h" />
     <ClInclude Include="..\src\core\ShaderCollection.h" />
     <ClInclude Include="..\src\core\ShaderManager.h" />

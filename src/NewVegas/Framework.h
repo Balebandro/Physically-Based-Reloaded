@@ -37,6 +37,7 @@
 #include "Base.h"
 #include "Managers.h"
 #include "../core/DrawProfiler.h"
+#include "../core/CpuSampler.h"
 #include "../core/AudioTweaks.h"
 #include "../Core/Hooks/GameCommon.h"
 #include "../Core/Hooks/FormsCommon.h"
