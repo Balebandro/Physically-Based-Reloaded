@@ -200,8 +200,8 @@ float CS_D_GGX(float roughness, float NdotH) {
 // [Heitz 2014, "Understanding the Masking-Shadowing Function in Microfacet-Based BRDFs"]
 float CS_Vis_SmithJointApprox(float roughness, float NdotV, float NdotL) {
     float a = roughness * roughness;
-    float visV = NdotL * (NdotV * (1.0f + a) + a);
-    float visL = NdotV * (NdotL * (1.0f + a) + a);
+    float visV = NdotL * (NdotV * (1.0f - a) + a);
+    float visL = NdotV * (NdotL * (1.0f - a) + a);
     return 0.5f / max(visV + visL, 1e-5f);
 }
 
@@ -260,8 +260,9 @@ void CS_DirectLight(float3 N, float3 V, float3 L, float3 light, float roughness,
 //   A  specular_weight      (default 1: the dielectric reflectivity of specular_ior 1.5, F0 0.04)
 // Everything else at the specification's defaults: base_weight 1, specular_color white,
 // specular_ior 1.5, base_diffuse_roughness 0 (Lambertian), no anisotropy, coat, fuzz, thin film,
-// transmission or subsurface. GGX, Smith masking and the split-sum environment term are the CS_
-// functions above.
+// transmission or subsurface. GGX is CS_D_GGX above; the masking-shadowing is the exact height-correlated Smith term
+// (OpenPBR_Vis_SmithGGXCorrelated) and the split-sum environment terms come from an exact table for that same lobe
+// (Object.hlsl openPBREnvBRDF), as the reference renderers (Arnold, in 3ds Max) integrate them.
 
 #define OPENPBR_SPECULAR_IOR 1.5f
 
@@ -290,6 +291,17 @@ float OpenPBR_DielectricF0(float eta) {
     return f * f;
 }
 
+// The height-correlated Smith masking-shadowing for GGX, exact, with the 1 / (4 N.L N.V) folded in: what the
+// specification and Arnold use. [Heitz 2014] (CS_Vis_SmithJointApprox above had (1 + a) where its source has (1 - a):
+// half the exact value on rough surfaces; even corrected, the approximation is up to 21% off at grazing angles.)
+float OpenPBR_Vis_SmithGGXCorrelated(float roughness, float NdotV, float NdotL) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float lambdaV = NdotL * sqrt(NdotV * NdotV * (1.0f - a2) + a2);
+    float lambdaL = NdotV * sqrt(NdotL * NdotL * (1.0f - a2) + a2);
+    return 0.5f / max(lambdaV + lambdaL, 1e-5f);
+}
+
 // Multiple scattering between microfacets, which the single-scattering lobe loses (the
 // specification asks implementations to account for it): 1 + F0 (1 / E_ss - 1), with E_ss the
 // lobe's directional albedo for a white F0, A + B of the split-sum fit.
@@ -305,16 +317,16 @@ float3 OpenPBR_EnergyCompensation(float3 f0, float2 envBRDF) {
 //             (the F82-tint model at its default white edge tint reduces to Schlick)
 //   diffuse:  (1 - M) base_color (1 - E_dielectric(view)) / PI, the albedo-scaling form of the
 //             glossy-diffuse slab with a Lambertian base
+// envBRDF: the split-sum terms (A, B) at this roughness and N.V, from the exact table (Object.hlsl openPBREnvBRDF).
 void OpenPBR_DirectLight(float3 N, float3 V, float3 L, float3 light, float roughness, float metalness, float specularWeight, float eta,
-                         float3 albedo, float3 metalF0, out float3 diffuse, out float3 specular) {
+                         float3 albedo, float3 metalF0, float2 envBRDF, out float3 diffuse, out float3 specular) {
     float3 H = normalize(V + L);
     float NdotL = clamp(dot(N, L), 1e-4f, 1.0f);
     float NdotV = saturate(abs(dot(N, V)) + 1e-4f);
     float NdotH = saturate(dot(N, H));
     float VdotH = saturate(dot(V, H));
 
-    float DV = CS_D_GGX(roughness, NdotH) * CS_Vis_SmithJointApprox(roughness, NdotV, NdotL);
-    float2 envBRDF = CS_EnvBRDF(roughness, NdotV);
+    float DV = CS_D_GGX(roughness, NdotH) * OpenPBR_Vis_SmithGGXCorrelated(roughness, NdotV, NdotL);
     float dielectricF0 = OpenPBR_DielectricF0(eta);
 
     float3 Fmetal = specularWeight * CS_F_Schlick(metalF0, VdotH);
@@ -330,9 +342,8 @@ void OpenPBR_DirectLight(float3 N, float3 V, float3 L, float3 light, float rough
 
 // The environment lobes of the same substrate (split sum), for the ambient: x the specular lobe
 // weight (multiplies the environment radiance), and the share the diffuse ambient keeps.
-void OpenPBR_EnvironmentWeights(float NdotV, float roughness, float metalness, float specularWeight, float eta, float3 metalF0,
+void OpenPBR_EnvironmentWeights(float NdotV, float metalness, float specularWeight, float eta, float3 metalF0, float2 envBRDF,
                                 out float3 specularWeightOut, out float diffuseShare) {
-    float2 envBRDF = CS_EnvBRDF(roughness, NdotV);
     float dielectricF0 = OpenPBR_DielectricF0(eta);
     float  Edielectric = dielectricF0 * envBRDF.x + envBRDF.y;
     float3 Emetal = specularWeight * (metalF0 * envBRDF.x + envBRDF.y);

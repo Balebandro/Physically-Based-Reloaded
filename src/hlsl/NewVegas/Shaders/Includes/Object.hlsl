@@ -53,6 +53,10 @@ float4 MaterialMap : register(c152);
 sampler2D RMAOSMap : register(s10);
 samplerCUBE EnvCubeMap : register(s11);
 #define ENVIRONMENT_CUBE (MaterialMap.y > 0.5f)
+// z is 1 when the OpenPBR split-sum table is bound to SplitSumMap (MaterialMaps::DFG in Hooks/Shaders.cpp): 32 x 32,
+// x = N.V and y = roughness at the texel centres, R the F0 scale and G the bias, exact for GGX and height-correlated Smith.
+sampler2D SplitSumMap : register(s8);
+#define SPLIT_SUM_TABLE (MaterialMap.z > 0.5f)
 #define ENVIRONMENT_CUBE_MIPS 8.0f
 // Never sharper than half a level: at mip 0 a near-mirror material on a small curved part stretches
 // a few cube texels over itself, and their edges show as blocks.
@@ -142,6 +146,7 @@ void setupMaterial(float specularMask, float shine, float3 normalTS, float2 uv, 
     float roughnessScale = ANOMALY_LIGHTING ? 1.0f : TESR_PBRExtraData.x;
     pbrRoughness = SpecularAA(normalTS, clamp(rmaos.r * roughnessScale, 0.04f, 1.0f));
     // [Shaders.PBR.*] MetalnessScale (TESR_PBRData.x), per weather and time: a metal is lit almost
+    // only by what it reflects, so at night, with little around to reflect, it goes near black.
     pbrMetalness = saturate(rmaos.g * TESR_PBRData.x);
     // [Shaders.PBR.*] AOScale (TESR_PBRData.y): how much of the authored occlusion applies.
     pbrAO = lerp(1.0f, saturate(rmaos.b), TESR_PBRData.y);
@@ -234,6 +239,13 @@ float3 vanillaHighlight(float3 N, float3 L, float3 V, float NdotL, float3 light)
     return saturate((NdotL <= 0.2f ? specStrength * saturate(NdotL + 0.5f) : specStrength) * light);
 }
 
+// The OpenPBR substrate's split-sum terms for this pixel's roughness: the exact table, or Lazarov's fit without it.
+float2 openPBREnvBRDF(float NdotV) {
+    [branch] if (SPLIT_SUM_TABLE)
+        return tex2Dlod(SplitSumMap, float4((float2(NdotV, pbrRoughness) * 31.0f + 0.5f) / 32.0f, 0.0f, 0.0f)).rg;
+    return CS_EnvBRDF(pbrRoughness, NdotV);
+}
+
 float3 directLight(float3 L, float3 light, float3 V, float3 N, float3 albedo) {
     L = normalize(L);
     V = normalize(V);
@@ -244,7 +256,8 @@ float3 directLight(float3 L, float3 light, float3 V, float3 N, float3 albedo) {
         [branch] if (ANOMALY_LIGHTING)
             Anomaly_DirectLight(N, V, L, light, pbrRoughness, anomalyF0(), albedo * (1.0f - pbrMetalness), diffuse, specular);
         else
-            OpenPBR_DirectLight(N, V, L, light, pbrRoughness, pbrMetalness, pbrSpecularWeight, pbrEta, albedo, pbrAlbedo, diffuse, specular);
+            OpenPBR_DirectLight(N, V, L, light, pbrRoughness, pbrMetalness, pbrSpecularWeight, pbrEta, albedo, pbrAlbedo,
+                openPBREnvBRDF(saturate(abs(dot(N, V)) + 1e-4f)), diffuse, specular);
         #if defined(ONLY_SPECULAR)
             return specular;
         #else
@@ -328,7 +341,7 @@ float3 getObjectSkyReflection(float3 worldPos, float3 geometricNormal, float3 no
         pbrDiffuseShare = 1.0f - pbrMetalness;
     }
     else
-        OpenPBR_EnvironmentWeights(NdotV, pbrRoughness, pbrMetalness, pbrSpecularWeight, pbrEta, pbrAlbedo, pbrSpecularLobe, pbrDiffuseShare);
+        OpenPBR_EnvironmentWeights(NdotV, pbrMetalness, pbrSpecularWeight, pbrEta, pbrAlbedo, openPBREnvBRDF(NdotV), pbrSpecularLobe, pbrDiffuseShare);
     pbrSpecularOcclusion = CS_SpecularOcclusion(NdotV, pbrRoughness * pbrRoughness, pbrAO);
 
     [branch] if (!OUTDOORS && !ENVIRONMENT_CUBE)

@@ -172,6 +172,75 @@ namespace MaterialMaps {
         return Map;
     }
 
+    // The OpenPBR substrate's split-sum terms, exact (PBR.hlsl OpenPBR_EnvBRDF): for GGX with alpha = r^2 and the
+    // height-correlated Smith masking-shadowing the specification and Arnold use, the integral of the specular lobe over
+    // the hemisphere with Schlick's Fresnel split as F0 (1 - Fc) + Fc. R: the F0 scale A, G: the bias B; A + B is the
+    // lobe's directional albedo for a white F0, which the multiple-scattering compensation divides by. x = N.V and
+    // y = roughness, each across the 32 texel centres. Built once, the first time a material map is drawn; managed, so
+    // a device reset keeps it. (Lazarov's fit, used before, was made for another masking term and was up to 40% off.)
+    static IDirect3DTexture9* sDFG = nullptr;
+    static bool sDFGTried = false;
+
+    static void IntegrateDFG(double roughness, double NdotV, double& A, double& B) {
+        const double Pi = 3.14159265358979323846;
+        const double a = max(roughness * roughness, 1e-4), a2 = a * a;
+        const double Vx = sqrt(max(1.0 - NdotV * NdotV, 0.0)), Vz = NdotV;
+        const int Samples = 1024;
+        A = B = 0.0;
+        for (int i = 0; i < Samples; i++) {
+            UInt32 bits = (UInt32)i;   // Hammersley: the radical inverse of i
+            bits = (bits << 16) | (bits >> 16);
+            bits = ((bits & 0x55555555u) << 1) | ((bits & 0xAAAAAAAAu) >> 1);
+            bits = ((bits & 0x33333333u) << 2) | ((bits & 0xCCCCCCCCu) >> 2);
+            bits = ((bits & 0x0F0F0F0Fu) << 4) | ((bits & 0xF0F0F0F0u) >> 4);
+            bits = ((bits & 0x00FF00FFu) << 8) | ((bits & 0xFF00FF00u) >> 8);
+            const double u1 = (i + 0.5) / Samples, u2 = bits * 2.3283064365386963e-10;
+            const double phi = 2.0 * Pi * u1;
+            const double cosTheta = sqrt((1.0 - u2) / (1.0 + (a2 - 1.0) * u2)), sinTheta = sqrt(1.0 - cosTheta * cosTheta);
+            const double Hx = sinTheta * cos(phi), Hz = cosTheta;   // GGX-distributed half vector
+            const double VdotH = Vx * Hx + Vz * Hz;
+            const double NdotL = 2.0 * VdotH * Hz - Vz;
+            if (NdotL <= 0.0 || VdotH <= 0.0) continue;
+            // BRDF x N.L / pdf, with pdf = D N.H / (4 V.H): the visibility x 4 V.H N.L / N.H (D cancels)
+            const double visibility = 0.5 / (NdotL * sqrt(NdotV * NdotV * (1.0 - a2) + a2) + NdotV * sqrt(NdotL * NdotL * (1.0 - a2) + a2));
+            const double weight = visibility * 4.0 * VdotH * NdotL / Hz;
+            const double Fc = pow(1.0 - VdotH, 5.0);
+            A += (1.0 - Fc) * weight;
+            B += Fc * weight;
+        }
+        A /= Samples;
+        B /= Samples;
+    }
+
+    static IDirect3DTexture9* DFG() {
+        if (sDFGTried) return sDFG;
+        sDFGTried = true;
+        const UInt32 Size = 32;
+        if (FAILED(TheRenderManager->device->CreateTexture(Size, Size, 1, 0, D3DFMT_G16R16F, D3DPOOL_MANAGED, &sDFG, NULL))) {
+            Logger::Log("MaterialMaps: could not create the OpenPBR split-sum table: the approximation is used");
+            sDFG = nullptr;
+            return nullptr;
+        }
+        D3DLOCKED_RECT Rect;
+        if (FAILED(sDFG->LockRect(0, &Rect, NULL, 0))) {
+            sDFG->Release();
+            sDFG = nullptr;
+            return nullptr;
+        }
+        for (UInt32 y = 0; y < Size; y++) {
+            D3DXFLOAT16* Row = (D3DXFLOAT16*)((UInt8*)Rect.pBits + y * Rect.Pitch);
+            for (UInt32 x = 0; x < Size; x++) {
+                double A, B;
+                IntegrateDFG(y / (double)(Size - 1), max(x / (double)(Size - 1), 1e-3), A, B);
+                const float AB[2] = { (float)A, (float)B };
+                D3DXFloat32To16Array(Row + x * 2, AB, 2);
+            }
+        }
+        sDFG->UnlockRect(0);
+        Logger::Log("MaterialMaps: built the OpenPBR split-sum table (%ux%u)", Size, Size);
+        return sDFG;
+    }
+
     static bool Active() {
         PBRShaders* PBR = TheShaderManager->Shaders.PBR;
         return TheSettingManager->SettingsMain.Main.RenderEffects && PBR && PBR->Enabled;
@@ -223,7 +292,9 @@ namespace MaterialMaps {
         BindSampler(State, 10, Map, D3DTADDRESS_WRAP);
         IDirect3DCubeTexture9* Environment = TheShaderManager->Effects.DynamicCubemaps->GetEnvironment();
         if (Environment) BindSampler(State, 11, Environment, D3DTADDRESS_CLAMP);
-        const float Flag[4] = { 1.0f, Environment ? 1.0f : 0.0f, 0.0f, 0.0f };
+        IDirect3DTexture9* SplitSum = DFG();
+        if (SplitSum) BindSampler(State, 8, SplitSum, D3DTADDRESS_CLAMP);
+        const float Flag[4] = { 1.0f, Environment ? 1.0f : 0.0f, SplitSum ? 1.0f : 0.0f, 0.0f };
         Device->SetPixelShaderConstantF(152, Flag, 1);
         sBound = true;
     }
