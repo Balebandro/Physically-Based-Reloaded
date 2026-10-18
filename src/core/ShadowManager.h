@@ -26,6 +26,7 @@ public:
 	void					RenderShadowMaps();
 	void					ClearShadowCascade(D3DVIEWPORT9* ViewPort, D3DXVECTOR4* ClearColor);
 	void                    BlurShadowAtlas();
+	bool					CastsIntoView(const NiBound* Bound);	// caster culling: whether this caster's shadow can reach the view
 
 	ShadowRenderPass*				geometryPass;
 	AlphaShadowRenderPass*			alphaPass;
@@ -53,6 +54,18 @@ public:
 	float					shadowMapsRenderTime;
 	bool					ShadowShadersLoaded;
 	int						FrameCounter;
+	// Caster culling, while a sun cascade gathers its casters (nullptr otherwise): that cascade's view slice, the way the
+	// light travels (camera-relative world), and how far a shadow is followed per unit of height.
+	const D3DXPLANE*		CasterPlanes = nullptr;
+	D3DXVECTOR3				CasterDir = D3DXVECTOR3(0.0f, 0.0f, -1.0f);
+	float					CasterPerHeight = 1.0f;
+	D3DXVECTOR4				CasterSphere;		// the cascade's sphere (camera-relative centre, radius): what it shades lies inside
+	bool					CasterActive = false;	// CastsIntoView tests anything (view culling or covered casters)
+	bool					CasterViewCull = false;	// CasterCulling: against the view's sides and this cascade's sphere
+	D3DXVECTOR4				CasterCovering[4];		// SkipCoveredCasters: the spheres of the cascades drawn before this one
+	int						CasterCoveringCount = 0;
+	UInt32					CastersCulled = 0;
+	UInt32					CastersCovered = 0;
 
 private:
 	bool					CheckShaderFlags(NiGeometry* Geometry);

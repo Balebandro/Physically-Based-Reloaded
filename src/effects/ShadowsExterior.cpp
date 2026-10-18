@@ -162,7 +162,13 @@ bool ShadowsExteriorEffect::UpdateSettingsFromQuality(int quality) {
 	int oldCascadeResolution = Settings.ShadowMaps.CascadeResolution;
 	bool oldMSAA = Settings.ShadowMaps.MSAA;
 	bool oldPrefilter = Settings.ShadowMaps.Prefilter;
-	
+
+	// Caster culling (ShadowManager::CastsIntoView), whatever the quality preset.
+	Settings.ShadowMaps.CasterCulling = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.ShadowMaps", "CasterCulling") != 0;
+	Settings.ShadowMaps.CasterMargin = std::clamp(TheSettingManager->GetSettingF("Shaders.ShadowsExteriors.ShadowMaps", "CasterMargin"), 0.0f, 4096.0f);
+	Settings.ShadowMaps.CasterDrop = std::clamp(TheSettingManager->GetSettingF("Shaders.ShadowsExteriors.ShadowMaps", "CasterDrop"), 0.0f, 65536.0f);
+	Settings.ShadowMaps.SkipCoveredCasters = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.ShadowMaps", "SkipCoveredCasters") != 0;
+
 	// Custom settings.
 	if (quality < 0 || quality > 3) {
 		Settings.ShadowMaps.Mode = std::clamp(TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.ShadowMaps", "Mode"), 0, Modes-1);
@@ -835,6 +841,26 @@ D3DXMATRIX ShadowsExteriorEffect::GetCascadeViewProj(ShadowMapSettings* ShadowMa
 		D3DXVECTOR3 farCornerRay = cornerRay * zFar;
 		frustumCorners[i + 4] = frustumCorners[i] + farCornerRay;
 		frustumCorners[i] = frustumCorners[i] + nearCornerRay;
+	}
+
+	// The view's four sides, for leaving out casters whose shadow cannot reach what this cascade shades
+	// (ShadowManager::CastsIntoView): facing inward, pushed out by CasterMargin. Its depth range is the cascade sphere
+	// (ShadowMapCascadeCenterRadius), since Shadow.hlsl picks a cascade by distance to its centre, not by depth.
+	{
+		static const int sides[4][3] = { { 0, 1, 5 }, { 1, 2, 6 }, { 2, 3, 7 }, { 3, 0, 4 } };
+		D3DXVECTOR3 centre(0.0f, 0.0f, 0.0f);
+		for (auto i = 0; i < 8; ++i) centre += frustumCorners[i];
+		centre *= 1.0f / 8.0f;
+		ShadowMap->CasterPlanesValid = true;
+		for (int p = 0; p < 4; p++) {
+			D3DXPLANE& plane = ShadowMap->CasterPlanes[p];
+			D3DXPlaneFromPoints(&plane, &frustumCorners[sides[p][0]], &frustumCorners[sides[p][1]], &frustumCorners[sides[p][2]]);
+			const float length = sqrtf(plane.a * plane.a + plane.b * plane.b + plane.c * plane.c);
+			if (!(length > 1e-6f)) { ShadowMap->CasterPlanesValid = false; break; }
+			plane /= length;
+			if (D3DXPlaneDotCoord(&plane, &centre) < 0.0f) plane = -plane;
+			plane.d += Settings.ShadowMaps.CasterMargin;
+		}
 	}
 
 	// Calculate the centroid of the view frustum slice.

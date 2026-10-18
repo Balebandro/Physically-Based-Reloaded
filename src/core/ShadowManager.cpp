@@ -134,6 +134,55 @@ bool ShadowManager::CheckShaderFlags(NiGeometry* Geometry) {
 }
 
 
+// Caster culling: the bound swept the way the light travels (a capsule) must reach what the cascade shades, the view
+// inside the cascade's sphere, or nothing it shadows is ever seen. The sweep runs as far as a shadow falls from the
+// bound's top to CasterDrop below its bottom. A capsule wholly behind one of the view's sides, or wholly outside the
+// cascade sphere, is out. Conservative.
+//
+// Covered casters (SkipCoveredCasters): Shadow.hlsl takes a pixel from the first cascade whose sphere holds it, and only
+// cross-fades into the next in the outer 10%. A capsule wholly inside 90% of an earlier cascade's sphere (less the
+// margin) only shades pixels that cascade answers for: it is left out of this one. Nearby actors and objects were drawn
+// into the near, middle and far maps alike.
+bool ShadowManager::CastsIntoView(const NiBound* Bound) {
+	if (!CasterActive || !Bound) return true;
+	const D3DXVECTOR3 start(Bound->Center.x - TheRenderManager->CameraPosition.x, Bound->Center.y - TheRenderManager->CameraPosition.y,
+		Bound->Center.z - TheRenderManager->CameraPosition.z);
+	const float r = Bound->Radius;
+	const ShadowsExteriorEffect::ShadowMapStruct& settings = TheShaderManager->Effects.ShadowsExteriors->Settings.ShadowMaps;
+	const float length = min((2.0f * r + settings.CasterDrop) * CasterPerHeight, 200000.0f);
+	const D3DXVECTOR3 end = start + CasterDir * length;
+	for (int k = 0; k < CasterCoveringCount; k++) {
+		const D3DXVECTOR3 centre(CasterCovering[k].x, CasterCovering[k].y, CasterCovering[k].z);
+		const float inner = 0.9f * CasterCovering[k].w - settings.CasterMargin - r;
+		if (inner <= 0.0f) continue;
+		const D3DXVECTOR3 a = start - centre, b = end - centre;
+		if (D3DXVec3LengthSq(&a) <= inner * inner && D3DXVec3LengthSq(&b) <= inner * inner) {
+			CastersCovered++;
+			return false;
+		}
+	}
+	if (!CasterViewCull) return true;
+	for (int p = 0; p < 4; p++) {
+		const D3DXPLANE& plane = CasterPlanes[p];
+		if (D3DXPlaneDotCoord(&plane, &start) < -r && D3DXPlaneDotCoord(&plane, &end) < -r) {
+			CastersCulled++;
+			return false;
+		}
+	}
+	// The sweep's nearest point to the sphere's centre.
+	const D3DXVECTOR3 centre(CasterSphere.x, CasterSphere.y, CasterSphere.z);
+	const D3DXVECTOR3 toCentre = centre - start;
+	const float along = std::clamp(D3DXVec3Dot(&toCentre, &CasterDir), 0.0f, length);
+	const D3DXVECTOR3 nearest = start + CasterDir * along - centre;
+	const float reach = CasterSphere.w + r + TheShaderManager->Effects.ShadowsExteriors->Settings.ShadowMaps.CasterMargin;
+	if (D3DXVec3LengthSq(&nearest) > reach * reach) {
+		CastersCulled++;
+		return false;
+	}
+	return true;
+}
+
+
 // Detect which pass the object must be added to
 void ShadowManager::AccumObject(NiAVObject* NiObject, ShadowsExteriorEffect::FormsStruct* Forms, bool isLODLand) {
 	NiGeometry* geo = static_cast<NiGeometry*>(NiObject);
@@ -209,6 +258,8 @@ void ShadowManager::AccumChildren(NiAVObject* NiObject, ShadowsExteriorEffect::F
 				if (multibound && !multibound->spMultiBound->spShape->WithinFrustum(*arPlanes)) continue;
 			}
 			else if (arPlanes && !child->WithinFrustum(arPlanes)) continue;
+
+			if (CasterActive && !CastsIntoView(child->GetWorldBound())) continue; // its shadow cannot reach the view
 
 			if (child->IsFadeNode() && static_cast<BSFadeNode*>(child)->FadeAlpha < 0.75f) continue; // stop rendering fadenodes below a certain opacity
 			if (!child->IsGeometry())
@@ -293,7 +344,7 @@ void ShadowManager::AccumExteriorCell(TESObjectCELL* Cell, ShadowsExteriorEffect
 			continue;
 		}
 
-		if (RefNode->WithinFrustum(&ShadowMap->ShadowMapFrustumPlanes) && !IsRefracting(Entry->item))
+		if (RefNode->WithinFrustum(&ShadowMap->ShadowMapFrustumPlanes) && CastsIntoView(RefNode->GetWorldBound()) && !IsRefracting(Entry->item))
 			AccumChildren(RefNode, &ShadowMap->Forms, false, false, &ShadowMap->ShadowMapFrustumPlanes);
 
 		Entry = Entry->next;
@@ -729,7 +780,25 @@ void ShadowManager::RenderShadowMaps() {
 
 				if (!Shadows->Settings.ShadowMaps.LimitFrequency || i != MapLod || !(FrameCounter % 4)) {
 					Shadows->Constants.ShadowViewProj = Shadows->GetCascadeViewProj(ShadowMap, &SunDir);
+					// Caster culling, not on a cascade drawn only every fourth frame: turning would show what it left out.
+					const bool cull = Shadows->Settings.ShadowMaps.CasterCulling && ShadowMap->CasterPlanesValid &&
+						!(Shadows->Settings.ShadowMaps.LimitFrequency && i == MapLod);
+					CasterPlanes = cull ? ShadowMap->CasterPlanes : nullptr;
+					CasterViewCull = cull;
+					CasterSphere = ShadowMap->ShadowMapCascadeCenterRadius;
+					// The cascades drawn before this one, this frame (the same exception for one drawn every fourth frame).
+					CasterCoveringCount = 0;
+					if (Shadows->Settings.ShadowMaps.SkipCoveredCasters && !(Shadows->Settings.ShadowMaps.LimitFrequency && i == MapLod))
+						for (int j = MapNear; j < i && CasterCoveringCount < 4; j++)
+							CasterCovering[CasterCoveringCount++] = Shadows->ShadowMaps[j].ShadowMapCascadeCenterRadius;
+					CasterActive = cull || CasterCoveringCount > 0;
+					D3DXVec3Normalize(&CasterDir, &SunDir);
+					CasterPerHeight = 1.0f / max(CasterDir.z, 0.05f);   // a shadow's length per unit of height
+					CasterDir = -CasterDir;
 					RenderShadowMap(ShadowMap, &Shadows->Constants.ShadowViewProj);
+					CasterPlanes = nullptr;
+					CasterViewCull = CasterActive = false;
+					CasterCoveringCount = 0;
 				}
 				else {
 					// We need to update the shadowprojmatrix of MapLod by the camera translation between frames to avoid jumps in the shadows.

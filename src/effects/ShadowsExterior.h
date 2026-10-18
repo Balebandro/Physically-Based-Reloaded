@@ -96,6 +96,8 @@ public:
 		float					ShadowMapRadius;
 		float					ShadowMapNear;
 		bool					CustomClearRequired;
+		D3DXPLANE				CasterPlanes[4];		// the view's sides, camera-relative, facing in (ShadowManager::CastsIntoView)
+		bool					CasterPlanesValid;
 	};
 
 	struct ShadowMapStruct {
@@ -110,6 +112,10 @@ public:
 		int					Anisotropy;
 		float				Distance;
 		float				CascadeLambda;
+		bool				CasterCulling;		// leave out casters whose shadow cannot reach the view
+		float				CasterMargin;
+		float				CasterDrop;
+		bool				SkipCoveredCasters;	// leave out of a cascade what only an earlier one shades
 	};
 
 	struct OrthoStruct {
