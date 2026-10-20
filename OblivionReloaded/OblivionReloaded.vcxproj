@@ -142,7 +142,6 @@
     <ClInclude Include="..\src\effects\AmbientOcclusion.h" />
     <ClInclude Include="..\src\effects\Animator.h" />
     <ClInclude Include="..\src\effects\AvgLuma.h" />
-    <ClInclude Include="..\src\effects\BloodLens.h" />
     <ClInclude Include="..\src\effects\Bloom.h" />
     <ClInclude Include="..\src\effects\BloomLegacy.h" />
     <ClInclude Include="..\src\effects\Cinema.h" />
@@ -243,7 +242,6 @@
     <ClCompile Include="..\src\effects\AmbientOcclusion.cpp" />
     <ClCompile Include="..\src\effects\Animator.cpp" />
     <ClCompile Include="..\src\effects\AvgLuma.cpp" />
-    <ClCompile Include="..\src\effects\BloodLens.cpp" />
     <ClCompile Include="..\src\effects\Bloom.cpp" />
     <ClCompile Include="..\src\effects\BloomLegacy.cpp" />
     <ClCompile Include="..\src\effects\Cinema.cpp" />

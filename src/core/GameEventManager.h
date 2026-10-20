@@ -8,6 +8,4 @@ public:
 	};
 
 	static void Initialize();
-
-	void			OnHitByPlayer();
 };

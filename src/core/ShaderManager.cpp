@@ -47,7 +47,6 @@ void ShaderManager::Initialize() {
 	TheShaderManager->RegisterEffect<AmbientOcclusionEffect>(&TheShaderManager->Effects.AmbientOcclusion);
 	TheShaderManager->RegisterEffect<SkinScatteringEffect>(&TheShaderManager->Effects.SkinScattering);
 	TheShaderManager->RegisterEffect<DynamicCubemapsEffect>(&TheShaderManager->Effects.DynamicCubemaps);
-	TheShaderManager->RegisterEffect<BloodLensEffect>(&TheShaderManager->Effects.BloodLens);
 	TheShaderManager->RegisterEffect<BloomEffect>(&TheShaderManager->Effects.Bloom);
 	TheShaderManager->RegisterEffect<BloomLegacyEffect>(&TheShaderManager->Effects.BloomLegacy);
 	TheShaderManager->RegisterEffect<ColoringEffect>(&TheShaderManager->Effects.Coloring);
@@ -547,7 +546,6 @@ ShaderCollection* ShaderManager::GetShaderCollection(const char* Name) {
 	// a ps_3_0 replacement too: D3D9 rejects a 2.x VS paired with a 3.0 PS.
 	if (!memcmp(Name, "STLEAF", 6)) return Shaders.PBR;
 	if (!memcmp(Name, "SKY", 3)) return Shaders.Sky;
-	if (strstr(BloodShaders, Name)) return Shaders.Blood;
 
 	if (Shaders.PBR->GetTemplate(Name).Name != NULL) return Shaders.PBR;
 	if (Shaders.Terrain->GetTemplate(Name).Name != NULL) return Shaders.Terrain;

@@ -168,20 +168,6 @@ StrengthMultiplier = 1.0                # Global AO strength/darkness multiplier
 [_Shaders.AmbientOcclusion.Status]
 Enabled = true                          # Shadows based on object proximity/creases for more realistic light contribution.
 
-[_Shaders.Blood.Status]
-Enabled = false                         # Not currently used
-
-[_Shaders.BloodLens.Main]
-Chance = 10.0
-ColorB = 0.16
-ColorG = 0.16
-ColorR = 0.92
-Intensity = 0.8
-Time = 900.0
-
-[_Shaders.BloodLens.Status]
-Enabled = false
-
 [_Shaders.Bloom]
 
 [_Shaders.Bloom.Main]

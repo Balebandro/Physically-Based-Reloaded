@@ -82,7 +82,6 @@ public:
 		SkinScatteringEffect*	SkinScattering;
 		DynamicCubemapsEffect*	DynamicCubemaps;
 		AvgLumaEffect*			AvgLuma;
-		BloodLensEffect*		BloodLens;
 		BloomEffect*			Bloom;
 		BloomLegacyEffect*		BloomLegacy;
 		ColoringEffect*			Coloring;
@@ -127,7 +126,6 @@ public:
 		TonemappingShaders*		Tonemapping;
 		POMShaders*				POM;
 		PBRShaders*				PBR;
-		ShaderCollection*		Blood;
 		SkyShaders*				Sky;
 		SkinShaders*			Skin;
 		GrassShaders*			Grass;

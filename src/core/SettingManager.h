@@ -126,7 +126,6 @@ struct SettingsMainStruct {
 	};
 
 	struct ShadersStruct {
-		bool Blood;
 		bool Grass;
 		bool HDR;
 		bool NightEye;
