@@ -2,13 +2,15 @@
 
 // Wetness reflections: screen-space reflections on the water film and puddles Wetness Effects puts on
 // the world. Run once the world is drawn (Effects/WetnessReflections.fx), on whatever is wet now; the
-// wetness comes from WetnessEffectsShaders, which this needs on.
+// wetness comes from WetnessEffectsShaders, which this needs on. Its settings are Wetness Effects'
+// ([Shaders.WetnessEffects.Reflections]).
 class WetnessReflectionsEffect : public EffectRecord
 {
 public:
 	WetnessReflectionsEffect() : EffectRecord("WetnessReflections") {};
 
 	struct WetnessReflectionsSettingsStruct {
+		bool	Enabled;			// Wetness Effects' Reflections switch
 		float	Strength;			// how much of the reflection replaces the sky's
 		float	MaxDistance;		// how far a ray goes, in game units
 		float	Thickness;			// how far behind a surface a ray may be and still hit it

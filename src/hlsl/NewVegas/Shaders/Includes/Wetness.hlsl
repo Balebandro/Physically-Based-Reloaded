@@ -6,7 +6,6 @@
 //     fully wet; walls and undersides MinRainWetness of it.
 //   - Puddles: perlin noise over flat ground, filling as the rain goes on and lingering after it.
 //     A puddle is a near-mirror film that flattens the surface's bumps.
-//   - Shore wetness: ground near the water line of the cell's water.
 //   - Raindrops (open, upward land near the camera): ripples, rings spreading on flat wet ground and
 //     puddles. Only where the including template defines WETNESS_RAINDROPS (the terrain); objects
 //     get none.
@@ -25,10 +24,10 @@
 // for why constants are pinned).
 float4 TESR_WetnessData    : register(c200);   // x: wetness, y: puddle wetness, z: raining, w: time (s)
 float4 TESR_WetnessParams  : register(c201);   // x: MaxRainWetness, y: MaxPuddleWetness, z: MinRainWetness, w: PuddleRadius
-float4 TESR_WetnessParams2 : register(c202);   // x: PuddleMaxAngle, y: PuddleMinWetness, z: MaxShoreWetness, w: ShoreRange
+float4 TESR_WetnessParams2 : register(c202);   // x: PuddleMaxAngle, y: PuddleMinWetness, zw: unused
 float4 TESR_WetnessDrops   : register(c203);   // x: 1 / grid size, y: 1 / interval, z: drop chance, w: interval / ripple lifetime
 float4 TESR_WetnessRipple  : register(c205);   // x: ripple strength, y: radius, z: breadth, w: raindrop range
-float4 TESR_WetnessCamera  : register(c206);   // xyz: camera position, w: water height (-1e9: none)
+float4 TESR_WetnessCamera  : register(c206);   // xyz: camera position, w: unused
 float4 TESR_WetnessFlags   : register(c207);   // x: on, z: ripples, w: ortho map texel size (0: no map)
 row_major float4x4 TESR_ShadowCameraToLightTransformOrtho : register(c208);   // c208-c211
 float4 TESR_WetnessSun     : register(c212);   // xyz: direction to the sun (world), w: ShowCover debug view
@@ -215,11 +214,6 @@ Wetness GetWetness(float3 position, float3 vertexNormal, float3 normal, float he
     float3 worldPos = TESR_WetnessCamera.xyz + position;
     float distance = length(position);
 
-    // Shore: near the water line of the cell's water.
-    float waterHeight = TESR_WetnessCamera.w;
-    float shoreFactor = saturate(1.0f - abs(worldPos.z - waterHeight) / TESR_WetnessParams2.w);
-    float shoreFactorAlbedo = worldPos.z < waterHeight ? 1.0f : shoreFactor;
-
     // How far the surface faces up decides how wet it gets and where puddles may sit. On the land
     // (WETNESS_HEIGHT) the normal map has its say (NormalAwareness): the tops of bumps and stones soak
     // like flat ground, their steep sides less, and puddles keep off rough patches.
@@ -238,7 +232,7 @@ Wetness GetWetness(float3 position, float3 vertexNormal, float3 normal, float he
 #endif
 
     float rainWetness = TESR_WetnessData.x * minWetnessAngle * TESR_WetnessParams.x;
-    float wetness = max(shoreFactor * TESR_WetnessParams2.z, rainWetness);
+    float wetness = rainWetness;
 
     // Puddles.
     float puddleWetness = TESR_WetnessData.y * minWetnessAngle;
@@ -271,11 +265,10 @@ Wetness GetWetness(float3 position, float3 vertexNormal, float3 normal, float he
 
     float3 wetNormal = normalize(lerp(normal, vertexNormal, saturate(puddle)));
 
-    float glossAlbedo = max(puddle, shoreFactorAlbedo * TESR_WetnessParams2.z);
+    float glossAlbedo = puddle;
     glossAlbedo *= glossAlbedo;
 
     float glossSpecular = puddle;
-    if (worldPos.z < waterHeight) glossSpecular *= shoreFactor;
 
     flatness *= smoothstep(TESR_WetnessParams2.y, 1.0f, glossSpecular);
     float3 rippleNormal = normalize(lerp(float3(0.0f, 0.0f, 1.0f), raindrop, lerp(flatness, 1.0f, 0.5f)));

@@ -2,7 +2,7 @@
 
 // Wetness Effects, ported from Community Shaders (features/Wetness Effects, GPL-3.0): surfaces getting
 // wet in the rain and drying after it -- darkening, a water film with its own highlight and reflection,
-// puddles, shore wetness, raindrop ripples on the land, nothing wet under cover. The shading is in
+// puddles, raindrop ripples on the land, nothing wet under cover. The shading is in
 // Shaders/Includes/Wetness.hlsl, used by the object and terrain templates (skin gets wet by its own
 // RainWetness, effects/Skin.cpp). This collection holds the settings and works out from the
 // weather how wet the world is, as CS's WetnessEffects::GetCommonBufferData does.
@@ -14,8 +14,6 @@ public:
 	struct WetnessSettingsStruct {
 		float	MaxRainWetness;
 		float	MaxPuddleWetness;
-		float	MaxShoreWetness;
-		float	ShoreRange;
 		float	PuddleRadius;
 		float	PuddleMaxAngle;
 		float	PuddleMinWetness;
@@ -47,10 +45,10 @@ public:
 	struct WetnessStruct {
 		D3DXVECTOR4		Data;		// x: wetness, y: puddle wetness, z: raining, w: time (s)
 		D3DXVECTOR4		Params;		// x: MaxRainWetness, y: MaxPuddleWetness, z: MinRainWetness, w: PuddleRadius
-		D3DXVECTOR4		Params2;	// x: PuddleMaxAngle, y: PuddleMinWetness, z: MaxShoreWetness, w: ShoreRange
+		D3DXVECTOR4		Params2;	// x: PuddleMaxAngle, y: PuddleMinWetness, zw: unused
 		D3DXVECTOR4		Drops;		// x: 1 / grid size, y: 1 / interval, z: drop chance, w: interval / ripple lifetime
 		D3DXVECTOR4		Ripple;		// x: strength, y: radius, z: breadth, w: raindrop range
-		D3DXVECTOR4		Camera;		// xyz: camera position, w: water height (-1e9: none)
+		D3DXVECTOR4		Camera;		// xyz: camera position, w: unused
 		D3DXVECTOR4		Flags;		// x: on, z: ripples, w: ortho map texel size (0: none)
 		D3DXVECTOR4		Sun;		// xyz: direction to the sun
 		D3DXVECTOR4		Height;		// x: HeightAwareness, y: CreviceFill, z: NormalAwareness (the land only)

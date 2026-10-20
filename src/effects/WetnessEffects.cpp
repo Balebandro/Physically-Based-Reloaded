@@ -21,8 +21,6 @@ void WetnessEffectsShaders::UpdateSettings() {
 
 	Settings.MaxRainWetness = std::clamp(TheSettingManager->GetSettingF(main, "MaxRainWetness"), 0.0f, 2.5f);
 	Settings.MaxPuddleWetness = std::clamp(TheSettingManager->GetSettingF(main, "MaxPuddleWetness"), 0.0f, 6.0f);
-	Settings.MaxShoreWetness = std::clamp(TheSettingManager->GetSettingF(main, "MaxShoreWetness"), 0.0f, 1.0f);
-	Settings.ShoreRange = std::clamp(TheSettingManager->GetSettingF(main, "ShoreRange"), 1.0f, 256.0f);
 	Settings.PuddleRadius = std::clamp(TheSettingManager->GetSettingF(main, "PuddleRadius"), 0.1f, 3.0f);
 	Settings.PuddleMaxAngle = std::clamp(TheSettingManager->GetSettingF(main, "PuddleMaxAngle"), 0.6f, 1.0f);
 	Settings.PuddleMinWetness = std::clamp(TheSettingManager->GetSettingF(main, "PuddleMinWetness"), 0.0f, 1.0f);
@@ -109,41 +107,18 @@ void WetnessEffectsShaders::UpdateConstants() {
 	RainTime += elapsed;
 	if (RainTime > 3600.0) RainTime -= 3600.0;   // keeps the drop hashes precise; one jump an hour
 
-	// The water for shore wetness: the nearest real water plane around the player, wherever the camera
-	// looks. Not TES::GetWaterHeight: that hands over the plane the camera faces, and facing none, the
-	// cell's default water level, which most exterior cells have with no water anywhere, often above the
-	// ground; everything below it counted as under water and went dark, depending on where one looked.
-	// A plane counts within 2048 units of its bounds; one above the camera never (it is not the shore
-	// the player stands at), unless the camera is under water.
-	float waterHeight = -1e9f;
-	if (on && Settings.MaxShoreWetness > 0.0f && Tes && Tes->waterManager && Player) {
-		float nearest = 2048.0f;
-		for (DNode<WaterGroup>* g = Tes->waterManager->waterGroups.first; g; g = g->next) {
-			if (!g->data) continue;
-			for (DNode<TESObjectREFR>* p = g->data->waterPlanes.first; p; p = p->next) {
-				NiNode* node = p->data ? p->data->GetNode() : nullptr;
-				NiBound* bound = node ? node->GetWorldBound() : nullptr;
-				if (!bound) continue;
-				float distance = node->GetDistance(&Player->pos) - bound->Radius;
-				bool aboveCamera = bound->Center.z > TheRenderManager->CameraPosition.z && !TheShaderManager->GameState.isUnderwater;
-				if (distance < nearest && !aboveCamera) {
-					nearest = distance;
-					waterHeight = bound->Center.z;
-				}
-			}
-		}
-	}
-
-	bool active = on && (Wetness > 0.0f || PuddleWetness > 0.0f || Raining > 0.0f || waterHeight > -1e8f);
+	// No shore wetness (removed): the game lists water planes only some of the time, and its heights are no
+	// guide to where the water is, so the ground near it went wet and dark, on and off with the view.
+	bool active = on && (Wetness > 0.0f || PuddleWetness > 0.0f || Raining > 0.0f);
 
 	Constants.Data = D3DXVECTOR4(Wetness, PuddleWetness, Raining, (float)RainTime);
 	Constants.Params = D3DXVECTOR4(Settings.MaxRainWetness, Settings.MaxPuddleWetness, Settings.MinRainWetness, Settings.PuddleRadius);
-	Constants.Params2 = D3DXVECTOR4(Settings.PuddleMaxAngle, Settings.PuddleMinWetness, Settings.MaxShoreWetness, Settings.ShoreRange);
+	Constants.Params2 = D3DXVECTOR4(Settings.PuddleMaxAngle, Settings.PuddleMinWetness, 0.0f, 0.0f);
 	Constants.Drops = D3DXVECTOR4(1.0f / Settings.RaindropGridSize, 1.0f / Settings.RaindropInterval,
 		Settings.RaindropChance * Raining * Raining, Settings.RaindropInterval / Settings.RippleLifetime);
 	Constants.Ripple = D3DXVECTOR4(Settings.RippleStrength, Settings.RippleRadius, Settings.RippleBreadth, Settings.EnableRaindropFx ? Settings.RaindropFxRange : 0.0f);
 
-	Constants.Camera = D3DXVECTOR4(TheRenderManager->CameraPosition.x, TheRenderManager->CameraPosition.y, TheRenderManager->CameraPosition.z, waterHeight);
+	Constants.Camera = D3DXVECTOR4(TheRenderManager->CameraPosition.x, TheRenderManager->CameraPosition.y, TheRenderManager->CameraPosition.z, 0.0f);
 
 	// Rain occlusion: NVR's top-down ortho depth map, asked for while anything is wet.
 	float orthoTexel = 0.0f;

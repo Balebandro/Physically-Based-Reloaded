@@ -7,8 +7,11 @@ void WetnessReflectionsEffect::RegisterConstants() {
 	TheShaderManager->RegisterConstant("TESR_WetnessReflectionFade", &Constants.Fade);
 }
 
+// Part of Wetness Effects: [Shaders.WetnessEffects.Reflections], switched on there. It has no Status of its
+// own, so the effect always loads and ShouldRender decides.
 void WetnessReflectionsEffect::UpdateSettings() {
-	const char* main = "Shaders.WetnessReflections.Main";
+	const char* main = "Shaders.WetnessEffects.Reflections";
+	Settings.Enabled = TheSettingManager->GetSettingI(main, "Enabled") != 0;
 	Settings.Strength = std::clamp(TheSettingManager->GetSettingF(main, "Strength"), 0.0f, 2.0f);
 	Settings.MaxDistance = std::clamp(TheSettingManager->GetSettingF(main, "MaxDistance"), 100.0f, 10000.0f);
 	Settings.Thickness = std::clamp(TheSettingManager->GetSettingF(main, "Thickness"), 1.0f, 500.0f);
@@ -25,11 +28,13 @@ void WetnessReflectionsEffect::UpdateConstants() {
 }
 
 // Only while something is wet: Wetness Effects on and active (its flag, set while anything is wet or
-// a shore is near), outdoors and above water.
+// a shore is near), its Reflections on, outdoors and above water.
 // The debug view runs outdoors whatever the weather, so it shows that nothing is wet too.
 bool WetnessReflectionsEffect::ShouldRender() {
+	if (!Settings.Enabled) return false;
 	if (!TheShaderManager->GameState.isExterior || TheShaderManager->GameState.isUnderwater) return false;
-	if (Settings.DebugView) return true;
 	WetnessEffectsShaders* Wetness = TheShaderManager->Shaders.Wetness;
-	return Wetness && Wetness->Enabled && Wetness->Constants.Flags.x > 0.5f && Settings.Strength > 0.0f;
+	if (!Wetness || !Wetness->Enabled) return false;
+	if (Settings.DebugView) return true;
+	return Wetness->Constants.Flags.x > 0.5f && Settings.Strength > 0.0f;
 }
