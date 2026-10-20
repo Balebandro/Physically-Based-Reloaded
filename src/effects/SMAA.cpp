@@ -72,6 +72,12 @@ void SMAAEffect::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarge
 
 	auto timer = TimeLogger();
 
+	// It draws on the game's target itself: with the frame chain on, the frame is put there first.
+	if (TheShaderManager->Chain.IsActive()) {
+		TheShaderManager->Chain.Sync();
+		RenderedSurface = TheTextureManager->RenderedSurface;
+	}
+
 	// Clear the stencil buffer.
 	Device->Clear(0, nullptr, D3DCLEAR_STENCIL, D3DCOLOR_ARGB(0, 0, 0, 0), 1.0f, 0);
 

@@ -89,6 +89,15 @@ IDirect3DBaseTexture9* TextureManager::GetTextureByName(std::string& Name) {
 	return *(t->second);
 }
 
+IDirect3DBaseTexture9** TextureManager::GetTextureSlotByName(std::string& Name) {
+	TexturePointersList::iterator t = TextureNames.find(Name);
+	if (t == TextureNames.end()) {
+		Logger::Log("[ERROR] Texture %s not found.", Name.c_str());
+		return nullptr;
+	}
+	return t->second;
+}
+
 
 /*
 * Loads the actual texture file or get it from cache based on type/Name

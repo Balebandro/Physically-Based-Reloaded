@@ -816,10 +816,10 @@ bool ShaderManager::ShouldRenderShadowMaps() {
 /*
 * Renders a given effect to an arbitrary render target
 */
-void ShaderManager::RenderEffectToRT(IDirect3DSurface9* RenderTarget, EffectRecord* Effect, bool clearRenderTarget) {
+void ShaderManager::RenderEffectToRT(IDirect3DSurface9* RenderTarget, EffectRecord* Effect, bool clearRenderTarget, UINT techniqueIndex) {
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	Device->SetRenderTarget(0, RenderTarget);
-	Effect->Render(Device, RenderTarget, RenderTarget, 0, clearRenderTarget, RenderTarget);
+	Effect->Render(Device, RenderTarget, RenderTarget, techniqueIndex, clearRenderTarget, RenderTarget);
 };
 
 
@@ -845,9 +845,14 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 
 	// render a shadow pass for point lights
 	if ((GameState.isExterior && Effects.ShadowsExteriors->Enabled) || (!GameState.isExterior && Effects.ShadowsInteriors->Enabled)) {
-		// separate lights in 2 batches
-		RenderEffectToRT(Effects.ShadowsExteriors->Textures.ShadowPassSurface, Effects.PointShadows, true);
-		if (Effects.ShadowsExteriors->Settings.Interiors.LightPoints > 6) RenderEffectToRT(Effects.ShadowsExteriors->Textures.ShadowPassSurface, Effects.PointShadows2, false);
+		// separate lights in 2 batches, or with [Main.Main.Performance] MergedPointShadows all of them in one pass
+		// (PointShadows' technique 1, MergedPointShadows)
+		const bool morePointLights = Effects.ShadowsExteriors->Settings.Interiors.LightPoints > 6;
+		ID3DXEffect* pointShadows = Effects.PointShadows->Effect;
+		const bool merged = morePointLights && pointShadows && TheSettingManager->GetSettingI("Main.Main.Performance", "MergedPointShadows") &&
+			pointShadows->GetTechnique(1) && pointShadows->GetTechnique(1) == pointShadows->GetTechniqueByName("MergedPointShadows");
+		RenderEffectToRT(Effects.ShadowsExteriors->Textures.ShadowPassSurface, Effects.PointShadows, true, merged ? 1 : 0);
+		if (morePointLights && !merged) RenderEffectToRT(Effects.ShadowsExteriors->Textures.ShadowPassSurface, Effects.PointShadows2, false);
 		if (GameState.isExterior) RenderEffectToRT(Effects.ShadowsExteriors->Textures.ShadowPassSurface, Effects.SunShadows, false);
 	}
 	else {
@@ -863,28 +868,30 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 
 	Device->SetRenderTarget(0, RenderTarget);
 
-	// copy the source render target to both the rendered and source textures (rendered gets updated after every pass, source once per effect)
-	Device->StretchRect(RenderTarget, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
-	Device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
+	// The frame chain ([Main.Main.Performance] FrameChain); without it, RenderedSurface gets a copy of the frame, then
+	// one after every pass. TESR_SourceBuffer gets its copy per effect, from the effects that read it (EffectRecord::Render).
+	struct ChainGuard { ~ChainGuard() { TheShaderManager->Chain.End(); } } chainGuard;
+	if (!Chain.Begin(RenderTarget))
+		Device->StretchRect(RenderTarget, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
 
 	// First, on the scene exactly as drawn: it recognises skin by comparing each pixel with the
 	// colour the skin shader wrote, which any effect before it would change. Screen-space shadows
 	// and AO then darken the scattered skin like everything else.
-	Effects.SkinScattering->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);   // pass 2 reads the unblurred scene
+	Effects.SkinScattering->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);   // pass 2 reads the unblurred scene
 
 	// The environment the PBR materials reflect next frame, from the scene as drawn (skin
 	// scattering only blurs skin; RenderedSurface holds its result).
 	Effects.DynamicCubemaps->RenderCubemaps(Device, RenderTarget);
 
 	if (GameState.isExterior) 
-		Effects.ShadowsExteriors->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+		Effects.ShadowsExteriors->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 	else 
-		Effects.ShadowsInteriors->Render(Device, RenderTarget, RenderedSurface, 0, true, SourceSurface);
+		Effects.ShadowsInteriors->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, true, SourceSurface);
 
-	Effects.SnowAccumulation->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
-	Effects.AmbientOcclusion->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	Effects.SnowAccumulation->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
+	Effects.AmbientOcclusion->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 	// After the shadows and AO, so what wet surfaces reflect is shaded as it is seen.
-	Effects.WetnessReflections->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	Effects.WetnessReflections->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 	// The wetness the first-person arms' and weapon's raindrops read next frame (HudRaindropsEffect).
 	Effects.HudRaindrops->UpdateWetness(Device);
 	Device->SetRenderTarget(0, RenderTarget);
@@ -912,13 +919,13 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 		RenderEffectToRT(Effects.FlashlightBeam->Textures.VolumetricSurface, Effects.FlashlightBeam, true);
 		Device->SetRenderTarget(0, RenderTarget);
 	}
-	Effects.Flashlight->Render(Device, RenderTarget, RenderedSurface, Effects.Flashlight->selectedPass, true, SourceSurface);
-	Effects.Underwater->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
-	Effects.VolumetricLight->Render(Device, RenderTarget, RenderedSurface, 1, false, SourceSurface);
-	Effects.VolumetricFog->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	Effects.Flashlight->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, Effects.Flashlight->selectedPass, true, SourceSurface);
+	Effects.Underwater->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
+	Effects.VolumetricLight->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 1, false, SourceSurface);
+	Effects.VolumetricFog->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 	// After the fog, which it thickens into dust; before the god rays, so the sun shafts shine through it.
-	Effects.Sandstorm->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
-	Effects.GodRays->Render(Device, RenderTarget, RenderedSurface, 0, true, SourceSurface);
+	Effects.Sandstorm->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
+	Effects.GodRays->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, true, SourceSurface);
 
 	// calculate average luma for use by shaders
 	if (avglumaRequired) {
@@ -926,12 +933,12 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 		Device->SetRenderTarget(0, RenderTarget); 	// restore device used for effects
 	}
 
-	Effects.Exposure->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	Effects.Exposure->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 	Effects.Bloom->RenderBloomBuffer(RenderTarget);
 
-	Effects.Lens->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	Effects.Lens->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 	if (Effects.LUT->Settings.PreTonemapping)
-		Effects.LUT->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+		Effects.LUT->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 
 	timer.LogTime("ShaderManager::RenderEffectsPreTonemapping");
 }
@@ -962,57 +969,58 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 	// prepare device for effects
 	Device->SetRenderTarget(0, RenderTarget);
 
-	// copy the source render target to both the rendered and source textures (rendered gets updated after every pass, source once per effect)
-	Device->StretchRect(RenderTarget, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
-	Device->StretchRect(RenderTarget, NULL, SourceSurface, NULL, D3DTEXF_NONE);
+	// The frame chain, as in RenderEffectsPreTonemapping.
+	struct ChainGuard { ~ChainGuard() { TheShaderManager->Chain.End(); } } chainGuard;
+	if (!Chain.Begin(RenderTarget))
+		Device->StretchRect(RenderTarget, NULL, RenderedSurface, NULL, D3DTEXF_NONE);
 
 	// TAA first: after tonemapping, so it resolves LDR values that cannot ghost as HDR highlights
 	// do, and ahead of everything below. Rain and snow are particles with no depth of their own
 	// to reproject by, DoF and motion blur want the stable image as input, and the lens effects
 	// and cinema overlay are fixed to the screen -- any of them run through a reprojection that
 	// assumes a static world would smear across the frame as the camera turns.
-	Effects.TAA->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	Effects.TAA->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 
-	Effects.Rain->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
-	Effects.Snow->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	Effects.Rain->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
+	Effects.Snow->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 
 	// After TAA, which would otherwise average the shimmer away (and fight it as motion it cannot track).
-	Effects.HeatHaze->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	Effects.HeatHaze->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 
-	//Effects.Linearization->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
-	Effects.BloomLegacy->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	//Effects.Linearization->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
+	Effects.BloomLegacy->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 
 	// screenspace coloring/blurring effects get rendered last
-	Effects.Coloring->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	Effects.Coloring->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 	if (!Effects.LUT->Settings.PreTonemapping)
-		Effects.LUT->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+		Effects.LUT->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 
 	// Sharpening before the blurs: run after them, it sharpened depth of field and motion blur back
 	// out -- hardest on bright pixels (its strength scales with luma), so a front-lit weapon lost its
 	// motion blur while a backlit one kept it.
-	Effects.Sharpening->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	Effects.Sharpening->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 
-	Effects.DepthOfField->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
-	Effects.MotionBlur->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	Effects.DepthOfField->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
+	Effects.MotionBlur->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 
 	// lens effects
-	Effects.BloodLens->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
-	Effects.WaterLens->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
-	Effects.LowHF->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	Effects.WaterLens->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
+	Effects.LowHF->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 
-	Effects.DitherBuster->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
-	Effects.SMAA->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	Effects.DitherBuster->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
+	Effects.SMAA->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 
 	// cinema effect gets rendered very last because of vignetting/letterboxing
-	Effects.Cinema->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	Effects.Cinema->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 
 	// final adjustments
-	Effects.ImageAdjust->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	Effects.ImageAdjust->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 
 	// debug shader allows to display some of the buffers
-	Effects.Debug->Render(Device, RenderTarget, RenderedSurface, 0, false, SourceSurface);
+	Effects.Debug->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 
-	// [Shaders.DynamicCubemaps.Main] DebugView: the environment cube over the finished frame.
+	// [Shaders.DynamicCubemaps.Main] DebugView: the environment cube over the finished frame, in the game's target.
+	Chain.End();
 	Effects.DynamicCubemaps->RenderDebug(Device, RenderTarget);
 
 	timer.LogTime("ShaderManager::RenderEffects");
@@ -1064,4 +1072,116 @@ void ShaderManager::SwitchShaderStatus(const char* Name) {
 void ShaderManager::SetCustomConstant(const char* Name, D3DXVECTOR4 Value) {
 	CustomConstants::iterator v = CustomConst.find(std::string(Name));
 	if (v != CustomConst.end()) v->second = Value;
+}
+
+
+// --- FrameChain (ShaderManager.h) ---
+
+bool FrameChain::Owns(IDirect3DSurface9* renderTarget, IDirect3DSurface9* renderedSurface) const {
+	return Active && renderTarget == GameTarget && renderedSurface == TheTextureManager->RenderedSurface;
+}
+
+void FrameChain::Publish() {
+	TheTextureManager->RenderedTexture = Tex[Current];
+	TheTextureManager->RenderedSurface = Surf[Current];
+}
+
+bool FrameChain::EnsureTexture(Pair& pair, int slot) {
+	if (pair.Texture[slot]) return true;
+	if (FAILED(TheRenderManager->device->CreateTexture(pair.Width, pair.Height, 1, D3DUSAGE_RENDERTARGET, pair.Format,
+		D3DPOOL_DEFAULT, &pair.Texture[slot], NULL)) || FAILED(pair.Texture[slot]->GetSurfaceLevel(0, &pair.Surface[slot]))) {
+		if (pair.Surface[slot]) { pair.Surface[slot]->Release(); pair.Surface[slot] = nullptr; }
+		if (pair.Texture[slot]) { pair.Texture[slot]->Release(); pair.Texture[slot] = nullptr; }
+		Logger::Log("[ERROR] Frame chain: could not create a %ux%u target (format %u); using copies.", pair.Width, pair.Height, pair.Format);
+		return false;
+	}
+	return true;
+}
+
+bool FrameChain::Begin(IDirect3DSurface9* gameTarget) {
+	if (Active) End();
+	if (!gameTarget || !TheSettingManager->GetSettingI("Main.Main.Performance", "FrameChain")) return false;
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	D3DSURFACE_DESC desc = {};
+	if (FAILED(gameTarget->GetDesc(&desc)) || desc.MultiSampleType != D3DMULTISAMPLE_NONE) return false;
+
+	int index = -1;
+	for (int i = 0; i < 2 && index < 0; i++)
+		if (Pairs[i].Format == desc.Format && Pairs[i].Width == desc.Width && Pairs[i].Height == desc.Height) index = i;
+	for (int i = 0; i < 2 && index < 0; i++)
+		if (Pairs[i].Format == D3DFMT_UNKNOWN) {
+			Pairs[i].Format = desc.Format;
+			Pairs[i].Width = desc.Width;
+			Pairs[i].Height = desc.Height;
+			index = i;
+		}
+	if (index < 0) return false;
+	Pair& pair = Pairs[index];
+
+	// The game's target as one of the two buffers, when it is a single-level texture: no copy to start with.
+	IDirect3DTexture9* gameTexture = nullptr;
+	const bool useGameTexture = TheSettingManager->GetSettingI("Main.Main.Performance", "ChainUsesGameTexture") &&
+		SUCCEEDED(gameTarget->GetContainer(IID_IDirect3DTexture9, (void**)&gameTexture)) && gameTexture &&
+		gameTexture->GetLevelCount() == 1;
+	if (useGameTexture) {
+		if (!EnsureTexture(pair, 0)) { gameTexture->Release(); return false; }
+		Tex[0] = gameTexture;		Surf[0] = gameTarget;
+		Tex[1] = pair.Texture[0];	Surf[1] = pair.Surface[0];
+		GameTexture = gameTexture;
+	}
+	else {
+		if (gameTexture) { gameTexture->Release(); gameTexture = nullptr; }
+		if (!EnsureTexture(pair, 0) || !EnsureTexture(pair, 1)) return false;
+		if (FAILED(Device->StretchRect(gameTarget, NULL, pair.Surface[0], NULL, D3DTEXF_NONE))) return false;
+		Tex[0] = pair.Texture[0];	Surf[0] = pair.Surface[0];
+		Tex[1] = pair.Texture[1];	Surf[1] = pair.Surface[1];
+	}
+
+	static bool reported[2][2] = {};
+	if (!reported[index][useGameTexture]) {
+		Logger::Log("Frame chain: %ux%u format %u, %s.", desc.Width, desc.Height, desc.Format,
+			useGameTexture ? "the game's target is one of the buffers" : "two NVR buffers (one copy to start)");
+		reported[index][useGameTexture] = true;
+	}
+
+	Current = 0;
+	SavedTexture = TheTextureManager->RenderedTexture;
+	SavedSurface = TheTextureManager->RenderedSurface;
+	GameTarget = gameTarget;
+	Active = true;
+	Publish();
+	return true;
+}
+
+void FrameChain::Commit() {
+	if (!Active) return;
+	Current ^= 1;
+	Publish();
+}
+
+void FrameChain::Sync() {
+	if (!Active) return;
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	if (Surf[Current] == GameTarget) {
+		// The frame is in the game's target: the other buffer gets a copy and becomes RenderedSurface.
+		Device->StretchRect(GameTarget, NULL, Surf[Current ^ 1], NULL, D3DTEXF_NONE);
+		Current ^= 1;
+		Publish();
+	}
+	else
+		Device->StretchRect(Surf[Current], NULL, GameTarget, NULL, D3DTEXF_NONE);
+}
+
+void FrameChain::End() {
+	if (!Active) return;
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	if (Surf[Current] != GameTarget) Device->StretchRect(Surf[Current], NULL, GameTarget, NULL, D3DTEXF_NONE);
+	Device->SetRenderTarget(0, GameTarget);
+	TheTextureManager->RenderedTexture = SavedTexture;
+	TheTextureManager->RenderedSurface = SavedSurface;
+	if (GameTexture) { GameTexture->Release(); GameTexture = nullptr; }
+	Tex[0] = Tex[1] = nullptr;
+	Surf[0] = Surf[1] = nullptr;
+	Active = false;
+	GameTarget = nullptr;
 }

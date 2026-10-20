@@ -7,7 +7,7 @@ namespace AudioTweaks {
 
 	void(__thiscall* ListenerUpdate)(void*) = (void(__thiscall*)(void*))0x00AEA8B0;
 
-	static const char* kSection = "Main.Main.Audio";
+	static const char* kSection = "Main.Main.Performance";
 	static float sListenerRate = 30.0f;		// listener commits a second, 0: every frame
 	static bool sSkipVolume = true;
 	static UInt32 sCalls = 0;

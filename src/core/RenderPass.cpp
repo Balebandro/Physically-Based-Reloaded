@@ -2,6 +2,23 @@
 #include <algorithm>
 #include <unordered_map>
 
+// A skinned partition's bone matrices (3 registers each, from c9) in as few calls as possible: the bones whose
+// palette entries are consecutive go up together. Ported from NVR UNOFFICIAL Boutique.
+static void UploadShadowBones(const float* Matrices, const UInt16* BoneMap, UInt32 BoneCount) {
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	if (!BoneCount) return;
+	if (!BoneMap) {
+		Device->SetVertexShaderConstantF(9, Matrices, BoneCount * 3);
+		return;
+	}
+	for (UInt32 First = 0; First < BoneCount;) {
+		UInt32 End = First + 1;
+		while (End < BoneCount && (UInt32)BoneMap[End] == (UInt32)BoneMap[End - 1] + 1) ++End;
+		Device->SetVertexShaderConstantF(9 + First * 3, Matrices + BoneMap[First] * 12, (End - First) * 3);
+		First = End;
+	}
+}
+
 
 void RenderPass::RenderAccum() {
 	if (GeometryList.empty()) return;
@@ -451,13 +468,7 @@ void SkinnedGeoShadowRenderPass::RenderGeometry(NiGeometry* Geo) {
 
 		GeoData = Partition->BuffData;
 		if (GeoData) {
-			//Constants.BoneMatrices = (D3DXVECTOR4*)SkinInstance->BoneMatrixes;
-			int StartRegister = 9;
-			for (int i = 0; i < Partition->Bones; i++) {
-				UInt16 NewIndex = (Partition->pBones == NULL) ? i : Partition->pBones[i];
-				TheRenderManager->device->SetVertexShaderConstantF(StartRegister, ((float*)SkinInstance->BoneMatrixes) + (NewIndex * 3 * 4), 3);
-				StartRegister += 3;
-			}
+			UploadShadowBones((const float*)SkinInstance->BoneMatrixes, Partition->pBones, Partition->Bones);
 
 			//TheRenderManager->PackSkinnedGeometryBuffer(GeoData, ModelData, SkinInstance, Partition, ShaderDeclaration);
 			DrawSkinnedGeometryBuffer(Geo, GeoData, Partition);
@@ -473,14 +484,9 @@ void SkinnedGeoShadowRenderPass::RenderGeometry(NiGeometry* Geo) {
 			++p;
 			++Partition;
 			if (pDismemberPartition[p].Enabled) {
-				int StartRegister = 9;
 				GeoData = Partition->BuffData;
 				if (GeoData) {
-					for (int i = 0; i < Partition->Bones; i++) {
-						UInt16 NewIndex = (Partition->pBones == NULL) ? i : Partition->pBones[i];
-						TheRenderManager->device->SetVertexShaderConstantF(StartRegister, ((float*)SkinInstance->BoneMatrixes) + (NewIndex * 3 * 4), 3);
-						StartRegister += 3;
-					}
+					UploadShadowBones((const float*)SkinInstance->BoneMatrixes, Partition->pBones, Partition->Bones);
 
 
 					DrawSkinnedGeometryBuffer(Geo, GeoData, Partition);

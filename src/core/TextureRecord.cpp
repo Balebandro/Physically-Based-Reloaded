@@ -102,7 +102,8 @@ void TextureRecord::GetSamplerStates(std::string samplerStateSubstring) {
 */
 bool TextureRecord::BindTexture(const char* Name) {
 	std::string textureName = Name;
-	Texture = TheTextureManager->GetTextureByName(textureName);
+	TextureRef = TheTextureManager->GetTextureSlotByName(textureName);
+	Texture = TextureRef ? *TextureRef : nullptr;
 
 	return Texture != nullptr;
 }

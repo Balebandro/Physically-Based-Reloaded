@@ -1,3 +1,4 @@
+#include <regex>
 /*
 * Class that wraps an effect shader, in order to load it/render it/set constants.
 */
@@ -221,10 +222,27 @@ void EffectRecord::CreateCT(ID3DXBuffer* ShaderSource, ID3DXConstantTable* Const
 	UInt32 TextureIndex = 0;
 
 	Effect->GetDesc(&ConstantTableDesc);
+
+	// The frame chain ([Main.Main.Performance] FrameChain, ShaderManager.h) writes each pass into a buffer that does
+	// not hold the frame: a pass that leaves pixels untouched (clip, discard, blending, stencil, alpha test, a colour
+	// write mask) gets the frame copied into its destination first. Effects that never read TESR_SourceBuffer are not
+	// given a copy of the frame in it. Ported from NVR UNOFFICIAL Boutique.
+	usesSourceBuffer = false;
+	needsPrefill = true;
+	if (ShaderSource && ShaderSource->GetBufferPointer()) {
+		static const std::regex partialWrite(
+			R"(\bclip\s*\(|\bdiscard\b|AlphaBlendEnable\s*=\s*(true|1)|StencilEnable\s*=\s*(true|1)|)"
+			R"(ColorWriteEnable|SeparateAlphaBlendEnable\s*=\s*(true|1)|AlphaTestEnable\s*=\s*(true|1))",
+			std::regex::icase | std::regex::optimize);
+		std::string source((const char*)ShaderSource->GetBufferPointer(), ShaderSource->GetBufferSize());
+		needsPrefill = std::regex_search(source, partialWrite);
+	}
+	if (needsPrefill) Logger::Log("%s: partial-write passes, the frame chain pre-fills their destination.", Name);
 	for (UINT c = 0; c < ConstantTableDesc.Parameters; c++) {
 		Handle = Effect->GetParameter(NULL, c);
 		Effect->GetParameterDesc(Handle, &ConstantDesc);
 		if (memcmp(ConstantDesc.Name, "TESR_", 5)) continue;
+		if (!strcmp(ConstantDesc.Name, "TESR_SourceBuffer")) usesSourceBuffer = true;
 		if ((ConstantDesc.Class == D3DXPC_VECTOR || ConstantDesc.Class == D3DXPC_MATRIX_ROWS)) FloatShaderValuesCount += 1;
 		if (ConstantDesc.Class == D3DXPC_OBJECT && ConstantDesc.Type >= D3DXPT_SAMPLER && ConstantDesc.Type <= D3DXPT_SAMPLERCUBE) TextureShaderValuesCount += 1;
 	}
@@ -280,6 +298,7 @@ void EffectRecord::SetCT() {
 	ShaderTextureValue* Sampler;
 	for (UInt32 c = 0; c < TextureShaderValuesCount; c++) {
 		Sampler = &TextureShaderValues[c];
+		if (Sampler->Texture->TextureRef) Sampler->Texture->Texture = *Sampler->Texture->TextureRef;   // follows the frame chain's buffers
 		if (!Sampler->Texture->Texture) {
 			Sampler->Texture->BindTexture(Sampler->Name);
 
@@ -318,6 +337,18 @@ void EffectRecord::SetCT() {
 	}
 }
 
+// Between the passes of one effect the frame chain moves TESR_RenderedBuffer to the other buffer: the samplers that
+// name a texture slot get what the slot holds now.
+void EffectRecord::RebindSlotTextures() {
+	for (UInt32 c = 0; c < TextureShaderValuesCount; c++) {
+		ShaderTextureValue* Sampler = &TextureShaderValues[c];
+		if (!Sampler->Texture || !Sampler->Texture->TextureRef || !*Sampler->Texture->TextureRef) continue;
+		if (Sampler->Texture->Texture == *Sampler->Texture->TextureRef) continue;
+		Sampler->Texture->Texture = *Sampler->Texture->TextureRef;
+		TheRenderManager->device->SetTexture(Sampler->RegisterIndex, Sampler->Texture->Texture);
+	}
+}
+
 /*
  * Enable or Disable Effect, with loading if not loaded
  */
@@ -353,7 +384,39 @@ void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTar
 	}
 
 	auto timer = TimeLogger();
-	if (SourceBuffer) Device->StretchRect(RenderTarget, NULL, SourceBuffer, NULL, D3DTEXF_LINEAR);
+
+	// The frame chain: each pass draws into the buffer that does not hold the frame, which then becomes the frame. No
+	// copy of the whole frame after every pass.
+	FrameChain& chain = TheShaderManager->Chain;
+	if (chain.Owns(RenderTarget, RenderedSurface)) {
+		if (SourceBuffer && usesSourceBuffer && SourceBuffer != RenderTarget)
+			Device->StretchRect(TheTextureManager->RenderedSurface, NULL, SourceBuffer, NULL, D3DTEXF_LINEAR);
+		Effect->SetTechnique(Effect->GetTechnique(techniqueIndex));
+		SetCT();
+		UINT Passes = 0;
+		if (SUCCEEDED(Effect->Begin(&Passes, NULL))) {
+			const bool prefill = !ClearRenderTarget && needsPrefill;
+			for (UINT p = 0; p < Passes; p++) {
+				IDirect3DSurface9* destination = chain.Output();
+				if (prefill) Device->StretchRect(TheTextureManager->RenderedSurface, NULL, destination, NULL, D3DTEXF_NONE);
+				Device->SetRenderTarget(0, destination);
+				if (ClearRenderTarget) Device->Clear(0L, NULL, D3DCLEAR_TARGET, D3DCOLOR_ARGB(255, 0, 0, 0), 1.0f, 0L);
+				Effect->BeginPass(p);
+				RebindSlotTextures();
+				Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
+				Effect->EndPass();
+				chain.Commit();
+			}
+			Effect->End();
+		}
+		Device->SetRenderTarget(0, RenderTarget);
+		std::string name = "EffectRecord::Render " + std::string(Name);
+		renderTime = timer.LogTime(name.c_str());
+		return;
+	}
+
+	if (SourceBuffer && usesSourceBuffer && SourceBuffer != RenderTarget)
+		Device->StretchRect(RenderTarget, NULL, SourceBuffer, NULL, D3DTEXF_LINEAR);
 
 	try {
 		D3DXHANDLE technique = Effect->GetTechnique(techniqueIndex);
@@ -366,7 +429,7 @@ void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTar
 			Effect->BeginPass(p);
 			Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
 			Effect->EndPass();
-			if (RenderedSurface) Device->StretchRect(RenderTarget, NULL, RenderedSurface, NULL, D3DTEXF_LINEAR); // copy the result from the pass into the texture
+			if (RenderedSurface && RenderedSurface != RenderTarget) Device->StretchRect(RenderTarget, NULL, RenderedSurface, NULL, D3DTEXF_LINEAR); // copy the result from the pass into the texture
 		}
 		Effect->End();
 	}

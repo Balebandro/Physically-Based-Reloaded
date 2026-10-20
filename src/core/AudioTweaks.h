@@ -1,6 +1,6 @@
 #pragma once
 
-// The game's audio update is a large share of the main thread in busy fights ([Main.Main.Audio]): CpuSampler found it
+// The game's audio update is a large share of the main thread in busy fights ([Main.Main.Performance] ListenerRate, SkipRedundantVolume): CpuSampler found it
 // waiting inside DirectSound, which takes one lock (shared with its mixing thread) on every call.
 //  - The listener (BSWin32AudioListener::UpdatePositionAndOrientation, 0xAEA8B0) sets its position and orientation and
 //    calls CommitDeferredSettings every frame, recomputing every playing 3D sound: at most ListenerRate times a second.

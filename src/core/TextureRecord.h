@@ -18,5 +18,6 @@ public:
 	bool						LoadTexture(TextureRecordType Type, const char* TexturePath);
 
 	IDirect3DBaseTexture9*		Texture;
+	IDirect3DBaseTexture9**		TextureRef = nullptr;	// a TextureManager slot (BindTexture): what it holds can change, as the frame chain's buffers do
 	DWORD						SamplerStates[SamplerStatesMax];
 };

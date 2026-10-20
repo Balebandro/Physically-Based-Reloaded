@@ -1,5 +1,29 @@
 #define ShadowMapFarPlane 32768;
 
+// [Main.Main.Performance] CubeMapFaceCulling: whether a bounding sphere (relative to the lamp) can reach the 90 degree
+// view of the cube face looking along Direction (a unit axis). Conservative; an unusable bound always passes. Ported
+// from NVR UNOFFICIAL Boutique.
+static bool SphereTouchesCubeFace(float x, float y, float z, float radius, const D3DXVECTOR3& Direction) {
+	if (!(radius > 0.0f && radius < 1.0e20f) || !(x > -1.0e20f && x < 1.0e20f) ||
+		!(y > -1.0e20f && y < 1.0e20f) || !(z > -1.0e20f && z < 1.0e20f)) return true;
+	const float forward = x * Direction.x + y * Direction.y + z * Direction.z;
+	const float a = Direction.x != 0.0f ? y : x;
+	const float b = Direction.z != 0.0f ? y : z;
+	const float margin = radius * 1.414214f + 0.01f;
+	return forward + a >= -margin && forward - a >= -margin && forward + b >= -margin && forward - b >= -margin;
+}
+
+// Skinned meshes always pass: their bound does not follow the animation closely.
+static bool TouchesCubeFace(NiGeometry* Geo, BSShaderProperty* Property, const NiPoint3* Light, const D3DXVECTOR3& Direction) {
+	if (Geo->skinInstance) return true;
+	// Only the lit object shaders: SpeedTree and the rest keep every face, as before.
+	if (Property->uiShaderIndex != kShaderDefinition_ShadowLightShader && Property->uiShaderIndex != kShaderDefinition_Lighting30Shader &&
+		Property->uiShaderIndex != kShaderDefinition_ParallaxShader) return true;
+	NiBound* Bound = Geo->m_kWorldBound;
+	if (!Bound) return true;
+	return SphereTouchesCubeFace(Bound->Center.x - Light->x, Bound->Center.y - Light->y, Bound->Center.z - Light->z, Bound->Radius, Direction);
+}
+
 /*
 * Initializes the Shadow Manager by grabbing the relevant settings and shaders, and setting up map sizes.
 */
@@ -474,6 +498,7 @@ void ShadowManager::RenderShadowCubeMap(ShadowSceneLight** Lights, UInt32 LightI
 	RenderState->SetRenderState(D3DRS_ALPHAREF, 0, RenderStateArgs);
 	RenderState->SetRenderState(D3DRS_ALPHAFUNC, D3DCMP_ALWAYS, RenderStateArgs);
 
+	const bool FaceCulling = TheSettingManager->GetSettingI("Main.Main.Performance", "CubeMapFaceCulling") != 0;
 	for (int Face = 0; Face < 6; Face++) {
 		At = Eye;
 		switch (Face) {
@@ -517,6 +542,9 @@ void ShadowManager::RenderShadowCubeMap(ShadowSceneLight** Lights, UInt32 LightI
 				NiMaterialProperty* matProp = static_cast<NiMaterialProperty*>(geo->GetProperty(NiProperty::kType_Material));
 
 				if (!shaderProp)
+					continue;
+
+				if (FaceCulling && !TouchesCubeFace(geo, shaderProp, LightPos, CameraDirection))
 					continue;
 
 				// Skip refraction and fire refraction.
@@ -875,8 +903,11 @@ void ShadowManager::RenderShadowMaps() {
 
 	auto shadowMapTimer = TimeLogger();
 	if ((isExterior && usePointLights) || (!isExterior && InteriorEnabled)) {
-		// render the cubemaps for each light
-		for (int i = 0; i < ShadowsInteriors->LightPoints; i++) {
+		// render the cubemaps for each light. [Main.Main.Performance] SkipUnusedCubeMap: the last lamp's is never read
+		// (PointShadows2 lights it without a shadow lookup), so it is not drawn.
+		const int cubeMapsDrawn = TheSettingManager->GetSettingI("Main.Main.Performance", "SkipUnusedCubeMap") ?
+			min(ShadowsInteriors->LightPoints, ShadowCubeMapsMax - 1) : ShadowsInteriors->LightPoints;
+		for (int i = 0; i < cubeMapsDrawn; i++) {
 
 			// Render targets set in function due to rendering multiple faces.
 			RenderShadowCubeMap(ShadowLights, i);

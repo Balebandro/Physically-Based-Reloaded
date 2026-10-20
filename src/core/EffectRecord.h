@@ -20,6 +20,9 @@ public:
 
 	bool 					IsLoaded();
 	bool					Enabled;
+	bool					usesSourceBuffer = true;	// reads TESR_SourceBuffer (CreateCT)
+	bool					needsPrefill = true;		// has passes that leave pixels untouched (CreateCT)
+	void					RebindSlotTextures();
 	float					renderTime;
 	float					constantUpdateTime;
 

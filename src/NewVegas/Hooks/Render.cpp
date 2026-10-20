@@ -253,7 +253,7 @@ void __fastcall RenderFirstPersonHook(Main* This, UInt32 edx, NiDX9Renderer* Ren
 
 // What the water reflection map is drawn with, restored when the pass ends:
 //   [Main.Main.Water] ForceReflections: the old path's TESR_ShadowData.x = -1 and no terrain parallax.
-//   [Main.Main.ReducedQuality] CheapReflections: no forward sun shadows (TESR_ShadowForwardData.x = 1, also
+//   [Main.Main.Performance] CheapReflections: no forward sun shadows (TESR_ShadowForwardData.x = 1, also
 //     written to c133, which ShadowsExteriorEffect binds directly once per frame) and no terrain parallax or
 //     parallax shadows, like the game's own reflections.
 // Ported from NVR UNOFFICIAL Optimized (P40).
@@ -264,7 +264,7 @@ public:
 		TerrainShaders* terrain = TheShaderManager->Shaders.Terrain;
 		if (!shadows || !terrain) return;
 		const bool force = TheSettingManager->SettingsMain.Main.ForceReflections;
-		const bool cheap = TheSettingManager->GetSettingI("Main.Main.ReducedQuality", "CheapReflections") != 0;
+		const bool cheap = TheSettingManager->GetSettingI("Main.Main.Performance", "CheapReflections") != 0;
 		Shadows = shadows; Terrain = terrain;
 		Saved[0] = shadows->Constants.Data.x;
 		Saved[1] = shadows->Constants.ForwardData.x;

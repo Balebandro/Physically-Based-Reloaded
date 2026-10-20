@@ -71,10 +71,6 @@ Position = 0                # [0-3] Corner: 0 top left, 1 top right, 2 bottom le
 TopShaders = 10             # [0-30] How many pixel shaders to list, the most drawn first. NVR's shaders by name (the game's own marked vanilla); effects' shaders show as unnamed.
 LogInterval = 0.0           # Seconds between copies of the numbers in NewVegasReloaded.log, to compare setups afterwards. 0 off.
 
-[_Main.Main.Audio]
-ListenerRate = 30.0         # [0.0-240.0] How many times a second the game refreshes where you are hearing from (DirectSound recomputes every playing 3D sound each time). The game does it every frame, costly in busy fights. 30 is inaudible; 0 restores every frame.
-SkipRedundantVolume = true  # Sounds set their volume every frame, mostly to the volume they already have, and each call waits on DirectSound. Unchanged volumes are not sent again.
-
 [_Main.Main.CpuSampler]
 Capture = false             # Turn on to record where the game's main thread spends its time for Seconds (AI, animation, physics, scripts, rendering...), into NewVegasReloaded_cpu.txt beside the plugin (with Mod Organizer: in its overwrite folder). Turn off and on again for another capture. Costs a little speed only while capturing.
 Seconds = 15.0              # [2.0-120.0] How long a capture lasts.
@@ -86,8 +82,15 @@ RemovePrecipitations = false   # Disables vanilla rain and other precipitations:
 ForceReflections = true     # Always render the full world in reflection for HD reflections.
 RemoveUnderwater = false    # Disables fog underwater. Not compatible with custom underwater shader.
 
-[_Main.Main.ReducedQuality]
+[_Main.Main.Performance]
 CheapReflections = true      # The water reflection is drawn without NVR's sun shadows and without terrain parallax, like the game's own reflections. Objects and ground seen in the water lose their sun shadows and bumps; the game blurs the reflection, so the difference is usually small. Only where water is in view. From NVR UNOFFICIAL Optimized.
+ListenerRate = 30.0          # [0.0-240.0] Audio: how many times a second the game refreshes where you are hearing from (DirectSound recomputes every playing 3D sound each time). The game does it every frame, costly in busy fights. 30 is inaudible; 0 restores every frame.
+SkipRedundantVolume = true   # Audio: sounds set their volume every frame, mostly to the volume they already have, and each call waits on DirectSound. Unchanged volumes are not sent again.
+FrameChain = true            # Effects pass the picture to each other through two buffers instead of copying the whole frame after every pass, and an effect only gets a copy of the frame in TESR_SourceBuffer when it reads it. Same picture, fewer full-screen copies. Off is the old way. From NVR UNOFFICIAL Boutique.
+ChainUsesGameTexture = true  # With FrameChain: the game's own frame is one of the two buffers, which saves one more copy at the start.
+MergedPointShadows = true    # Lamp shadows: the shadow term of all twelve lamps in one full-screen pass instead of two (when more than 6 lamps cast shadows), and no cube map reads for pixels a lamp cannot reach. Same picture. From NVR UNOFFICIAL Boutique.
+CubeMapFaceCulling = true    # Lamp shadows: each of a lamp's six shadow views only draws the objects that can be in it, instead of every object near the lamp six times. Same picture. From NVR UNOFFICIAL Boutique.
+SkipUnusedCubeMap = true     # Lamp shadows: the twelfth lamp is lit without a shadow, so its shadow cube map is no longer drawn. Same picture. From NVR UNOFFICIAL Boutique.
 
 [_Main.Menu.Keys]
 KeyAdd = 78                 # Keycode for increment value shortcut in menu.

@@ -27,7 +27,7 @@ void AttachHooks() {
 	DetourAttach(&(PVOID&)SetShaders, &SetShadersHook);
 	DetourAttach(&(PVOID&)SetSamplerState, &SetSamplerStateHook);
 	DetourAttach(&(PVOID&)TestFrustumCull, &TestFrustumCullHook);   // lamps not culled by the view (Hooks/Shaders.cpp)
-	DetourAttach(&(PVOID&)AudioTweaks::ListenerUpdate, &AudioTweaks::ListenerUpdateHook);   // [Main.Main.Audio] (core/AudioTweaks.h)
+	DetourAttach(&(PVOID&)AudioTweaks::ListenerUpdate, &AudioTweaks::ListenerUpdateHook);   // [Main.Main.Performance] ListenerRate, SkipRedundantVolume (core/AudioTweaks.h)
 
 	DetourAttach(&(PVOID&)GetWaterHeightLOD, &GetWaterHeightLODHook);
 	DetourAttach(&(PVOID&)RenderReflections, &RenderReflectionsHook);   // always: ForceReflections, CheapReflections, CheapUnderwaterTerrain

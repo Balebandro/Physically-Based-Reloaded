@@ -192,6 +192,12 @@ void TAAEffect::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTarget
 
 	auto timer = TimeLogger();
 
+	// It draws on the game's target itself: with the frame chain on, the frame is put there first.
+	if (TheShaderManager->Chain.IsActive()) {
+		TheShaderManager->Chain.Sync();
+		RenderedSurface = TheTextureManager->RenderedSurface;
+	}
+
 	// A new cell means a loading screen or a teleport: last frame's history shows another place.
 	if (TheShaderManager->GameState.isCellChanged) historyValid = false;
 

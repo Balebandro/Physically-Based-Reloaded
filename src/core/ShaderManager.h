@@ -49,6 +49,43 @@ typedef std::map<std::string, D3DXVECTOR4> CustomConstants;
 
 struct		FrameVS { float x, y, z, u, v; };
 
+// [Main.Main.Performance] FrameChain, ported from NVR UNOFFICIAL Boutique. The effects drawn on the game's frame
+// (RenderEffectsPreTonemapping, RenderEffects) used to copy the whole frame into TESR_RenderedBuffer after every pass.
+// With the chain, two buffers take turns: a pass reads the one holding the frame (published as RenderedTexture /
+// RenderedSurface, so TESR_RenderedBuffer is always the frame) and draws into the other, which then holds it. With
+// ChainUsesGameTexture the game's own target is one of the two. End puts the frame back in the game's target.
+// Code that draws on the game's target itself (TAA, SMAA) calls Sync first.
+class FrameChain {
+public:
+	bool					Begin(IDirect3DSurface9* gameTarget);
+	void					End();
+	bool					IsActive() const { return Active; }
+	bool					Owns(IDirect3DSurface9* renderTarget, IDirect3DSurface9* renderedSurface) const;
+	IDirect3DSurface9*		Output() const { return Surf[Current ^ 1]; }
+	void					Commit();
+	void					Sync();		// the game's target and RenderedSurface both hold the frame, for code that draws on the target
+
+private:
+	struct Pair {
+		D3DFORMAT			Format = D3DFMT_UNKNOWN;
+		UINT				Width = 0, Height = 0;
+		IDirect3DTexture9*	Texture[2] = {};
+		IDirect3DSurface9*	Surface[2] = {};
+	};
+	bool					EnsureTexture(Pair& pair, int slot);
+	void					Publish();
+
+	Pair					Pairs[2];	// one per target format and size (before and after tonemapping)
+	IDirect3DTexture9*		Tex[2] = {};
+	IDirect3DSurface9*		Surf[2] = {};
+	IDirect3DTexture9*		GameTexture = nullptr;
+	int						Current = 0;
+	bool					Active = false;
+	IDirect3DSurface9*		GameTarget = nullptr;
+	IDirect3DTexture9*		SavedTexture = nullptr;
+	IDirect3DSurface9*		SavedSurface = nullptr;
+};
+
 __declspec(align(16)) class ShaderManager : public ShaderManagerBase { // Never disposed
 public:
 	static void Initialize();
@@ -73,7 +110,7 @@ public:
 	bool					ShouldRenderShadowMaps();
 	void					RenderEffects(IDirect3DSurface9* RenderTarget);
 	void					RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget);
-	void					RenderEffectToRT(IDirect3DSurface9* RenderTarget, EffectRecord* Effect, bool clearRenderTarget);
+	void					RenderEffectToRT(IDirect3DSurface9* RenderTarget, EffectRecord* Effect, bool clearRenderTarget, UINT techniqueIndex = 0);
 	void					SwitchShaderStatus(const char* Name);
 	void					SetCustomConstant(const char* Name, D3DXVECTOR4 Value);
 		
@@ -160,6 +197,7 @@ public:
 	CustomConstants			CustomConst;
 	std::map<std::string, D3DXVECTOR4*>	ConstantsTable;
 	IDirect3DVertexBuffer9*	FrameVertex;
+	FrameChain				Chain;
 	NiD3DVertexShader*		WaterVertexShaders[51];
 	NiD3DPixelShader*		WaterPixelShaders[51];
     TESObjectCELL*          PreviousCell;
