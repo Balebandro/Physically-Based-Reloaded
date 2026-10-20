@@ -1072,6 +1072,10 @@ Enabled = true              # Branching erosion gullies carved into the shading 
 Depth = 1.0                 # [0.0-4.0] How deep the gullies look. 0 is off: the LOD normal maps as before.
 Spacing = 1024.0            # [128.0-16384.0] The widest gullies' spacing, in game units; three finer layers follow at half, quarter and eighth. Layers too fine for the distance fade out.
 GullyDarkening = 0.35       # [0.0-1.0] How much darker the gully floors are than the crests.
+NearDistance = 8000.0       # [0-200000] Closer than this (game units), slopes get only NearStrength of the gullies and only the widest of them.
+FarDistance = 40000.0       # [0-400000] From here on, the gullies are at full depth and full detail. In between they grow.
+NearStrength = 0.15         # [0.0-1.0] How much of the gullies near mountains keep: 0 none, 1 as far ones.
+FarDetail = 1.0             # [0.0-1.0] Extra detail on far mountains: two more, finer gully layers (six in all), kept down to a smaller size on screen. 0: four layers, as before.
 
 [_Shaders.Terrain.LOD]
 LODNoiseScale = 0.7                # Amount of noise applied to LOD.

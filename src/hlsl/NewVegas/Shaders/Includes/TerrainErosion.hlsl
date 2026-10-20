@@ -3,14 +3,18 @@
 //
 // Over the slope the LOD normal map gives, layers of ripples whose crests run downhill (jittered points in cells, so no
 // regular stripes); each finer layer follows the slope the coarser ones left, so small gullies branch off the flanks of
-// larger ones. Steep land erodes, flat land stays smooth. Layers finer than a few pixels fade out (no shimmer far off).
+// larger ones. Steep land erodes, flat land stays smooth. Layers finer than a few pixels fade out (no shimmer).
 // Only the lighting changes (the normal, and darker gully floors), not the LOD mesh's outline.
 //
-// Registers: c180-c181 are free in the terrain shaders (Terrain.hlsl c89/c90/c134/c135, Shadow.hlsl c100-c133,
+// The relief belongs to the far mountains: from NearDistance to FarDistance the gullies deepen from NearStrength to full,
+// and the detail grows from the widest layer alone to six layers, kept down to a smaller size on screen (FarDetail).
+//
+// Registers: c180-c182 are free in the terrain shaders (Terrain.hlsl c89/c90/c134/c135, Shadow.hlsl c100-c133,
 // SkyAmbient.hlsl c137-c145).
 
 float4 TESR_CameraPosition : register(c180);
 float4 TESR_TerrainErosionData : register(c181);	// x gully depth (0 off), y widest gully spacing (units), z gully floor darkening
+float4 TESR_TerrainErosionRange : register(c182);	// x near distance, y far distance, z near strength (0-1), w far detail (0-1)
 
 // A hash without sin (after Dave Hoskins' hash22, MIT): steady for the large cell numbers of world positions.
 float2 ErosionHash(float2 p) {
@@ -51,13 +55,20 @@ float3 GetErodedNormal(float3 normal, float3 position, float footprint, out floa
     float2 anchored = position.xy + TESR_CameraPosition.xy;
     float steepness = saturate(length(slope) * 2.5f);
 
+    // 0 at NearDistance and closer, 1 at FarDistance and beyond.
+    float far = smoothstep(TESR_TerrainErosionRange.x, TESR_TerrainErosionRange.y, length(position));
+    // Layers allowed here: the widest alone near, six far (with FarDetail; four without), the last one fading in.
+    float layers = lerp(1.0f, lerp(4.0f, 6.0f, TESR_TerrainErosionRange.w), far);
+    // The smallest a layer may be on screen, in pixels: 4 near, down to 2 far with FarDetail.
+    float minPixels = lerp(4.0f, lerp(4.0f, 2.0f, TESR_TerrainErosionRange.w), far);
+
     float2 gradient = slope;
     float depth = 0.0f;
     float total = 0.0f;
     float layerSpacing = TESR_TerrainErosionData.y;
-    float amplitude = TESR_TerrainErosionData.x * 0.12f * layerSpacing;
-    [loop] for (int i = 0; i < 4; i++) {
-        float fade = saturate(layerSpacing / (4.0f * footprint) - 1.0f);
+    float amplitude = TESR_TerrainErosionData.x * 0.12f * layerSpacing * lerp(TESR_TerrainErosionRange.z, 1.0f, far);
+    [loop] for (int i = 0; i < 6; i++) {
+        float fade = saturate(layerSpacing / (minPixels * footprint) - 1.0f) * saturate(layers - i);
         [branch] if (fade <= 0.0f) break;
         float3 layer = ErosionLayer(anchored, gradient, layerSpacing);
         float weight = amplitude * fade * steepness;
@@ -67,6 +78,6 @@ float3 GetErodedNormal(float3 normal, float3 position, float footprint, out floa
         layerSpacing *= 0.5f;
         amplitude *= 0.5f;
     }
-    cavity = total > 0.0f ? saturate(-depth / total) : 0.0f;
+    cavity = total > 0.0f ? saturate(-depth / total) * lerp(TESR_TerrainErosionRange.z, 1.0f, far) : 0.0f;
     return normalize(float3(-gradient.x, -gradient.y, 1.0f));
 }
