@@ -27,6 +27,10 @@ bool __fastcall ReadSettingHook(INISettingCollection* This, UInt32 edx, GameSett
 		Setting->iValue = 1;
 	else if (!strcmp(Setting->Name, "bForceHighDetailReflections:Water"))
 		Setting->iValue = 0;
+	// The grass shaders NVR replaces are the shader model 3 set (GRASS23x*), which the game builds only with b30GrassVS
+	// on; off (the launcher sets it so for some cards) it builds GRASS2* and the grass loses NVR's lamps, wind and bending.
+	else if (!strcmp(Setting->Name, "b30GrassVS:Grass"))
+		Setting->iValue = 1;
 	return r;
 
 }
