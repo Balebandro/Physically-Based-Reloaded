@@ -18,12 +18,14 @@ void HudRaindropsEffect::RegisterTextures() {
 	Cleared = false;
 }
 
+// The settings live under Wetness Effects ([Shaders.WetnessEffects.HudRaindrops]), and so does the switch: its Enabled
+// stands in for a Status section (SettingManager::GetMenuShaderEnabled), and turning it in the menu switches the effect
+// here, as SwitchShaderStatus would.
 void HudRaindropsEffect::UpdateSettings() {
-	const char* Section = "Shaders.HudRaindrops.Main";
+	const char* Section = "Shaders.WetnessEffects.HudRaindrops";
 	Settings.DropSize = std::clamp(TheSettingManager->GetSettingF(Section, "DropSize"), 0.5f, 64.0f);
 	Settings.Density = std::clamp(TheSettingManager->GetSettingF(Section, "Density"), 0.0f, 1.0f);
 	Settings.WetTime = std::clamp(TheSettingManager->GetSettingF(Section, "WetTime"), 0.5f, 600.0f);
-	Settings.DryTime = std::clamp(TheSettingManager->GetSettingF(Section, "DryTime"), 0.5f, 600.0f);
 	Settings.Refraction = std::clamp(TheSettingManager->GetSettingF(Section, "Refraction"), 0.0f, 4.0f);
 	Settings.Reflection = std::clamp(TheSettingManager->GetSettingF(Section, "Reflection"), 0.0f, 8.0f);
 	Settings.Gloss = std::clamp(TheSettingManager->GetSettingF(Section, "Gloss"), 0.0f, 1.0f);
@@ -32,6 +34,11 @@ void HudRaindropsEffect::UpdateSettings() {
 	Settings.DebugView = std::clamp(TheSettingManager->GetSettingI(Section, "DebugView"), 0, 1);
 	Settings.Darkness = std::clamp(TheSettingManager->GetSettingF(Section, "Darkness"), 0.0f, 1.0f);
 	Settings.AllObjects = TheSettingManager->GetSettingI(Section, "AllObjects") != 0;
+
+	if (IsLoaded() || Enabled) {
+		const bool want = TheSettingManager->GetSettingI(Section, "Enabled") != 0;
+		if (want != Enabled) SwitchEffect();
+	}
 }
 
 void HudRaindropsEffect::UpdateConstants() {
@@ -48,30 +55,29 @@ void HudRaindropsEffect::UpdateConstants() {
 		Rain = WorldSky->secondWeather ? Rainy(WorldSky->firstWeather) * Progress + Rainy(WorldSky->secondWeather) * (1.0f - Progress) : Rainy(WorldSky->firstWeather);
 	}
 
-	// While it rains, and for DryTime after (the drops could still be drying), the passes run.
-	if (Rain > 0.0f) DryingLeft = Settings.DryTime + 1.0f;
+	// While it rains, and for WetTime after (the drops could still be drying), the passes run.
+	if (Rain > 0.0f) DryingLeft = Settings.WetTime + 1.0f;
 	else DryingLeft = max(DryingLeft - Elapsed, 0.0f);
 	if (Rain > 0.0f) TheShaderManager->orthoRequired = true;   // the cover test (Effects/HudRaindrops.fx)
 
-	// The world's objects (AllObjects): wet through over WetTime in the rain, dry over DryTime after;
+	// The world's objects (AllObjects): wet through over WetTime in the rain, dry over the same time after;
 	// indoors at once (nothing there is out in the rain, and there is no ortho map to tell).
 	if (!State.isExterior || State.isUnderwater || !Settings.AllObjects)
 		WorldWet = 0.0f;
 	else if (Rain > 0.0f || Settings.DebugView > 0)
 		WorldWet = min(1.0f, WorldWet + Elapsed * max(Rain, Settings.DebugView > 0 ? 1.0f : 0.0f) / Settings.WetTime);
 	else
-		WorldWet = max(0.0f, WorldWet - Elapsed / Settings.DryTime);
+		WorldWet = max(0.0f, WorldWet - Elapsed / Settings.WetTime);
 	if (WorldWet > 0.0f) TheShaderManager->orthoRequired = true;   // the objects' cover test
 
 	// The drops' clock runs while it rains, faster in heavy rain (SSS's script slows it in light
 	// rain). Wrapped on a whole number of both layers' cycles (5 and 10).
-	// While they dry it keeps running at the light-rain pace: the drops live out their cycle and shrink
-	// away as the surface dries (Shaders/Includes/HudRaindrops.hlsl, HudRainThreshold) rather than
-	// freezing in place and thinning out.
-	if (Rain > 0.0f || Settings.DebugView > 0 || DryingLeft > 0.0f) Clock = fmodf(Clock + Elapsed * Settings.AnimSpeed * (0.5f + max(Rain, Settings.DebugView > 0 ? 1.0f : 0.0f)), 1000.0f);
+	// Once the rain stops it stands still: no new drops fall, and the ones there shrink away where they are as the
+	// surface dries (Shaders/Includes/HudRaindrops.hlsl, HudRainThreshold).
+	if (Rain > 0.0f || Settings.DebugView > 0) Clock = fmodf(Clock + Elapsed * Settings.AnimSpeed * (0.5f + max(Rain, Settings.DebugView > 0 ? 1.0f : 0.0f)), 1000.0f);
 
 	Constants.Data = D3DXVECTOR4(Rain, 0.0f, 0.0f, 0.0f);
-	Constants.Time = D3DXVECTOR4(0.0f, Elapsed, Settings.WetTime, Settings.DryTime);
+	Constants.Time = D3DXVECTOR4(0.0f, Elapsed, Settings.WetTime, 0.0f);
 	Constants.Shade = D3DXVECTOR4(0.0f, 0.0f, State.isExterior ? 0.0f : 1.0f, State.isUnderwater ? 1.0f : 0.0f);
 	Constants.Debug = D3DXVECTOR4((float)Settings.DebugView, 0.0f, 0.0f, 0.0f);
 	// The screen is about 9 game units across: the drops come out the size they are on the arms.

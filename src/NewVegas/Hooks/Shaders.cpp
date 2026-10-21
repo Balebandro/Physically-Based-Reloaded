@@ -118,16 +118,19 @@ namespace MaterialMaps {
         return Map;
     }
 
-    // "Data\Textures\Armor\Leather01.dds" -> "textures\armor\leather01_rmaos.dds"
-    static bool CompanionPath(const char* Diffuse, std::string& Out) {
+    // "Data\Textures\Armor\Leather01.dds" -> "textures\armor\leather01_rmaos.dds" (Suffix "_rmaos")
+    static bool CompanionPath(const char* Diffuse, std::string& Out, const std::string& Suffix) {
         std::string Path(Diffuse);
         for (char& c : Path) c = (c == '/') ? '\\' : (char)tolower((unsigned char)c);
         const size_t Data = Path.find("data\\");
         if (Data != std::string::npos) Path.erase(0, Data + 5);
         if (Path.compare(0, 9, "textures\\") != 0) Path.insert(0, "textures\\");
         if (Path.size() < 4 || Path.compare(Path.size() - 4, 4, ".dds") != 0) return false;
-        if (Path.size() >= 10 && Path.compare(Path.size() - 10, 10, "_rmaos.dds") == 0) return false;
-        Path.insert(Path.size() - 4, "_rmaos");
+        const std::string Ending = Suffix + ".dds";
+        if (Path.size() >= Ending.size() && Path.compare(Path.size() - Ending.size(), Ending.size(), Ending) == 0) return false;
+        // A normal map beside a diffuse named "_d" takes its place: "rock_d.dds" -> "rock_n.dds".
+        if (Suffix == "_n" && Path.size() >= 6 && Path.compare(Path.size() - 6, 6, "_d.dds") == 0) Path.erase(Path.size() - 6, 2);
+        Path.insert(Path.size() - 4, Suffix);
         Out = Path;
         return true;
     }
@@ -136,28 +139,33 @@ namespace MaterialMaps {
     // UpdateFaceGenInteriorFlag), and found again on first use. Without this they stayed in video
     // memory for the whole session. Run between frames, so none is in use; slot 10 is unbound
     // through the render state cache first, so neither the device nor the cache keeps a freed map.
+    // Grass normal maps (GrassShaders::OnGrassShape): the same lookup with the _n suffix, kept apart by texture.
+    static std::unordered_map<const NiSourceTexture*, TextureEntry> sNormalByTexture;
+
     static void ReleaseAll() {
-        if (sByPath.empty() && sByTexture.empty()) return;
+        if (sByPath.empty() && sByTexture.empty() && sNormalByTexture.empty()) return;
         TheRenderManager->renderState->SetTexture(10, nullptr);
+        TheRenderManager->renderState->SetTexture(1, nullptr);   // the grass normal map's slot
         size_t Released = 0;
         for (auto& Entry : sByPath)
             if (Entry.second) { Entry.second->Release(); Released++; }
         sByPath.clear();
         sByTexture.clear();
+        sNormalByTexture.clear();
         sBound = false;
         if (Released) Logger::Log("MaterialMaps: released %u maps", (UInt32)Released);
     }
 
-    static IDirect3DTexture9* Find(const NiSourceTexture* Diffuse) {
+    static IDirect3DTexture9* FindCompanion(const NiSourceTexture* Diffuse, const char* Suffix, std::unordered_map<const NiSourceTexture*, TextureEntry>& ByTexture) {
         const char* Name = Diffuse->ddsPath1;
         if (!Name || !*Name) return nullptr;
 
-        auto Known = sByTexture.find(Diffuse);
-        if (Known != sByTexture.end() && Known->second.Path == Name) return Known->second.Map;
+        auto Known = ByTexture.find(Diffuse);
+        if (Known != ByTexture.end() && Known->second.Path == Name) return Known->second.Map;
 
         IDirect3DTexture9* Map = nullptr;
         std::string Companion;
-        if (CompanionPath(Name, Companion)) {
+        if (CompanionPath(Name, Companion, Suffix)) {
             auto ByPath = sByPath.find(Companion);
             if (ByPath != sByPath.end())
                 Map = ByPath->second;
@@ -168,9 +176,13 @@ namespace MaterialMaps {
                 if (Map) Logger::Log("MaterialMaps: %s", Companion.c_str());
             }
         }
-        sByTexture[Diffuse] = { std::string(Name), Map };
+        ByTexture[Diffuse] = { std::string(Name), Map };
         return Map;
     }
+
+    static IDirect3DTexture9* Find(const NiSourceTexture* Diffuse) { return FindCompanion(Diffuse, "_rmaos", sByTexture); }
+
+    IDirect3DTexture9* FindNormalMap(const NiSourceTexture* Diffuse) { return FindCompanion(Diffuse, "_n", sNormalByTexture); }
 
     // The OpenPBR substrate's split-sum terms, exact (PBR.hlsl OpenPBR_EnvBRDF): for GGX with alpha = r^2 and the
     // height-correlated Smith masking-shadowing the specification and Arnold use, the integral of the specular lobe over

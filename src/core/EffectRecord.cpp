@@ -36,6 +36,41 @@ void EffectRecord::DisposeEffect() {
 }
 
 /*
+The source and cache paths of an effect; false when its source is not there.
+*/
+bool EffectRecord::EffectPaths(const char* Name, char* SourcePath, char* PreprocessedPath, char* CompiledPath) {
+	strcpy(SourcePath, EffectsPath);
+	strcat(SourcePath, Name);
+	strcat(SourcePath, ".fx.hlsl");
+
+	strcpy(PreprocessedPath, EffectsPath);
+	strcat(PreprocessedPath, "Cache\\");
+	strcat(PreprocessedPath, Name);
+	strcat(PreprocessedPath, ".fx.hlsl");
+
+	strcpy(CompiledPath, EffectsPath);
+	strcat(CompiledPath, "Cache\\");
+	strcat(CompiledPath, Name);
+	strcat(CompiledPath, ".fx");
+
+	return FileExists(SourcePath);
+}
+
+/*
+Effects get the same compile-time defines the game shaders do. Only the PREPROCESS call needs them --
+D3DXCreateEffectCompiler is handed the already-preprocessed source. Toggling any of these changes that source,
+so CheckPreprocessResult forces a recompile.
+*/
+void EffectRecord::EffectMacros(D3DXMACRO (&Macros)[3]) {
+	int macroCount = 0;
+	Macros[macroCount++] = { "FORWARD_SHADOWS",
+		TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.Main", "ForwardShadows") ? "1" : "0" };
+	if (TheRenderManager->IsReversedDepth())
+		Macros[macroCount++] = { "REVERSED_DEPTH", "" };
+	Macros[macroCount] = { NULL, NULL };
+}
+
+/*
  * Compile and Load the Effect shader
  */
 bool EffectRecord::LoadEffect() {
@@ -48,45 +83,27 @@ bool EffectRecord::LoadEffect() {
 	ID3DXBuffer* Errors = NULL;
 	ID3DXBuffer* EffectBuffer = NULL;
 
-	char BaseDirectory[MAX_PATH];
-	char CacheDirectory[MAX_PATH];
 	char EffectSourcePath[MAX_PATH];
 	char EffectPreprocessedPath[MAX_PATH];
 	char EffectCompiledPath[MAX_PATH];
 
-	// Build filenames.
-	strcpy(BaseDirectory, EffectsPath);
-	strcpy(CacheDirectory, BaseDirectory);
-	strcat(CacheDirectory, "Cache\\");
-
-	strcpy(EffectSourcePath, BaseDirectory);
-	strcat(EffectSourcePath, Name);
-	strcat(EffectSourcePath, ".fx.hlsl");
-
-	if (!FileExists(EffectSourcePath)) {
+	if (!EffectPaths(Name, EffectSourcePath, EffectPreprocessedPath, EffectCompiledPath)) {
 		return success;
 	}
 
-	strcpy(EffectPreprocessedPath, CacheDirectory);
-	strcat(EffectPreprocessedPath, Name);
-	strcat(EffectPreprocessedPath, ".fx.hlsl");
+	D3DXMACRO Macros[3];
+	EffectMacros(Macros);
 
-	strcpy(EffectCompiledPath, CacheDirectory);
-	strcat(EffectCompiledPath, Name);
-	strcat(EffectCompiledPath, ".fx");
-
-	// Effects get the same compile-time defines the game shaders do. Only the PREPROCESS call
-	// needs them -- D3DXCreateEffectCompiler below is handed the already-preprocessed source.
-	// Toggling any of these changes that source, so CheckPreprocessResult forces a recompile.
-	D3DXMACRO EffectMacros[3];
-	int macroCount = 0;
-	EffectMacros[macroCount++] = { "FORWARD_SHADOWS",
-		TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.Main", "ForwardShadows") ? "1" : "0" };
-	if (TheRenderManager->IsReversedDepth())
-		EffectMacros[macroCount++] = { "REVERSED_DEPTH", "" };
-	EffectMacros[macroCount] = { NULL, NULL };
-
-	HRESULT prepass = D3DXPreprocessShaderFromFileA(EffectSourcePath, EffectMacros, NULL, &EffectSource, &Errors);
+	// ShaderPrecompile has already preprocessed this effect on its threads (and compiled it into the cache if it was
+	// stale): its source is taken as is, once that job is done.
+	HRESULT prepass;
+	std::string Precompiled;
+	if (ShaderPrecompile::Take(EffectCompiledPath, Precompiled) && SUCCEEDED(D3DXCreateBuffer((DWORD)Precompiled.size(), &EffectSource))) {
+		memcpy(EffectSource->GetBufferPointer(), Precompiled.data(), Precompiled.size());
+		prepass = D3D_OK;
+	}
+	else
+		prepass = D3DXPreprocessShaderFromFileA(EffectSourcePath, Macros, NULL, &EffectSource, &Errors);
 	if (prepass == D3D_OK) {
 		bool Compile = !CheckPreprocessResult(EffectPreprocessedPath, EffectSource);
 		bool CompiledExists = FileExists(EffectCompiledPath);

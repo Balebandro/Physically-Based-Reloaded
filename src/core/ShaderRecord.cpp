@@ -108,6 +108,72 @@ bool ShaderProgram::CheckPreprocessResult(const char* CachedPreprocessPath, ID3D
 }
 
 /*
+The source and cache paths of a game shader; false when its source (or its template's) is not there. Shared with
+ShaderPrecompile, which must look at exactly the files LoadShader does.
+*/
+bool ShaderRecord::ShaderPaths(const char* Name, const char* SubPath, const ShaderTemplate& Template, char* SourcePath, char* PreprocessedPath, char* CompiledPath) {
+	char BaseDirectory[MAX_PATH];
+	char CacheDirectory[MAX_PATH];
+
+	strcpy(BaseDirectory, ShadersPath);
+	strcpy(CacheDirectory, BaseDirectory);
+	strcat(CacheDirectory, "Cache\\");
+	if (SubPath) strcat(BaseDirectory, SubPath);
+	if (SubPath) strcat(CacheDirectory, SubPath);
+
+	strcpy(SourcePath, BaseDirectory);
+	strcat(SourcePath, Template.Name != NULL ? Template.Name : Name);
+	strcat(SourcePath, ".hlsl");
+
+	strcpy(PreprocessedPath, CacheDirectory);
+	strcat(PreprocessedPath, Name);
+	strcat(PreprocessedPath, ".hlsl");
+
+	strcpy(CompiledPath, CacheDirectory);
+	strcat(CompiledPath, Name);
+
+	return FileExists(SourcePath);
+}
+
+/*
+The defines every game shader gets on top of its template's (shared with ShaderPrecompile).
+*/
+void ShaderRecord::AppendGlobalDefines(ShaderTemplate& Template) {
+	// Append a define to the template, keeping the array null-terminated.
+	auto AppendDefine = [&Template](const char* Name, const char* Definition) {
+		int i = 0;
+		while (i < 28 && Template.Defines[i].Name != NULL) i++;
+		if (i >= 28) return;  // out of room; silently skip rather than overrun
+		Template.Defines[i] = { Name, Definition };
+		Template.Defines[i + 1] = { NULL, NULL };
+	};
+	
+	if (TheRenderManager->IsReversedDepth())
+		AppendDefine("REVERSED_DEPTH", "");
+	
+	// Forward sun shadows. Read straight from the setting manager rather than from the
+	// ShadowsExteriors effect, because shaders can be loaded before that effect is built.
+	//
+	// This governs whether the forward path is compiled in at all, so that builds which do not
+	// want it pay nothing for it. Whether it RUNS is a separate, runtime decision made by
+	// TESR_ShadowForwardData -- see ShadowsExteriorEffect::UpdateSettings. Changing the setting
+	// alters the preprocessed source, so CheckPreprocessResult recompiles on next load.
+	AppendDefine("FORWARD_SHADOWS",
+		TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.Main", "ForwardShadows") ? "1" : "0");
+	
+	// The sun shadow atlas holds plain depths, read with PCF: the only mode (Includes/Shadow.hlsl).
+	{
+		// NVR UNOFFICIAL Optimized's sun shadow options that change the forward shader code (Includes/Shadow.hlsl):
+		// both need the forward path.
+		const bool forward = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.Main", "ForwardShadows") != 0;
+		AppendDefine("CONTACT_HARDENING", forward &&
+			TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.ContactHardening", "Enabled") ? "1" : "0");
+		AppendDefine("SUN_CROSSFADE", forward &&
+			TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.SunSmoothing", "CrossFade") ? "1" : "0");
+	}
+}
+
+/*
 Loads the shader by name from a given subfolder (optionally). Shader will be compiled if needed.
 @returns the ShaderRecord for this shader.
 */
@@ -122,100 +188,27 @@ ShaderRecord* ShaderRecord::LoadShader(const char* Name, const char* SubPath, Sh
 	void* Function = NULL;
 	char ShaderProfile[7];
 	
-	char BaseDirectory[MAX_PATH];
-	char CacheDirectory[MAX_PATH];
 	char ShaderSourcePath[MAX_PATH];
 	char ShaderPreprocessedPath[MAX_PATH];
 	char ShaderCompiledPath[MAX_PATH];
-	
-	// Build filenames.
-	strcpy(BaseDirectory, ShadersPath);
-	strcpy(CacheDirectory, BaseDirectory);
-	strcat(CacheDirectory, "Cache\\");
-	if (SubPath) strcat(BaseDirectory, SubPath);
-	if (SubPath) strcat(CacheDirectory, SubPath);
 
-	strcpy(ShaderSourcePath, BaseDirectory);
-	if (Template.Name != NULL) {
-		strcat(ShaderSourcePath, Template.Name);
-	}
-	else {
-		strcat(ShaderSourcePath, Name);
-	}
-	strcat(ShaderSourcePath, ".hlsl");
-
-	if (!FileExists(ShaderSourcePath)) {
+	if (!ShaderPaths(Name, SubPath, Template, ShaderSourcePath, ShaderPreprocessedPath, ShaderCompiledPath)) {
 		return ShaderProg;
 	}
 
-	strcpy(ShaderPreprocessedPath, CacheDirectory);
-	strcat(ShaderPreprocessedPath, Name);
-	strcat(ShaderPreprocessedPath, ".hlsl");
-
-	strcpy(ShaderCompiledPath, CacheDirectory);
-	strcat(ShaderCompiledPath, Name);
-
+	AppendGlobalDefines(Template);
 	D3DXMACRO* Macros = &(Template.Defines[0]);
 
-	// Append a define to the template, keeping the array null-terminated.
-	auto AppendDefine = [&Template](const char* Name, const char* Definition) {
-		int i = 0;
-		while (i < 28 && Template.Defines[i].Name != NULL) i++;
-		if (i >= 28) return;  // out of room; silently skip rather than overrun
-		Template.Defines[i] = { Name, Definition };
-		Template.Defines[i + 1] = { NULL, NULL };
-	};
-
-	if (TheRenderManager->IsReversedDepth())
-		AppendDefine("REVERSED_DEPTH", "");
-
-	// Forward sun shadows. Read straight from the setting manager rather than from the
-	// ShadowsExteriors effect, because shaders can be loaded before that effect is built.
-	//
-	// This governs whether the forward path is compiled in at all, so that builds which do not
-	// want it pay nothing for it. Whether it RUNS is a separate, runtime decision made by
-	// TESR_ShadowForwardData -- see ShadowsExteriorEffect::UpdateSettings. Changing the setting
-	// alters the preprocessed source, so CheckPreprocessResult recompiles on next load.
-	AppendDefine("FORWARD_SHADOWS",
-		TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.Main", "ForwardShadows") ? "1" : "0");
-
-	// Shadow atlas encoding: 0 = VSM, 1 = EVSM2, 2 = EVSM4. Compile time for the same reason as
-	// FORWARD_SHADOWS -- Shadow.hlsl's GetSunShadow and ShadowMap.pso both branch on it with #if, not a
-	// runtime read, since ps_3_0 would otherwise flatten all three variants into every shadowed
-	// pixel. Read straight from the setting manager rather than from the ShadowsExteriors
-	// effect, same reasoning as FORWARD_SHADOWS above.
-	//
-	// Must mirror ShadowsExteriorEffect::UpdateSettingsFromQuality's Quality -> Mode mapping:
-	// Quality 0/1 -> VSM, 2 -> EVSM2, 3 -> EVSM4. Quality 4 (Custom) reads Mode directly, same
-	// as UpdateSettingsFromQuality does for that case. Previously this was never defined, so it
-	// silently fell back to Shadow.hlsl's own "#ifndef SHADOW_FIXED_MODE -> 2" default: every
-	// shader was compiled assuming EVSM4 regardless of Quality, so GetSunShadow's
-	// "TESR_ShadowFormatData.x != SHADOW_FIXED_MODE" check only ever matched at Quality 3/Full,
-	// and forward shadows silently no-op'd (return unshadowed) at every other quality level.
-	{
-		int quality = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.Main", "Quality");
-		int shadowMode;
-		switch (quality) {
-		case 0:
-		case 1:
-			shadowMode = 0; // VSM
-			break;
-		case 2:
-			shadowMode = 1; // EVSM2
-			break;
-		case 3:
-			shadowMode = 2; // EVSM4
-			break;
-		default: // 4 (Custom), or an out-of-range value -- fall back to the raw setting.
-			shadowMode = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.ShadowMaps", "Mode");
-			if (shadowMode < 0) shadowMode = 0;
-			if (shadowMode > 2) shadowMode = 2;
-			break;
-		}
-		AppendDefine("SHADOW_FIXED_MODE", shadowMode == 0 ? "0" : shadowMode == 1 ? "1" : "2");
+	// ShaderPrecompile has already preprocessed this shader on its threads (and compiled it into the cache if it was
+	// stale): its source is taken as is, once that job is done.
+	HRESULT prepass;
+	std::string Precompiled;
+	if (ShaderPrecompile::Take(ShaderCompiledPath, Precompiled) && SUCCEEDED(D3DXCreateBuffer((DWORD)Precompiled.size(), &ShaderSource))) {
+		memcpy(ShaderSource->GetBufferPointer(), Precompiled.data(), Precompiled.size());
+		prepass = D3D_OK;
 	}
-
-	HRESULT prepass = D3DXPreprocessShaderFromFileA(ShaderSourcePath, Macros, NULL, &ShaderSource, &Errors);
+	else
+		prepass = D3DXPreprocessShaderFromFileA(ShaderSourcePath, Macros, NULL, &ShaderSource, &Errors);
 	if (prepass == D3D_OK) {
 		bool Compile = !CheckPreprocessResult(ShaderPreprocessedPath, ShaderSource);
 

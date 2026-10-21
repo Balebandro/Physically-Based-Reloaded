@@ -21,6 +21,8 @@ public:
 	static const UInt32 ProcessImageSpaceShaders	= 0x00B55AC0;
 	static const UInt32 RenderWorldSceneGraph		= 0x00873200;
 	static const UInt32 RenderBlended				= 0x00B650C0;   // the shader accumulator's blended stage (back to front, after all opaque groups)
+	static const UInt32 RenderPassStandard			= 0x00B98E80;   // BSShader::RenderPass draws, standard and skinned (LampScissor)
+	static const UInt32 RenderPassSkinned			= 0x00B99110;
 	static const UInt32 RenderFirstPerson			= 0x00875110;
 	static const UInt32 RenderReflections			= 0x004E1BC0;
 	static const UInt32 RenderPipboy				= 0x008761E0;

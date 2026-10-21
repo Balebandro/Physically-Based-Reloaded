@@ -96,7 +96,6 @@ float4x4 TESR_ShadowCameraToLightTransformNear;
 float4x4 TESR_ShadowCameraToLightTransformMiddle;
 float4x4 TESR_ShadowCameraToLightTransformFar;
 float4x4 TESR_ShadowCameraToLightTransformLod;
-float4 TESR_ShadowFormatData; // x: mode, y: format bits
 
 // A cascade's map is a slab along the sun; outside it there is nothing to go on.
 bool OutsideShadowMap(float3 projected)
@@ -104,38 +103,27 @@ bool OutsideShadowMap(float3 projected)
 	return max(max(abs(projected.x), abs(projected.y)), abs(projected.z * 2.0f - 1.0f)) > 1.0f;
 }
 
-float BleedReduction(float amount)
-{
-	return TESR_ShadowFormatData.y == 0.0f ? lerp(amount, 0.9f, 0.45f) : amount;
-}
-
 // One cascade's verdict, or -1 when the point is not in its map.
-float TryCascade(float4x4 lightTransform, float4 coord, float offsetX, float offsetY, float bias, float bleedReduction)
+float TryCascade(float4x4 lightTransform, float4 coord, float offsetX, float offsetY)
 {
 	float4 projected = mul(coord, lightTransform);
 	projected.xyz /= projected.w;
 	if (OutsideShadowMap(projected.xyz)) return -1.0f;
 	float4 lightSpace = float4(projected.x * 0.5f + 0.5f, projected.y * -0.5f + 0.5f, projected.z, 1.0f);
 	lightSpace.xy = lightSpace.xy * 0.5f + float2(offsetX, offsetY);
-	float4 moments = tex2Dlod(TESR_ShadowAtlas, float4(lightSpace.xy, 0.0f, 0.0f));
-	[branch] if (TESR_ShadowFormatData.x == 0.0f)
-		return GetLightAmountValueVSM(moments.xy, lightSpace.z, bias, bleedReduction);
-	else if (TESR_ShadowFormatData.x == 1.0f)
-		return GetLightAmountValueEVSM2(moments.xy, lightSpace.z, bias, bleedReduction, TESR_ShadowFormatData.y);
-	else
-		return GetLightAmountValueEVSM4(moments, lightSpace.z, bias, bleedReduction, TESR_ShadowFormatData.y);
+	// One depth compare: the filtered PCF (ShadowPCF2x2) ran this effect out of temp registers.
+	return lightSpace.z - 0.0002f <= tex2Dlod(TESR_ShadowAtlas, float4(lightSpace.xy, 0.0f, 0.0f)).x ? 1.0f : 0.0f;
 }
 
 // How much a point near the camera (camera-relative) sees the sun: 1 lit, 0 in shadow, 1 out of the shadow maps' reach.
 float SunVisibility(float3 relative)
 {
 	if (!TESR_ShadowFade.y) return 1.0f;
-	float bias = TESR_ShadowFormatData.x == 0.0f ? 0.00001f : 0.01f;
 	float4 coord = float4(relative, 1.0f);
-	float shadow = TryCascade(TESR_ShadowCameraToLightTransformNear, coord, 0.0f, 0.0f, bias, BleedReduction(0.1f));
-	if (shadow < 0.0f) shadow = TryCascade(TESR_ShadowCameraToLightTransformMiddle, coord, 0.5f, 0.0f, bias, BleedReduction(0.2f));
-	if (shadow < 0.0f) shadow = TryCascade(TESR_ShadowCameraToLightTransformFar, coord, 0.0f, 0.5f, bias, BleedReduction(0.6f));
-	if (shadow < 0.0f) shadow = TryCascade(TESR_ShadowCameraToLightTransformLod, coord, 0.5f, 0.5f, bias, BleedReduction(0.8f));
+	float shadow = TryCascade(TESR_ShadowCameraToLightTransformNear, coord, 0.0f, 0.0f);
+	if (shadow < 0.0f) shadow = TryCascade(TESR_ShadowCameraToLightTransformMiddle, coord, 0.5f, 0.0f);
+	if (shadow < 0.0f) shadow = TryCascade(TESR_ShadowCameraToLightTransformFar, coord, 0.0f, 0.5f);
+	if (shadow < 0.0f) shadow = TryCascade(TESR_ShadowCameraToLightTransformLod, coord, 0.5f, 0.5f);
 	return shadow < 0.0f ? 1.0f : saturate(shadow);
 }
 

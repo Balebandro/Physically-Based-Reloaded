@@ -6,14 +6,14 @@ public:
 	GrassShaders() : ShaderCollection("Grass") {};
 
 	struct GrassStruct {
-		D3DXVECTOR4		Scale;
-		D3DXVECTOR4		Brightness;		// x: multiplies the lit grass colour (before fog)
+		D3DXVECTOR4		Brightness;		// x: multiplies the lit grass colour (before fog), y: the night brightness on the sun and ambient (not lamps)
 		D3DXVECTOR4		Bend;			// xyz: the bend origin (camera-relative world, as GetShadowWorldPos rebuilds positions), w: 1 / reach
 		D3DXVECTOR4		BendParams;		// x: push per unit of blade height (strength / 90 * 0.5), w: 1 for the debug tint
 		D3DXVECTOR4		LOD;			// x: pixels per unit at a depth of 1, y: MinPixels, z: FadePixels, w: 1 when on
 		D3DXVECTOR4		LightData;		// x: lamps in LightPosition (0: none, the shader skips them), y: Strength
 	};
 	GrassStruct	Constants;
+	float		NightBrightness = 1.0f;	// [Shaders.Grass.Main] NightBrightness, eased in by the day/night transition (exteriors)
 
 	// Lamps on the grass ([Shaders.Grass.Lights]): placed lights and the Pip-Boy light, never the sun. The nearest of the
 	// lights NVR tracks each frame (ShaderManager::GetNearbyLights), into pixel c160-c176 of GRASS23x000TMS.pso.
@@ -56,6 +56,24 @@ public:
 	};
 	LODSettings	LOD = {};
 
+	// Normal maps on the grass ([Shaders.Grass.NormalMaps]): a grass texture "foo.dds" with a "foo_n.dds" beside it (loose
+	// or in a BSA) bends the sun's light per pixel around the grass's own lighting normal. Bound per shape on s1, with
+	// GrassMaterial (pixel c147: x 1 when bound, y strength); grass without one is lit exactly as before.
+	struct NormalMapSettings {
+		bool	Enabled;
+		float	Strength;
+	};
+	NormalMapSettings	NormalMaps = {};
+
+	// The sun's highlight on the grass ([Shaders.Grass.NormalMaps] EnableSpecular, SpecularStrength, Glossiness), masked by the normal map's alpha where there is one:
+	// GrassMaterial z strength (0 off), w glossiness.
+	struct SpecularSettings {
+		bool	Enabled;
+		float	Strength;
+		float	Glossiness;
+	};
+	SpecularSettings	Specular = {};
+
 	NiPoint3	BendCentre = { 0.0f, 0.0f, 0.0f };	// world, lagging the player
 	NiPoint3	LastPlayerPos = { 0.0f, 0.0f, 0.0f };
 	float		Speed = 0.0f;						// this frame's, units/s
@@ -67,8 +85,9 @@ public:
 	void	UpdateConstants();
 	void	RegisterConstants();
 	void	UpdateSettings();
-	// Per grass shape: the mesh's radius and detail factor into c250 of the grass vertex shaders.
-	void	SetBatchConstants(NiGeometry* Geometry);
+	// Per grass shape: the mesh's radius and detail factor, and whether it stands still (rocks), into c250 of the grass
+	// vertex shaders.
+	void	SetBatchConstants(NiGeometry* Geometry, bool Static);
 	// Every grass shape the game draws (the hooked per-geometry setup).
 	static void	InstallHooks();
 	void	OnGrassShape(NiGeometry* Geometry);

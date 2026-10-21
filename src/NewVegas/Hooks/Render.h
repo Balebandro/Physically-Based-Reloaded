@@ -13,6 +13,11 @@ void __fastcall RenderWorldSceneGraphHook(Main* This, UInt32 edx, Sun* SkySun, U
 extern void(__thiscall* RenderBlended)(void*, UInt32);
 void __fastcall RenderBlendedHook(void* This, UInt32 edx, UInt32 Arg);
 
+extern void(__cdecl* RenderPassStandard)(void*, UInt32, UInt32, UInt32);
+void __cdecl RenderPassStandardHook(void* Pass, UInt32 Arg2, UInt32 Arg3, UInt32 Arg4);
+extern void(__cdecl* RenderPassSkinned)(void*, UInt32, UInt32, UInt32);
+void __cdecl RenderPassSkinnedHook(void* Pass, UInt32 Arg2, UInt32 Arg3, UInt32 Arg4);
+
 extern void(__thiscall* RenderFirstPerson)(Main*, NiDX9Renderer*, NiGeometry*, Sun*, BSRenderedTexture*);
 void __fastcall RenderFirstPersonHook(Main* This, UInt32 edx, NiDX9Renderer* Renderer, NiGeometry* Geo, Sun* SkySun, BSRenderedTexture* RenderedTexture);
 

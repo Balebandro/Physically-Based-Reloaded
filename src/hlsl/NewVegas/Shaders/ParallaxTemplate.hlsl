@@ -495,7 +495,7 @@ float3 getMergedPointLights(float3 worldNormal, float3 worldTangent, float hande
                 if (TESR_ParallaxData.y)
                     total += getPointLightLightingAtt(L, att, TESR_MergedLightColor[i].rgb, V, n, albedo, roughness);
                 else
-                    total += getVanillaLightingAtt(L, att, TESR_MergedLightColor[i].rgb, V, n, albedo, normalTS.a, glossPower);
+                    total += getVanillaLampLightingAtt(L, att, TESR_MergedLightColor[i].rgb, V, n, albedo, normalTS.a, glossPower);
             }
         }
     }
@@ -681,7 +681,7 @@ PS_OUTPUT main(PS_INPUT IN)
                 lighting = getPointLightLighting(IN.lightDir.xyz, IN.lightDir.w, PSLightColor[0].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
             else {
                 finalAtt = saturate(1 - tex2D(AttenuationMap, IN.lightAtt.xy).x - tex2D(AttenuationMap, IN.lightAtt.zw).x);
-                lighting = getVanillaLightingAtt(IN.lightDir.xyz, finalAtt, PSLightColor[0].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, normal.a, glossPower);
+                lighting = getVanillaLampLightingAtt(IN.lightDir.xyz, finalAtt, PSLightColor[0].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, normal.a, glossPower);
             }
         #else
             if (TESR_ParallaxData.y)
@@ -732,7 +732,7 @@ PS_OUTPUT main(PS_INPUT IN)
             if (TESR_ParallaxData.y)
                 lighting += getPointLightLightingAtt(IN.light2Dir.xyz, finalAtt, PSLightColor[1].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
             else
-                lighting += getVanillaLightingAtt(IN.light2Dir.xyz, finalAtt, PSLightColor[1].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, normal.a, glossPower);
+                lighting += getVanillaLampLightingAtt(IN.light2Dir.xyz, finalAtt, PSLightColor[1].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, normal.a, glossPower);
         #endif
 
         #if LIGHTS > 2
@@ -741,7 +741,7 @@ PS_OUTPUT main(PS_INPUT IN)
             if (TESR_ParallaxData.y)
                 lighting += getPointLightLightingAtt(IN.light3Dir.xyz, finalAtt, PSLightColor[2].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, roughness);
             else
-                lighting += getVanillaLightingAtt(IN.light3Dir.xyz, finalAtt, PSLightColor[2].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, normal.a, glossPower);
+                lighting += getVanillaLampLightingAtt(IN.light3Dir.xyz, finalAtt, PSLightColor[2].rgb, IN.viewDir.xyz, normal.xyz, baseColor.rgb, normal.a, glossPower);
         #endif
 
         #if NUM_PT_LIGHTS > 1

@@ -17,6 +17,9 @@ public:
 	// ClearSampler is inherited from ShaderProgram -- game shaders need the same thing.
 	void					DisposeEffect();
 	bool					LoadEffect();
+	// Shared with ShaderPrecompile, which must look at exactly the files and defines LoadEffect does.
+	static bool				EffectPaths(const char* Name, char* SourcePath, char* PreprocessedPath, char* CompiledPath);
+	static void				EffectMacros(D3DXMACRO (&Macros)[3]);
 
 	bool 					IsLoaded();
 	bool					Enabled;

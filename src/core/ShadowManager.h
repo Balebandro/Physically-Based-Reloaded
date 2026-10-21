@@ -67,6 +67,9 @@ public:
 	int						CasterCoveringCount = 0;
 	UInt32					CastersCulled = 0;
 	UInt32					CastersCovered = 0;
+	bool					ForceAllCascades = false;	// draw every sun cascade this frame (the sun cross-fade's new atlas)
+	// [Shaders.ContactHardening] TESR_ContactHardeningData: x sun size (0: off), y max softness in texels, z Smooth.
+	D3DXVECTOR4				ContactHardeningData = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
 
 private:
 	bool					CheckShaderFlags(NiGeometry* Geometry);

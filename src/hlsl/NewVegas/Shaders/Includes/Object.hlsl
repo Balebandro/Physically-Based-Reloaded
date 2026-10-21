@@ -193,6 +193,10 @@ float3 rebuildUpTS(float2 xy, float3 geometricNormal) {
     return float3(xy, geometricNormal.z >= 0.0f ? z : -z);
 }
 
+// Set while a lamp is lit (getPointLightLightingAtt, getVanillaLampLightingAtt): the lamp look's falloff, softer N.L
+// and bounce (TESR_LampLook in Pointlights.hlsl). Never for the sun.
+static bool lampLighting = false;
+
 // --- Vanilla shading, in gamma space -----------------------------------------------------------
 // The parallax shader's vanilla fallback (PBR off) and the merged lamps under it.
 float3 getVanillaLightingAtt(float3 lightDir, float att, float3 lightColor, float3 viewDir, float3 normal, float3 albedo, float gloss, float glossPower) {
@@ -201,6 +205,12 @@ float3 getVanillaLightingAtt(float3 lightDir, float att, float3 lightColor, floa
     float3 halfwayDir = normalize(lightDir + viewDir);
 
     float NdotL = shades(normal.xyz, lightDir.xyz);
+    #if !defined(ONLY_SPECULAR)
+        if (lampLighting) {
+            att = lampFalloff(att);
+            NdotL = lampNdotL(dot(normal.xyz, lightDir.xyz)) + lampBounce(dot(normal.xyz, lightDir.xyz));
+        }
+    #endif
 
     #if defined(ONLY_SPECULAR)
         float specStrength = gloss * pow(abs(shades(normal.xyz, halfwayDir.xyz)), glossPower);
@@ -216,8 +226,16 @@ float3 getVanillaLightingAtt(float3 lightDir, float att, float3 lightColor, floa
     return lighting;
 }
 
+// A lamp in vanilla shading: with the lamp look.
+float3 getVanillaLampLightingAtt(float3 lightDir, float att, float3 lightColor, float3 viewDir, float3 normal, float3 albedo, float gloss, float glossPower) {
+    lampLighting = true;
+    float3 lighting = getVanillaLightingAtt(lightDir, att, lightColor, viewDir, normal, albedo, gloss, glossPower);
+    lampLighting = false;
+    return lighting;
+}
+
 float3 getVanillaLighting(float3 lightDir, float radius, float3 lightColor, float3 viewDir, float3 normal, float3 albedo, float gloss, float glossPower) {
-    return getVanillaLightingAtt(lightDir, vanillaAtt(lightDir, radius), lightColor, viewDir, normal, albedo, gloss, glossPower);
+    return getVanillaLampLightingAtt(lightDir, vanillaAtt(lightDir, radius), lightColor, viewDir, normal, albedo, gloss, glossPower);
 }
 
 // --- Direct light -------------------------------------------------------------------------------
@@ -265,13 +283,17 @@ float3 directLight(float3 L, float3 light, float3 V, float3 N, float3 albedo) {
         #endif
     }
 
+    // Vanilla materials under a lamp: a softer N.L, and the lamp's light back off its surroundings, a fill on the albedo,
+    // more on the sides turned away (TESR_LampLook). Authored PBR materials keep their own response: held through it,
+    // the extra values overflow the light-only shaders' temporaries.
     float NdotL = saturate(dot(N, L));
+    float diffuseNdotL = lampLighting ? lampNdotL(dot(N, L)) + lampBounce(dot(N, L)) : NdotL;
     #if defined(ONLY_SPECULAR)
         return vanillaHighlight(N, L, V, NdotL, light);
     #elif defined(SPECULAR)
-        return albedo * NdotL * light + vanillaHighlight(N, L, V, NdotL, light) * saturate(ObjectMaterial.y);
+        return albedo * diffuseNdotL * light + vanillaHighlight(N, L, V, NdotL, light) * saturate(ObjectMaterial.y);
     #else
-        float3 diffuse = albedo * NdotL * light;
+        float3 diffuse = albedo * diffuseNdotL * light;
         [branch] if (mergedSpecular)
             diffuse += vanillaHighlight(N, L, V, NdotL, light) * saturate(ObjectMaterial.y) * adCompensation;
         return diffuse;
@@ -284,8 +306,12 @@ float3 directLight(float3 L, float3 light, float3 V, float3 N, float3 albedo) {
 // so lights keep the falloff the game was tuned with. visibility (the forward sun shadow) is a
 // real visibility and is applied to the decoded light. roughness is unused (the material state
 // holds it); the parameter stays for the templates.
+// Lamps take the lamp look's falloff, softer N.L and bounce (TESR_LampLook in Pointlights.hlsl).
 float3 getPointLightLightingAtt(float3 lightDir, float att, float3 lightColor, float3 viewDir, float3 normal, float3 albedo, float roughness) {
-    return directLight(lightDir, decodeColor(lightColor * att) * LIGHT_SCALE, viewDir, normal, albedo);
+    lampLighting = true;
+    float3 lighting = directLight(lightDir, decodeColor(lightColor * lampFalloff(att)) * LIGHT_SCALE, viewDir, normal, albedo);
+    lampLighting = false;
+    return lighting;
 }
 
 float3 getPointLightLighting(float3 lightDir, float radius, float3 lightColor, float3 viewDir, float3 normal, float3 albedo, float roughness) {

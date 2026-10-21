@@ -28,7 +28,7 @@ float4 TESR_WindBoost : register(c16);
 // one more spilled to c256, which does not exist (the shader then failed to create and the game crashed at startup).
 float4 TESR_GrassBend       : register(c17);
 float4 TESR_GrassBendParams : register(c18);
-// Grass LOD: GrassBatch per draw from NVR's SetShaders hook (x the mesh's radius, y its detail factor); TESR_GrassLOD
+// Grass LOD: GrassBatch per draw from NVR's SetShaders hook (x the mesh's radius, y its detail factor, z 1 for a static shape); TESR_GrassLOD
 // x pixels per unit at a depth of 1, y MinPixels, z FadePixels, w 1 when on. c250-c251: past TSTG's c248-c249.
 float4 GrassBatch    : register(c250);
 float4 TESR_GrassLOD : register(c251);
@@ -50,6 +50,8 @@ struct VS_OUTPUT {
     float4 position       : POSITION;
     float2 uv             : TEXCOORD0;
     float4 shadowWorldPos : TEXCOORD1;   // vanilla leaves TEXCOORD1 unused on this pair
+    float4 lightNormal    : TEXCOORD2;   // xyz the normal the sun is lit by (vanilla's), w its N.L: the grass PS bends it by a normal map
+    float3 sunDir         : TEXCOORD3;   // DiffuseDir, for the PS
     float4 ambient        : TEXCOORD4;
     float4 sun            : TEXCOORD5;   // .w = distance fade
     float4 fog            : COLOR0;      // .w = fog amount
@@ -124,10 +126,10 @@ VS_OUTPUT main(VS_INPUT IN) {
     float gust = 0.75f + 0.25f * sin(TESR_WindBoost.z * 2.1f - dot(inst.xy, WindData.xy) * 0.0078125f);
     float flutter = sin(TESR_WindBoost.z * 11.0f + (inst.x - inst.y) * 0.0078125f);
     float swing = sin(phase) * lerp(1.0f, TESR_WindBoost.x, storm) + storm * TESR_WindBoost.x * (0.75f * gust + 0.25f * flutter);
-    float sway = swing * WindData.z * (IN.color.w * IN.color.w);
+    float sway = swing * WindData.z * (IN.color.w * IN.color.w) * (1.0f - GrassBatch.z);   // GrassBatch.z 1: a static shape (rocks), no sway
     pos.xy += sway * WindData.xy;
     float bendReach;
-    pos += GrassBend(GetShadowWorldPos(instClip), pos, bendReach);
+    pos += GrassBend(GetShadowWorldPos(instClip), pos, bendReach) * (1.0f - GrassBatch.z);   // nor bending
 
     float4 worldPos = float4(pos + inst.xyz, 1.0f);
     OUT.position = mul(ModelViewProj, worldPos);
@@ -136,7 +138,9 @@ VS_OUTPUT main(VS_INPUT IN) {
     OUT.ambient = lightScale * AmbientColor;
     // Debug (Shaders.Grass.Interaction): grass the bend reaches, in red.
     OUT.ambient.rgb = lerp(OUT.ambient.rgb, float3(1.0f, 0.0f, 0.0f), bendReach * TESR_GrassBendParams.w);
-    OUT.sun.xyz = ((lightScale * IN.color.rgb) * NdotL) * DiffuseColor * AddlParams.x;
+    OUT.sun.xyz = (lightScale * IN.color.rgb) * DiffuseColor * AddlParams.x;
+    OUT.lightNormal = float4(orient, NdotL);   // N.L is applied in the PS (GRASS23x000TMS), per pixel with a normal map
+    OUT.sunDir = DiffuseDir;
 
     // Fog from clip-space xyz distance.
     float fogDist = length(float3(OUT.position.xy, OUT.position.w - OUT.position.z));

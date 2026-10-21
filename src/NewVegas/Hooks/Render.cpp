@@ -1,8 +1,16 @@
 ﻿#pragma once
 #include <cfloat>
 
+#include "../../core/LampScissor.h"
+
 // See ReflectionPassScope: the next shader bind re-uploads NVR's constants.
 static bool ForcePixelConstants = false;
+
+// Inside RenderWorldSceneGraphHook's call of the game's world render.
+static bool InWorldScene = false;
+
+// Inside RenderFirstPersonHook's call of the game's first person render.
+static bool InFirstPersonScene = false;
 
 void (__thiscall* Render)(Main*, BSRenderedTexture*, int, int) = (void (__thiscall*)(Main*, BSRenderedTexture*, int, int))Hooks::Render;
 void __fastcall RenderHook(Main* This, UInt32 edx, BSRenderedTexture* RenderedTexture, int Arg2, int Arg3) {
@@ -58,6 +66,24 @@ void __fastcall SetShadersHook(BSShader* This, UInt32 edx, UInt32 PassIndex) {
 		Logger::Log("Error getting pixel shader for pass %s", Pointers::Functions::GetPassDescription(PassIndex));
 	}
 
+	// Lit particles ([Shaders.Particles], ported from NVR UNOFFICIAL Optimized P81): the NOLIGHT/GDECAL replacements pass
+	// data VS to PS, so they run only as a pair (a lone replacement goes back to the game's), and never in the first person
+	// render (its own camera: the world position they rebuild would be wrong). NOLIGHT meshes that are not particles (fog
+	// bank cards and other unlit effect meshes) stay the game's too: lit by the night ambient they turned into dark sheets.
+	if (VertexShader && PixelShader && TheShaderManager->Shaders.Particles && TheShaderManager->Shaders.Particles->Enabled) {
+		const bool nvrVertex = VertexShader->ShaderHandleBackup && VertexShader->ShaderHandle != VertexShader->ShaderHandleBackup;
+		const bool nvrPixel = PixelShader->ShaderHandleBackup && PixelShader->ShaderHandle != PixelShader->ShaderHandleBackup;
+		auto particleFamily = [](const char* name) { return name && (!strncmp(name, "NOLIGHT", 7) || !strncmp(name, "GDECAL", 6)); };
+		auto noLight = [](const char* name) { return name && !strncmp(name, "NOLIGHT", 7); };
+		if (particleFamily(VertexShader->Name) || particleFamily(PixelShader->Name)) {
+			const bool notParticles = (noLight(VertexShader->Name) || noLight(PixelShader->Name)) && (!Geometry || !Geometry->IsParticlesGeom());
+			if (InFirstPersonScene || notParticles || !nvrVertex || !nvrPixel) {
+				if (nvrVertex) VertexShader->ShaderHandle = (IDirect3DVertexShader9*)VertexShader->ShaderHandleBackup;
+				if (nvrPixel) PixelShader->ShaderHandle = (IDirect3DPixelShader9*)PixelShader->ShaderHandleBackup;
+			}
+		}
+	}
+
 	// trace pipeline active shaders
 	if (TheSettingManager->SettingsMain.Develop.DebugMode && !InterfaceManager->IsActive(Menu::MenuType::kMenuType_Console) && Global->OnKeyDown(TheSettingManager->SettingsMain.Develop.TraceShaders)) {
 		char Name[256];
@@ -82,6 +108,24 @@ void __fastcall SetShadersHook(BSShader* This, UInt32 edx, UInt32 PassIndex) {
 	// hooks (Hooks/Shaders.cpp) write it again for every draw.
 	WriteObjectMaterial(Geometry);
 
+	LampScissor::OnBind(PixelShader, InWorldScene);   // [Main.Main.Performance] LampScissor
+}
+
+// The engine's render pass draws (BSShader's standard and skinned RenderPass), in the world scene: the lamp-only passes
+// drawn only where their lamps reach ([Main.Main.Performance] LampScissor, core/LampScissor.h).
+void(__cdecl* RenderPassStandard)(void*, UInt32, UInt32, UInt32) = (void(__cdecl*)(void*, UInt32, UInt32, UInt32))Hooks::RenderPassStandard;
+void(__cdecl* RenderPassSkinned)(void*, UInt32, UInt32, UInt32) = (void(__cdecl*)(void*, UInt32, UInt32, UInt32))Hooks::RenderPassSkinned;
+
+void __cdecl RenderPassStandardHook(void* Pass, UInt32 Arg2, UInt32 Arg3, UInt32 Arg4) {
+	if (LampScissor::Before((const LampScissor::RenderPassView*)Pass, InWorldScene) == LampScissor::Skip) return;
+	RenderPassStandard(Pass, Arg2, Arg3, Arg4);
+	LampScissor::After();
+}
+
+void __cdecl RenderPassSkinnedHook(void* Pass, UInt32 Arg2, UInt32 Arg3, UInt32 Arg4) {
+	if (LampScissor::Before((const LampScissor::RenderPassView*)Pass, InWorldScene) == LampScissor::Skip) return;
+	RenderPassSkinned(Pass, Arg2, Arg3, Arg4);
+	LampScissor::After();
 }
 
 HRESULT (__thiscall* SetSamplerState)(NiDX9RenderState*, UInt32, D3DSAMPLERSTATETYPE, UInt32, UInt8) = (HRESULT (__thiscall*)(NiDX9RenderState*, UInt32, D3DSAMPLERSTATETYPE, UInt32, UInt8))Hooks::SetSamplerState;
@@ -97,9 +141,6 @@ HRESULT __fastcall SetSamplerStateHook(NiDX9RenderState* This, UInt32 edx, UInt3
 	return r;
 
 }
-
-// Inside RenderWorldSceneGraphHook's call of the game's world render.
-static bool InWorldScene = false;
 
 // Glass in a sandstorm. The sandstorm measures each pixel's dust to the depth there; glass wrote its own, so the world
 // seen through a window (blended in before the storm is drawn) kept only the dust between the camera and the glass,
@@ -195,9 +236,11 @@ void __fastcall RenderWorldSceneGraphHook(Main* This, UInt32 edx, Sun* SkySun, U
 	TheTextureManager->TerrainBlendLogScene = TheShaderManager->GameState.isExterior && (++sceneCount % 2000) == 300;
 	TheTextureManager->TerrainBlendLog.clear();
 
+	LampScissor::BeginFrame();
 	InWorldScene = true;
 	(*RenderWorldSceneGraph)(This, SkySun, IsFirstPerson, WireFrame, Arg4);
 	InWorldScene = false;
+	LampScissor::After();   // never left set past the world scene
 
 	if (TheTextureManager->TerrainBlendLogScene)
 		Logger::Log("[TerrainBlend] world scene shader order: %s", TheTextureManager->TerrainBlendLog.c_str());
@@ -241,7 +284,9 @@ void __fastcall RenderFirstPersonHook(Main* This, UInt32 edx, NiDX9Renderer* Ren
 	// Clear the depth buffer before rendering first person model to prevent clipping with world objects & other artefacts
 	TheRenderManager->Clear(NULL, NiRenderer::kClear_ZBUFFER);
 	//ThisCall(0x00874C10, Global);
+	InFirstPersonScene = true;
 	(*RenderFirstPerson)(This, Renderer, Geo, SkySun, RenderedTexture);
+	InFirstPersonScene = false;
 	if (TheShaderManager->Effects.SkinScattering) TheShaderManager->Effects.SkinScattering->Unbind();
 	TheRenderManager->ResolveDepthBuffer(TheTextureManager->DepthTextureViewModel);
 }

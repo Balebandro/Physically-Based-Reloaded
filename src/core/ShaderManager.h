@@ -4,6 +4,7 @@
 #include "../Effects/Animator.h"
 #include "ShaderRecord.h"
 #include "EffectRecord.h"
+#include "ShaderPrecompile.h"
 #include "ShaderCollection.h"
 #include "../Effects/Effects.h"
 
@@ -116,6 +117,7 @@ public:
 		
 	struct	EffectsStruct {
 		AmbientOcclusionEffect*	AmbientOcclusion;
+		BounceLightEffect*		BounceLight;
 		SkinScatteringEffect*	SkinScattering;
 		DynamicCubemapsEffect*	DynamicCubemaps;
 		AvgLumaEffect*			AvgLuma;
@@ -166,6 +168,7 @@ public:
 		SkyShaders*				Sky;
 		SkinShaders*			Skin;
 		GrassShaders*			Grass;
+		ParticleShaders*		Particles;
 		TerrainShaders*			Terrain;
 		WetnessEffectsShaders*	Wetness;
 	};
@@ -190,6 +193,7 @@ public:
 
 	EffectsStruct			Effects;
 	ShadersStruct			Shaders;
+	static ShaderCollection*	ResolveCollection(const char* Name, const ShadersStruct& S);
 	EffectsList				EffectsNames;
 	ShaderList				ShaderNames;
 	GameStateStruct			GameState;

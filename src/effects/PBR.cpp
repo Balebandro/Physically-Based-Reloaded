@@ -7,6 +7,8 @@ void PBRShaders::RegisterConstants() {
 	TheShaderManager->RegisterConstant("TESR_PBRExtraData", &Constants.ExtraData);
 	TheShaderManager->RegisterConstant("TESR_PBRSpecularData", &Constants.SpecularData);
 	TheShaderManager->RegisterConstant("TESR_PBRDebugData", &Constants.DebugData);
+	Constants.LampLook = D3DXVECTOR4(0.0f, 1.0f, 0.0f, 0.0f);   // vanilla lamps until UpdateSettings
+	TheShaderManager->RegisterConstant("TESR_LampLook", &Constants.LampLook);
 }
 
 static void ReadWeatherSettings(PBRShaders::PBRSettings* Settings, const char* Section) {
@@ -32,6 +34,17 @@ void PBRShaders::UpdateSettings() {
 	MaterialSettings.PBRLinearLighting = std::clamp(TheSettingManager->GetSettingF("Shaders.PBR.Main", "PBRLinearLighting"), 0.0f, 1.0f);
 	MaterialSettings.LightingModel = std::clamp(TheSettingManager->GetSettingI("Shaders.PBR.Main", "LightingModel"), 0, 1);
 	MaterialSettings.DebugView = TheSettingManager->GetSettingI("Shaders.PBR.Main", "DebugView");
+
+	// The look of path-traced lamps (Shaders/Includes/Pointlights.hlsl): att' = N (1 - u) / (1 + F u), u the squared
+	// distance over the squared radius. N keeps what a lit surface receives in all as vanilla's 1 - u: over a plane at the
+	// lamp (u = s^2, s ds = du / 2), vanilla's integral is 1/4 and the shape's N J(F) / 2, J(F) = the integral over 0-1 of
+	// (1 - u) / (1 + F u) du = (1 + F) ln(1 + F) / F^2 - 1 / F.
+	const char* lamps = "Shaders.PBR.Lamps";
+	const float hotCore = std::clamp(TheSettingManager->GetSettingF(lamps, "HotCore"), 0.0f, 32.0f);
+	const float J = hotCore > 0.001f ? (1.0f + hotCore) * logf(1.0f + hotCore) / (hotCore * hotCore) - 1.0f / hotCore : 0.5f;
+	Constants.LampLook = D3DXVECTOR4(hotCore, 0.5f / J,
+		std::clamp(TheSettingManager->GetSettingF(lamps, "Bounce"), 0.0f, 1.0f),
+		std::clamp(TheSettingManager->GetSettingF(lamps, "Softness"), 0.0f, 1.0f));
 }
 
 // The value of one per-weather setting for the current weather, time and rain.

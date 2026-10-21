@@ -11,6 +11,7 @@ public:
 		bool			Enabled;
 		D3DXVECTOR4		AOData;
 		D3DXVECTOR4		Data;
+		D3DXVECTOR4		Lamp;		// x: LampLight, how much of the AO lamp light is spared (the lamp light from TESR_PointShadowBuffer.g)
 	};
 	AmbientOcclusionStruct	Constants;
 

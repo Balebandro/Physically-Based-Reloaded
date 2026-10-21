@@ -6,6 +6,7 @@
 
 float4 TESR_AmbientOcclusionAOData;
 float4 TESR_AmbientOcclusionData;
+float4 TESR_AmbientOcclusionLamp;   // x: LampLight, how much of the AO lamp light is spared
 float4 TESR_ReciprocalResolution;
 float4 TESR_FogData; // x: fog start, y: fog end, z: sun glare, w: fog power
 float4 TESR_FogColor;
@@ -15,6 +16,9 @@ sampler2D TESR_DepthBuffer : register(s1) = sampler_state { ADDRESSU = CLAMP; AD
 sampler2D TESR_SourceBuffer : register(s2) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_BlueNoiseSampler : register(s3) < string ResourceName = "Effects\bluenoise256.dds"; > = sampler_state { ADDRESSU = WRAP; ADDRESSV = WRAP; MAGFILTER = NONE; MINFILTER = NONE; MIPFILTER = NONE; };
 sampler2D TESR_NormalsBuffer : register(s4) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = NONE; MINFILTER = NONE; MIPFILTER = NONE; };
+// The lamps' light on each pixel (g, 0-1; Effects/PointShadows.fx, drawn before this): AO is occlusion of the light from
+// all around, so where a lamp lights the surface directly it is spared (LampLight), as path tracing would.
+sampler2D TESR_PointShadowBuffer : register(s5) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
 
 static const float AOsamples = TESR_AmbientOcclusionAOData.x;
 static const float AOstrength = TESR_AmbientOcclusionAOData.y;
@@ -153,6 +157,7 @@ float4 Combine(VSOUT IN) : COLOR0
 	float lt = luminance - AOlumThreshold;
 	luminance = saturate(lt * 3.0);
 	ao = lerp(ao, 1.0, luminance);
+	ao = lerp(ao, 1.0, saturate(tex2D(TESR_PointShadowBuffer, IN.UVCoord).g * 2.0f) * TESR_AmbientOcclusionLamp.x);   // lamp-lit: spared
 	color *= ao;
 
     #if viewao

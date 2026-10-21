@@ -63,12 +63,20 @@ float3 blendNormalMaps(float2 uv, int texCount, sampler2D tex[7], float blends[7
     return normalize(expand(blendedNormal));
 }
 
+// Set while a lamp is lit (getPointLightLighting): the lamp look's falloff, softer N.L and bounce (TESR_LampLook in
+// Pointlights.hlsl). Never for the sun.
+static bool lampLighting = false;
+
 float3 getVanillaLightingAtt(float3 lightDir, float att, float3 lightColor, float3 viewDir, float3 normal, float3 albedo, float gloss, float glossPower) {
     lightDir = normalize(lightDir);
     viewDir = normalize(viewDir);
     float3 halfwayDir = normalize(lightDir + viewDir);
 
     float NdotL = shades(normal.xyz, lightDir.xyz);
+    if (lampLighting) {
+        att = lampFalloff(att);
+        NdotL = lampNdotL(dot(normal.xyz, lightDir.xyz)) + lampBounce(dot(normal.xyz, lightDir.xyz));
+    }
 
     float specStrength = gloss * pow(abs(shades(normal.xyz, halfwayDir.xyz)), glossPower);
     float3 lighting = albedo.rgb * NdotL * lightColor.rgb * att;
@@ -137,17 +145,22 @@ float getTerrainSpecularScale(float gloss, float roughness) {
 float3 getPointLightLighting(float3 lightDir, float att, float3 lightColor, float3 eyeDir, float3 normal, float3 albedo, float gloss = 0.0, float glossPower = 0.0, float metallicness = 1.0) {
     [branch]
     if (TESR_TerrainExtraData.x){
-        // PBR. Attenuation inside the decode keeps the vanilla falloff, as for objects.
-        float3 pointlightColor = decodeColor(lightColor * att) * TESR_TerrainData.z;
+        // PBR. Attenuation inside the decode, as for objects, shaped by the lamp look's falloff (TESR_LampLook); its softer
+        // N.L and bounce added to the diffuse as the difference they make to a Lambert term.
+        float3 pointlightColor = decodeColor(lightColor * lampFalloff(att)) * TESR_TerrainData.z;
         float roughness = getTerrainRoughness(glossPower);
         float3 lighting = PBR(0, roughness, albedo, normal, eyeDir, lightDir, pointlightColor, getTerrainSpecularScale(gloss, roughness));
+        float NdotL = dot(normal, normalize(lightDir));
+        lighting += albedo * pointlightColor * (lampNdotL(NdotL) - saturate(NdotL) + lampBounce(NdotL));
 
         return max(0, lighting);
     } else {
-        // Vanilla.    
+        // Vanilla, with the lamp look.
         lightDir = normalize(lightDir);
 
+        lampLighting = true;
         float3 lighting = getVanillaLightingAtt(lightDir, att, lightColor, eyeDir, normal, albedo, gloss, glossPower);
+        lampLighting = false;
 
         return lighting;
     }

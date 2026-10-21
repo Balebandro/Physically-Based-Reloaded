@@ -149,6 +149,7 @@ public:
 		D3DXVECTOR4		ExtraData;      // x: _rmaos roughness scale, y: skylight strength, z: authored materials' linear lighting, w: linear lighting
 		D3DXVECTOR4		SpecularData;   // y: 1 outdoors (authored materials reflect the sky), 0 indoors (they reflect the ambient light)
 		D3DXVECTOR4		DebugData;      // x: material debug view (0 off)
+		D3DXVECTOR4		LampLook;       // [Shaders.PBR.Lamps], the look of path-traced lamps: x hot core, y its normalization, z bounce, w softness (Shaders/Includes/Pointlights.hlsl)
 	};
 	PBRStruct	Constants;
 

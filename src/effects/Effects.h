@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AmbientOcclusion.h"
+#include "BounceLight.h"
 #include "ShadowsExterior.h"
 #include "AvgLuma.h"
 #include "Bloom.h"
@@ -51,3 +52,4 @@
 #include "Terrain.h"
 #include "WetnessEffects.h"
 #include "Grass.h"
+#include "Particles.h"

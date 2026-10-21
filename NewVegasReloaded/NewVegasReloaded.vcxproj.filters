@@ -286,6 +286,9 @@
     <ClInclude Include="..\src\core\ShaderRecord.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\core\ShaderPrecompile.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\core\ShadowManager.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -532,6 +535,9 @@
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\src\core\ShaderRecord.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\core\ShaderPrecompile.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\src\core\ShadowManager.cpp">

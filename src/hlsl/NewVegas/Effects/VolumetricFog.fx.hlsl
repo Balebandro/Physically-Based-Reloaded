@@ -35,7 +35,6 @@ float4 TESR_ShadowNearCenter;   // xyz: center (world space), w: radius
 float4 TESR_ShadowMiddleCenter;
 float4 TESR_ShadowFarCenter;
 float4 TESR_ShadowLodCenter;
-float4 TESR_ShadowFormatData; // x: mode (0 VSM, 1 EVSM2, 2 EVSM4), y: format bits per pixel
 float4 TESR_ShadowBlur;       // x: 1 / atlas resolution
 float4 TESR_ShadowFade;       // y: shadow maps active
 
@@ -336,24 +335,13 @@ float4 ScreenCoordToTexCoord(float4 coord){
 	return coord;
 }
 
-float GetFogShadowValue(float4x4 lightTransform, float4 coord, float offsetX, float offsetY, float bias) {
+float GetFogShadowValue(float4x4 lightTransform, float4 coord, float offsetX, float offsetY) {
 	float4 LightSpaceCoord = ScreenCoordToTexCoord(mul(coord, lightTransform));
 	LightSpaceCoord.xy *= 0.5;
 	LightSpaceCoord.x += offsetX;
 	LightSpaceCoord.y += offsetY;
 
-	float4 moments = tex2Dlod(TESR_ShadowAtlas, float4(LightSpaceCoord.xy, 0.0f, 0.0f));
-
-	float Mode = TESR_ShadowFormatData.x;
-	float FormatBits = TESR_ShadowFormatData.y;
-
-	[branch]
-	if (Mode == 0.0f)
-		return GetLightAmountValueVSM(moments.xy, LightSpaceCoord.z, bias, 0.2f);
-	else if (Mode == 1.0f)
-		return GetLightAmountValueEVSM2(moments.xy, LightSpaceCoord.z, bias, 0.2f, FormatBits);
-	else
-		return GetLightAmountValueEVSM4(moments, LightSpaceCoord.z, bias, 0.2f, FormatBits);
+	return ShadowPCF2x2(TESR_ShadowAtlas, LightSpaceCoord.xy, LightSpaceCoord.z - 0.0002f, TESR_ShadowBlur.x);
 }
 
 float GetFogShadowVisibility(float4 positionWS, float3 normal) {
@@ -364,14 +352,13 @@ float GetFogShadowVisibility(float4 positionWS, float3 normal) {
 	float4 texelWorld = 4.0f * radii * max(TESR_ShadowBlur.x, 1.0f / 16384.0f);
 	float4 offsetDistance = offsetScale * 2.5f * texelWorld; // 2.5 = normal-offset bias in texels, matches SunShadows.fx.hlsl
 
-	float bias = (TESR_ShadowFormatData.x == 0.0f ? 0.00001f : 0.01f) * (1.0f + offsetScale);
 	const float blend = 0.9f;
 
 	float4 shadows = {
-		GetFogShadowValue(TESR_ShadowCameraToLightTransformNear,   float4(positionWS.xyz + offsetDistance.x * normal, 1.0f), 0.0, 0.0, bias),
-		GetFogShadowValue(TESR_ShadowCameraToLightTransformMiddle, float4(positionWS.xyz + offsetDistance.y * normal, 1.0f), 0.5, 0.0, bias),
-		GetFogShadowValue(TESR_ShadowCameraToLightTransformFar,    float4(positionWS.xyz + offsetDistance.z * normal, 1.0f), 0.0, 0.5, bias),
-		GetFogShadowValue(TESR_ShadowCameraToLightTransformLod,    float4(positionWS.xyz + offsetDistance.w * normal, 1.0f), 0.5, 0.5, bias),
+		GetFogShadowValue(TESR_ShadowCameraToLightTransformNear,   float4(positionWS.xyz + offsetDistance.x * normal, 1.0f), 0.0, 0.0),
+		GetFogShadowValue(TESR_ShadowCameraToLightTransformMiddle, float4(positionWS.xyz + offsetDistance.y * normal, 1.0f), 0.5, 0.0),
+		GetFogShadowValue(TESR_ShadowCameraToLightTransformFar,    float4(positionWS.xyz + offsetDistance.z * normal, 1.0f), 0.0, 0.5),
+		GetFogShadowValue(TESR_ShadowCameraToLightTransformLod,    float4(positionWS.xyz + offsetDistance.w * normal, 1.0f), 0.5, 0.5),
 	};
 
 	float4 distances = {

@@ -88,6 +88,8 @@ public:
 	virtual void			SetShaderConstantF(UInt32 RegisterIndex, D3DXVECTOR4* Value, UInt32 RegisterCount) = 0;
 
 	static ShaderRecord*	LoadShader(const char* Name, const char* SubPath, ShaderTemplate Template = ShaderTemplate{});
+	static bool				ShaderPaths(const char* Name, const char* SubPath, const ShaderTemplate& Template, char* SourcePath, char* PreprocessedPath, char* CompiledPath);
+	static void				AppendGlobalDefines(ShaderTemplate& Template);
 
 	const char* Name;
 	bool					HasRenderedBuffer;

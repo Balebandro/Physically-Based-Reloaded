@@ -42,9 +42,13 @@ void ShaderManager::Initialize() {
 		Logger::Log("Failed to create LUT directory: %s", ec.message());
 	}
 
+	// Brings the shader and effect cache up to date on all CPU threads; the loads below take their results.
+	ShaderPrecompile::Start();
+
 	// initializing the list of effect names
 	TheShaderManager->RegisterEffect<AvgLumaEffect>(&TheShaderManager->Effects.AvgLuma);
 	TheShaderManager->RegisterEffect<AmbientOcclusionEffect>(&TheShaderManager->Effects.AmbientOcclusion);
+	TheShaderManager->RegisterEffect<BounceLightEffect>(&TheShaderManager->Effects.BounceLight);
 	TheShaderManager->RegisterEffect<SkinScatteringEffect>(&TheShaderManager->Effects.SkinScattering);
 	TheShaderManager->RegisterEffect<DynamicCubemapsEffect>(&TheShaderManager->Effects.DynamicCubemaps);
 	TheShaderManager->RegisterEffect<BloomEffect>(&TheShaderManager->Effects.Bloom);
@@ -94,6 +98,7 @@ void ShaderManager::Initialize() {
 	TheShaderManager->RegisterShaderCollection<GrassShaders>(&TheShaderManager->Shaders.Grass);
 	TheShaderManager->RegisterShaderCollection<TerrainShaders>(&TheShaderManager->Shaders.Terrain);
 	TheShaderManager->RegisterShaderCollection<WetnessEffectsShaders>(&TheShaderManager->Shaders.Wetness);
+	TheShaderManager->RegisterShaderCollection<ParticleShaders>(&TheShaderManager->Shaders.Particles);
 	
 	//setup map of constant names
 	TheShaderManager->RegisterConstant("TESR_WorldTransform", (D3DXVECTOR4*)&TheRenderManager->worldMatrix);
@@ -529,28 +534,35 @@ float ShaderManager::GetTransitionValue(float Day, float Night, float Interior) 
 }
 
 
-ShaderCollection* ShaderManager::GetShaderCollection(const char* Name) {
+// The collection a game shader belongs to (NULL: not one NVR replaces). Static on a ShadersStruct, so that
+// ShaderPrecompile can resolve names before the collections are registered, exactly as the loading does.
+ShaderCollection* ShaderManager::ResolveCollection(const char* Name, const ShadersStruct& S) {
 
-	if (!memcmp(Name, "WATER", 5)) return Shaders.Water;
-	if (!memcmp(Name, "GRASS", 5)) return Shaders.Grass;
-	if (!memcmp(Name, "ISHDR", 5) || !memcmp(Name, "HDR", 3)) return Shaders.Tonemapping; // tonemapping shaders have different names between New vegas and Oblivion
-	if (!memcmp(Name, "PAR", 3)) return Shaders.POM;
-	if (!memcmp(Name, "SKIN", 4)) return Shaders.Skin;
+	if (!memcmp(Name, "WATER", 5)) return S.Water;
+	if (!memcmp(Name, "GRASS", 5)) return S.Grass;
+	if (!memcmp(Name, "ISHDR", 5) || !memcmp(Name, "HDR", 3)) return S.Tonemapping; // tonemapping shaders have different names between New vegas and Oblivion
+	if (!memcmp(Name, "PAR", 3)) return S.POM;
+	if (!memcmp(Name, "SKIN", 4)) return S.Skin;
 	// Hair (BSSM_3XLIGHTING_*) lives in the SM3 family, not HAIR*. Only SM3003 has a
 	// replacement on disk; the rest resolve to no file and fall through to vanilla.
 	// The decal shaders (SM3004.vso, SM3005/SM3007.pso: blood, bullet holes) are replaced in
 	// exteriors only (IsExteriorOnly below): there they take the forward sun shadow, which the
 	// game's own never apply; in interiors, where the replacements flickered, they stay the game's.
-	if (!memcmp(Name, "SM3", 3)) return Shaders.PBR;
+	if (!memcmp(Name, "SM3", 3)) return S.PBR;
 	// SpeedTree leaves. STLEAF001/003.vso are vs_3_0 replacements, so every leaf PS must have
 	// a ps_3_0 replacement too: D3D9 rejects a 2.x VS paired with a 3.0 PS.
-	if (!memcmp(Name, "STLEAF", 6)) return Shaders.PBR;
-	if (!memcmp(Name, "SKY", 3)) return Shaders.Sky;
+	if (!memcmp(Name, "STLEAF", 6)) return S.PBR;
+	if (!memcmp(Name, "SKY", 3)) return S.Sky;
+	if (!memcmp(Name, "NOLIGHT", 7) || !memcmp(Name, "GDECAL", 6)) return S.Particles;
 
-	if (Shaders.PBR->GetTemplate(Name).Name != NULL) return Shaders.PBR;
-	if (Shaders.Terrain->GetTemplate(Name).Name != NULL) return Shaders.Terrain;
+	if (S.PBR->GetTemplate(Name).Name != NULL) return S.PBR;
+	if (S.Terrain->GetTemplate(Name).Name != NULL) return S.Terrain;
 
 	return NULL;
+}
+
+ShaderCollection* ShaderManager::GetShaderCollection(const char* Name) {
+	return ResolveCollection(Name, Shaders);
 }
 
 /*
@@ -890,6 +902,7 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 
 	Effects.SnowAccumulation->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 	Effects.AmbientOcclusion->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
+	Effects.BounceLight->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);   // after the shadows and AO, as in NVR UNOFFICIAL Optimized
 	// After the shadows and AO, so what wet surfaces reflect is shaded as it is seen.
 	Effects.WetnessReflections->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 	// The wetness the first-person arms' and weapon's raindrops read next frame (HudRaindropsEffect).

@@ -6,6 +6,7 @@ void AmbientOcclusionEffect::UpdateConstants() {
 void AmbientOcclusionEffect::RegisterConstants() {
 	TheShaderManager->ConstantsTable["TESR_AmbientOcclusionAOData"] = &Constants.AOData;
 	TheShaderManager->ConstantsTable["TESR_AmbientOcclusionData"] = &Constants.Data;
+	TheShaderManager->ConstantsTable["TESR_AmbientOcclusionLamp"] = &Constants.Lamp;
 }
 
 void AmbientOcclusionEffect::UpdateSettings() {
@@ -20,6 +21,7 @@ void AmbientOcclusionEffect::UpdateSettings() {
 	Constants.Data.y = TheSettingManager->GetSettingF(sectionName, "LumThreshold");
 	Constants.Data.z = TheSettingManager->GetSettingF(sectionName, "BlurDropThreshold");
 	Constants.Data.w = TheSettingManager->GetSettingF(sectionName, "BlurRadiusMultiplier");
+	Constants.Lamp.x = std::clamp(TheSettingManager->GetSettingF(sectionName, "LampLight"), 0.0f, 1.0f);
 }
 
 bool AmbientOcclusionEffect::ShouldRender() {

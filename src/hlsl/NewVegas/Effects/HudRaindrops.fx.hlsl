@@ -3,7 +3,7 @@
 // (Shaders/Includes/HudRaindrops.hlsl), which read it.
 //
 //   technique 0  the wetness eased toward the rain (1 x 1, from the one kept last frame): up over
-//                WetTime while the player stands in the rain, down over DryTime under cover, indoors
+//                WetTime while the player stands in the rain, down over the same time under cover, indoors
 //                or after it; wiped underwater; held at 1 with DebugView 1
 //   technique 1  kept for next frame
 //   technique 2  the drops on the Pip-Boy's screen: drawn into the screen's own texture once the game
@@ -12,7 +12,7 @@
 //                their rims and catch a small glint, as the arms' drops do with real light.
 
 float4 TESR_HudRainData;    // x rain (0-1)
-float4 TESR_HudRainTime;    // y this frame's seconds, z seconds to wet through, w seconds to dry
+float4 TESR_HudRainTime;    // y this frame's seconds, z seconds to wet through, and to dry
 float4 TESR_HudRainShade;   // z 1 under cover regardless (indoors), w 1 to wipe (underwater)
 float4 TESR_HudRainDebug;   // x 1 always wet
 float4 TESR_HudRainScreen;  // the Pip-Boy screen's drops: x threshold (Density), y clock, z refraction, w drop texture tiles across the screen
@@ -64,7 +64,7 @@ float4 UpdateWetness(VSOUT IN) : COLOR0 {
 
     float exposure = TESR_HudRainData.x * (1.0f - covered);
     float dt = TESR_HudRainTime.y;
-    wet = exposure > 0.0f ? min(wet + dt * exposure / TESR_HudRainTime.z, 1.0f) : max(wet - dt / TESR_HudRainTime.w, 0.0f);
+    wet = exposure > 0.0f ? min(wet + dt * exposure / TESR_HudRainTime.z, 1.0f) : max(wet - dt / TESR_HudRainTime.z, 0.0f);
     if (TESR_HudRainShade.w > 0.5f) wet = 0.0f;
     if (TESR_HudRainDebug.x > 0.5f) wet = 1.0f;
     return float4(wet, covered, 0.0f, 1.0f);

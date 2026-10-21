@@ -1263,6 +1263,9 @@ void SettingManager::CreateNodeS(Configuration::ConfigNode* Node, const char* Se
 
 
 bool SettingManager::GetMenuShaderEnabled(const char* Name) {
+	// HudRaindrops has no section of its own: it is switched under Wetness Effects (HudRaindropsEffect::UpdateSettings).
+	if (!strcmp(Name, "HudRaindrops")) return GetSettingI("Shaders.WetnessEffects.HudRaindrops", "Enabled") != 0;
+
 	char settingString[256];
 	strcpy(settingString, "Shaders.");
 	strcat(settingString, Name);
@@ -1293,6 +1296,8 @@ bool SettingManager::GetMenuShaderEnabled(const char* Name) {
 
 
 void SettingManager::SetMenuShaderEnabled(const char* Name, bool enabled) {
+	if (!strcmp(Name, "HudRaindrops")) { SetSetting("Shaders.WetnessEffects.HudRaindrops", "Enabled", enabled); return; }
+
 	char settingString[256];
 	strcpy(settingString, "Shaders.");
 	strcat(settingString, Name);
@@ -1454,10 +1459,7 @@ void SettingManager::FilterMenuSections(StringList* Sections, const char* Parent
 
 			// Only keep sections that aren't in our hide list
 			for (const auto& section : *Sections) {
-				if (strcmp(section.c_str(), "FormsNear") != 0 &&
-					strcmp(section.c_str(), "FormsMiddle") != 0 &&
-					strcmp(section.c_str(), "FormsFar") != 0 &&
-					strcmp(section.c_str(), "FormsLod") != 0 &&
+				if (strcmp(section.c_str(), "Forms") != 0 &&
 					strcmp(section.c_str(), "ShadowMaps") != 0) {
 					filteredSections.push_back(section);
 				}

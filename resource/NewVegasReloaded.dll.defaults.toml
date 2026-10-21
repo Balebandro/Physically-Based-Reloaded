@@ -91,6 +91,8 @@ ChainUsesGameTexture = true  # With FrameChain: the game's own frame is one of t
 MergedPointShadows = true    # Lamp shadows: the shadow term of all twelve lamps in one full-screen pass instead of two (when more than 6 lamps cast shadows), and no cube map reads for pixels a lamp cannot reach. Same picture. From NVR UNOFFICIAL Boutique.
 CubeMapFaceCulling = true    # Lamp shadows: each of a lamp's six shadow views only draws the objects that can be in it, instead of every object near the lamp six times. Same picture. From NVR UNOFFICIAL Boutique.
 SkipUnusedCubeMap = true     # Lamp shadows: the twelfth lamp is lit without a shadow, so its shadow cube map is no longer drawn. Same picture. From NVR UNOFFICIAL Boutique.
+LampScissor = true           # Indoors, the passes that add an extra lamp's light to an object are drawn only inside the screen rectangle that lamp can reach (its radius), or skipped when it is off the screen, instead of over the whole object. Same picture, less drawing. Read at startup. (From NVR UNOFFICIAL Optimized P81.)
+ReuseStillCubeMaps = true    # Lamp shadows: a lamp whose shadow-casting surroundings have not changed or moved (and hold no people, creatures or tree leaves) keeps the shadow cube map it drew before, instead of drawing all six faces again every frame. Same picture. (After NVR UNOFFICIAL Optimized P41/P44.)
 
 [_Main.Menu.Keys]
 KeyAdd = 78                 # Keycode for increment value shortcut in menu.
@@ -128,10 +130,6 @@ TextSize = 22                           # Font size for normal text.
 TextSizeStatus = 12                     # Font size for enabled/disabled text.
 TitleColumnSize = 850                   # Custom size for title column.
 
-[_Main.SleepingMode.Main]
-Enabled = false                         # Custom camera animation when player character goes to sleep.
-Mode = 0
-
 [_Main.WeatherMode.General]
 CoeffFogB = 0.86
 CoeffFogG = 0.88
@@ -153,6 +151,7 @@ BlurRadiusMultiplier = 2.0              # Blur radius to denoise AO.
 ClampStrength = 0.25                    # Lower limit to AO darkness (0 for pure black and 1 for pure white).
 Enabled = true                          # Enable Ambient occlusion in exteriors.
 LumThreshold = 0.7                      # Treshold to reduce AO strength on bright surfaces.
+LampLight = 1.0                         # [0-1] Ambient occlusion is the shade of light that comes from all around: where a lamp lights a surface directly it is spared, as path-traced lighting would. 0 darkens lamp light like any other.
 Range = 30.0                            # Distance for sampling. Larger values create a softer AO, smaller creates sharper details.
 Samples = 5                             # Not used (currently hardcoded).
 StrengthMultiplier = 1.0                # Global AO strength/darkness multiplier.
@@ -164,12 +163,28 @@ BlurRadiusMultiplier = 2.0              # Blur radius to denoise AO.
 ClampStrength = 0.2                     # Lower limit to AO darkness (0 for pure black and 1 for pure white).
 Enabled = true                          # Enable Ambient occlusion in exteriors.
 LumThreshold = 0.5                      # Treshold to reduce AO strength on bright surfaces.
+LampLight = 1.0                         # [0-1] Ambient occlusion is the shade of light that comes from all around: where a lamp lights a surface directly it is spared, as path-traced lighting would. 0 darkens lamp light like any other.
 Range = 30.0                            # Distance for sampling. Larger values create a softer AO, smaller creates sharper details.
 Samples = 5                             # Not used (currently hardcoded).
 StrengthMultiplier = 1.0                # Global AO strength/darkness multiplier.
 
 [_Shaders.AmbientOcclusion.Status]
 Enabled = true                          # Shadows based on object proximity/creases for more realistic light contribution.
+
+[_Shaders.BounceLight.Main]
+Strength = 1.5                      # How much light bounces from lit surfaces onto nearby ones (0 = none).
+Radius = 150.0                      # How far the bounce reaches, in world units (about 70 = 1 m).
+DrawDistance = 6000.0               # Distance from the camera where the effect has faded out.
+BlurRadius = 1.5                    # Smoothing of the bounce's grain, in pixels (x6 each way).
+QuarterResolution = true            # Works the bounce out on a quarter of the pixels instead of half (about 1.2 instead of 1.9 ms at 1440p on a GTX 1070, no visible difference). Off = half resolution.
+OffScreenLight = 1.0                # Light for bounce samples that land off the screen (or behind your weapon), guessed from the ambient light and what is seen nearby, so the bounce no longer fades out toward the screen edges. 0 = off (they add nothing, as before).
+MultiBounce = 1.0                   # More than one bounce: the bounce light each surface shows is passed on again the next frame (1 = all of it, up to 2). Subtle, mostly in corners. 0 = one bounce, as before.
+Temporal = true                     # Reuses last frame's bounce (moved with the view, dropped where something moved in front): less grain, steadier, light from things just turned away from fades out instead of vanishing. Off = as before.
+HalfSamples = false                 # With Temporal, half the samples each frame: about 0.03 ms cheaper at 1440p, a little more shimmer while turning.
+HardEdges = true                   # The bounce light never crosses the edge of a thing in front of a lit wall (pillars, posts and palms took the wall's light: a blurry glow drawn over them). Off: the softer blend from before. Applies to the Plus and Temporal modes.
+
+[_Shaders.BounceLight.Status]
+Enabled = true                      # One bounce of indirect light from what is on screen (colour bleeding, more natural shading). About 1 ms GPU at 1440p when on (F10 'Bounce light'); nothing when off. (From NVR UNOFFICIAL Optimized P81.)
 
 [_Shaders.Bloom]
 
@@ -373,10 +388,8 @@ Enabled = true                         # Volumetric light shaft in the air along
 
 
 [_Shaders.Grass.Main]
-ScaleX = 1.0
-ScaleY = 1.0
-ScaleZ = 1.0
 Brightness = 1.0                       # [0.0-4.0] Multiplies how bright the grass is lit, before fog: below 1 darker, above 1 brighter. 1 leaves it as the lighting makes it.
+NightBrightness = 1.0                  # [0.0-4.0] Multiplies the moon and ambient light on outdoor grass at night, easing back to 1 through sunrise (the same curve as the other day/night transitions). Lamps on the grass are not affected. Below 1 darker grass at night, 1 as before.
 
 [_Shaders.Grass.Interaction]
 Enabled = true                         # Grass bends away from you as you walk through it and springs back after, like There Stands The Grass NVSE (which stands down when NVR owns the grass shaders). Same settings and defaults as that mod.
@@ -399,6 +412,13 @@ DetailStrength = 1.0                   # [0-10] How much sooner fully detailed m
 Enabled = true                     # Placed lights and the Pip-Boy light light the grass (never the sun, which the grass already gets). Costs nothing where no lamp is near.
 MaxLights = 8                      # [0-8] The most lamps on the grass at once, nearest first.
 Strength = 1.0                     # [0.0-1.0] How bright the lamps are on the grass.
+
+[_Shaders.Grass.NormalMaps]
+Enabled = true                     # A grass texture with a normal map beside it, named after it with _n (grass01.dds -> grass01_n.dds, rock_d.dds -> rock_n.dds; loose or in a BSA; also grass-placed meshes such as Rock Grass), gets per-pixel sunlight from that map. Grass without one looks exactly as before.
+Strength = 1.0                     # [0.0-4.0] How much the normal map bends the light. 0 is the grass's own lighting.
+EnableSpecular = true              # The sun's highlight on the grass (and grass-placed rocks). Where the grass has a normal map, its alpha says how shiny each spot is; grass without one shines evenly.
+SpecularStrength = 0.5             # [0.0-4.0] How bright the highlight is.
+Glossiness = 32.0                  # [1-512] How tight the highlight is: low a broad sheen, high a small sharp glint.
 
 [_Shaders.Grass.Status]
 Enabled = true                        # Replaces the grass shaders.
@@ -651,6 +671,14 @@ GaussianWeight = 6.0
 [_Shaders.MotionBlur.Status]
 Enabled = false                      # Blur in direction of the camera when turning. 
 
+[_Shaders.Particles.Main]
+Strength = 1.0                       # How much blood, smoke, dust and debris particles follow the lighting (0 = as the game draws them, unlit; 1 = fully lit). Ported from NVR UNOFFICIAL Optimized (P81).
+Brightness = 1.0                     # Overall brightness of lit particles.
+SunShare = 0.6                       # How much of the sun a particle catches outdoors (through the sun shadows).
+
+[_Shaders.Particles.Status]
+Enabled = true                       # Lights blood, smoke, dust and debris particles and blood decals on characters by the ambient, the sun and nearby lamps. Muzzle flashes, fire, sparks and glows stay as the game draws them. Off = the game's own particle shaders.
+
 [_Shaders.PBR.Main]
 LightingScale = 0.725              # Sun and point light strength.
 AmbientScale = 1.0                 # Weather ambient light strength.
@@ -698,6 +726,11 @@ SkylightingScale = 0.0             # Sky-colour ambient light. 0 disables it.
 MetalnessScale = 1.0               # [0.0-1.0] Scales the metalness of materials with an _rmaos map (its G channel). Metals are lit almost only by what they reflect, so with little around to reflect (at night) they go near black: lower it to keep some of their colour.
 AOScale = 0.5                      # [0.0-1.0] How much of the ambient occlusion in _rmaos maps (their B channel) applies: 1 as authored, 0 none. Indoors, lit mostly by ambient light, full-strength baked AO can look too dark.
 RoughnessScale = 1.0               # [1.0-2.0] Multiplies the roughness of materials with an _rmaos map (their R channel): 1 as authored, 2 twice as rough. Never glossier than the map. The result stays at most 1. OpenPBR lighting only (LightingModel 0): Anomaly lighting ignores it.
+
+[_Shaders.PBR.Lamps]
+HotCore = 6.0                      # [0-32] The look of path-traced lamps: how the light falls off. 0 is vanilla's even glow up to the lamp's radius; higher is a bright core close to the lamp with a long soft tail, the total light kept as vanilla's. Objects, terrain, skin and grass.
+Bounce = 0.15                      # [0-1] A lamp's light coming back off what is around it: a soft fill in the lamp's colour within its reach, more on the sides turned away from it. 0 off.
+Softness = 0.3                     # [0-1] Lamps shade bumpy surfaces softer (their N.L wrapped by this much), as light from all around them does. 0 is vanilla's sharp shading. Not on skin, which is already soft, nor on authored PBR materials.
 
 [_Shaders.PBR.Status]
 Enabled = true                       # Object lighting as Community Shaders: true PBR for materials with an authored _rmaos map (R roughness, G metalness, B AO, A specular, next to the diffuse texture), vanilla shading for the rest.
@@ -761,67 +794,29 @@ SmoothingFactor = 0.174			 # [0.0-1.0] Lower number means slower smoothing betwe
 YawStepSize = 15.0					 # [0.0-15.0] Step size for changes in the horizontal rotation of the sun, angle in degrees.
 PitchStepSize = 15.0				 # [0.0-15.0] Step size for changes in the vertical rotation of the sun, angle in degrees.
 MaxJumpAngle = 5.0					 # [5.0-30.0] A maximum angle difference for which smoothing works, if higher the jump is instaneous. Required for time jumps / waiting.
+GlideSeconds = 3.0					 # [0.0-10.0] Real seconds each step of the sun slides over (with SmoothSun and QuantizeSun), instead of all sun shadows jumping at once about every in-game hour. Bigger jumps (waiting, sleeping, loading) stay instant. 0 = the old smoothing. (NVR UNOFFICIAL Optimized)
+CrossFade = false					 # Needs a game restart and ForwardShadows: instead of turning the shadows over GlideSeconds, fade from the old shadows to the new ones, so shadow edges never crawl while the sun moves. The farthest cascade switches over without the fade. TURNS TERRAIN BLENDING OFF (the land shaders have no room for both). Costs a second copy of the shadow maps in video memory. (NVR UNOFFICIAL Optimized)
 
-[_Shaders.ShadowsExteriors.FormsNear]
+[_Shaders.ShadowsExteriors.ContactHardening]
+Enabled = true                       # Sun shadows sharp where an object meets the ground and softer the further they fall from it (NVR UNOFFICIAL Optimized). Needs ForwardShadows, and a game restart the first time it is turned on.
+AtNight = false                      # Keep contact hardening at night too. Off: plain shadow edges while the sun is down.
+SunSize = 1.0                        # How soft far shadow edges get, as a multiple of the real sun's size (1 = realistic). Higher values can show aliasing.
+MaxSoftness = 4.0                    # [1-32] Cap on the blur, in shadow map texels. Higher allows softer edges under tall objects but costs more and can show aliasing.
+Smooth = true                        # Smoother contact-hardening edges: narrow and wide penumbrae blend instead of switching along a line. Costs a little in penumbrae only.
+
+[_Shaders.ShadowsExteriors.Forms]
+# What casts sun shadows, for all four cascades. The farthest one also leaves out actors, activators, furniture and misc objects.
 Activators = true                    # Whether to include objects with "Activator" flag when rendering shadowmaps.
-Actors = true                        # Whether to include objects with "Actors" flag when rendering shadowmaps.
+Actors = true                        # Whether to include actors in the shadows (never in the farthest cascade).
 AlphaEnabled = true                  # Whether to take into account alpha of objects when rendering shadowmaps.
 Apparatus = false                    # Whether to include objects with "Apparatus" flag when rendering shadowmaps.
 Books = false                        # Whether to include objects with "Books" flag when rendering shadowmaps.
 Containers = true                    # Whether to include objects with "Containers" flag when rendering shadowmaps.
 Doors = true                         # Whether to include objects with "Doors" flag when rendering shadowmaps.
 Furniture = true                     # Whether to include objects with "Furniture" flag when rendering shadowmaps.
-Lod = false                          # Whether to include objects with "Lod" flag when rendering shadowmaps.
-MinRadius = 1.0                      # Whether to include objects with a radius of less than x pixels on the screen in the shadowmaps.
+Lod = true                           # Whether to include distant LOD objects (only in the two farthest cascades; hidden up close anyway).
+MinRadius = 1.0                      # Objects smaller than this many pixels on screen are left out of the shadows (ten times this in the two farthest cascades).
 Misc = true                          # Whether to include objects with misc flags when rendering shadowmaps.
-Statics = true                       # Whether to include objects with "Statics" flag when rendering shadowmaps.
-Terrain = true                       # Whether to include Terrain when rendering shadowmaps.
-Trees = true                         # Whether to include Trees when rendering shadowmaps.
-
-[_Shaders.ShadowsExteriors.FormsMiddle]
-Activators = true                    # Whether to include objects with "Activator" flag when rendering shadowmaps.
-Actors = true                        # Whether to include objects with "Actors" flag when rendering shadowmaps.
-AlphaEnabled = true                  # Whether to take into account alpha of objects when rendering shadowmaps.
-Apparatus = false                    # Whether to include objects with "Apparatus" flag when rendering shadowmaps.
-Books = false                        # Whether to include objects with "Books" flag when rendering shadowmaps.
-Containers = true                    # Whether to include objects with "Containers" flag when rendering shadowmaps.
-Doors = true                         # Whether to include objects with "Doors" flag when rendering shadowmaps.
-Furniture = true                     # Whether to include objects with "Furniture" flag when rendering shadowmaps.
-Lod = false                          # Whether to include objects with "Lod" flag when rendering shadowmaps.
-MinRadius = 1.0                      # Whether to include objects with a radius of less than x pixels on the screen in the shadowmaps.
-Misc = true                          # Whether to include objects with misc flags when rendering shadowmaps.
-Statics = true                       # Whether to include objects with "Statics" flag when rendering shadowmaps.
-Terrain = true                       # Whether to include Terrain when rendering shadowmaps.
-Trees = true                         # Whether to include Trees when rendering shadowmaps.
-
-[_Shaders.ShadowsExteriors.FormsFar]
-Activators = true                    # Whether to include objects with "Activator" flag when rendering shadowmaps.
-Actors = true                        # Whether to include objects with "Actors" flag when rendering shadowmaps.
-AlphaEnabled = true                  # Whether to take into account alpha of objects when rendering shadowmaps.
-Apparatus = false                    # Whether to include objects with "Apparatus" flag when rendering shadowmaps.
-Books = false                        # Whether to include objects with "Books" flag when rendering shadowmaps.
-Containers = true                    # Whether to include objects with "Containers" flag when rendering shadowmaps.
-Doors = true                         # Whether to include objects with "Doors" flag when rendering shadowmaps.
-Furniture = true                     # Whether to include objects with "Furniture" flag when rendering shadowmaps.
-Lod = true                           # Whether to include objects with "Lod" flag when rendering shadowmaps.
-MinRadius = 10.0                     # Whether to include objects with a radius of less than x pixels on the screen in the shadowmaps.
-Misc = true                          # Whether to include objects with misc flags when rendering shadowmaps.
-Statics = true                       # Whether to include objects with "Statics" flag when rendering shadowmaps.
-Terrain = true                       # Whether to include Terrain when rendering shadowmaps.
-Trees = true                         # Whether to include Trees when rendering shadowmaps.
-
-[_Shaders.ShadowsExteriors.FormsLod]
-Activators = false                   # Whether to include objects with "Activator" flag when rendering shadowmaps.
-Actors = false                       # Whether to include objects with "Actors" flag when rendering shadowmaps.
-AlphaEnabled = true                  # Whether to take into account alpha of objects when rendering shadowmaps.
-Apparatus = false                    # Whether to include objects with "Apparatus" flag when rendering shadowmaps.
-Books = false                        # Whether to include objects with "Books" flag when rendering shadowmaps.
-Containers = false                   # Whether to include objects with "Containers" flag when rendering shadowmaps.
-Doors = true                         # Whether to include objects with "Doors" flag when rendering shadowmaps.
-Furniture = false                    # Whether to include objects with "Furniture" flag when rendering shadowmaps.
-Lod = true                           # Whether to include objects with "Lod" flag when rendering shadowmaps.
-MinRadius = 10.0                     # Whether to include objects with a radius of less than x pixels on the screen in the shadowmaps.
-Misc = false                         # Whether to include objects with misc flags when rendering shadowmaps.
 Statics = true                       # Whether to include objects with "Statics" flag when rendering shadowmaps.
 Terrain = true                       # Whether to include Terrain when rendering shadowmaps.
 Trees = true                         # Whether to include Trees when rendering shadowmaps.
@@ -854,19 +849,16 @@ ContactDistance = 2500.0             # Contact shadows fade out by this distance
 ContactDebug = false                 # Debug view: the scene in grey, contact shadows in red, and in blue what the shadow maps already shade. Forward shadows only.
 
 [_Shaders.ShadowsExteriors.ShadowMaps]
-Mode = 2							 # Shadow mode, higher means higher quality, but higher computational cost. 0: VSM, 1: EVSM2, 2: EVSM4
-Format = 0							 # Texture format, higher means higher quality, but higher bandwidth cost. 0: 16 bit, 1: 32 bit
 CascadeResolution = 1				 # Resolution used for shadow cascades. 0: 1024, 1: 1536, 2: 2048,
                                      # 3: 2560, 4: 3072, 5: 3584. The atlas holds 2x2 cascades, so
                                      # VRAM and shadow-pass bandwidth scale with the square of this:
                                      # 3 is ~2.6x the cost of 2, and 5 is ~5x. Clamped down if it
                                      # exceeds the device's maximum texture size.
-Prefilter = true					 # Enable prefiltering the shadow maps. Prefiltering is a blur.
-MSAA = true							 # Enable multisample antialiasing for shadow maps.
 Mipmaps = false						 # DISABLED. Enable mipmaps for the shadow maps.
 Anisotropy = 0						 # DISABLED. Anisotropic filteric for mipmaps, 0: disabled, 1: 8x, 2: 16x
 Distance = 6000                      # Distance to render shadows for. The unit is the same as the game uses for i.e. fog values. 
 CascadeLambda = 0.9					 # [0.0-1.0] Controls how cascades are split, higher value means nearer cascades get higher resolution.
+SmoothFilter = false				 # (NVR UNOFFICIAL Optimized) a smoother, slightly wider filter on the sun shadow maps (a 4 x 4 cubic B-spline instead of 3 x 3). Rounds off the stair steps where one shadow-map texel covers several pixels. Costs a little (16 compares per lookup instead of 9).
 LimitFrequency = true				 # Limit the update frequency of the furthest cascade (once per four frames).
 CasterCulling = true				 # Skip shadow casters whose shadow cannot fall anywhere you can see (e.g. behind you with the sun in front). Saves shadow-map draw calls. Not applied to the furthest cascade while LimitFrequency is on.
 CasterMargin = 256.0				 # [0.0-4096.0] Game units added around the view when deciding, so shadows at the screen edges and in blurred cascade borders stay.
@@ -1090,13 +1082,6 @@ Enabled = true                      # Replaces shaders used by terrain, adding P
 [_Shaders.Underwater.Status]
 Enabled = true                      # Post Process underwater fog/godrays/caustics effect.
 
-# Works on either shadow atlas format. At Shaders.ShadowsExteriors.ShadowMaps.Format = 0 (16-bit)
-# GetEVSMExponents clamps the EVSM positive exponent from 40 to 5.54, which loosens the Chebyshev
-# bound and biases occluded points toward lit; the shader compensates by strengthening its light
-# bleed reduction on that format (see BleedReduction in VolumetricLight.fx.hlsl). Format = 1 gives
-# a tighter bound and slightly cleaner shadow edges, at double the atlas bandwidth, but is not
-# required. An earlier note here claimed it was; that was written while a camera-space bug was
-# suppressing the shadow lookup entirely, and the format was never the cause.
 [_Shaders.VolumetricLight.Main]
 Strength = 55.0                     # Overall intensity multiplier for the light shaft. Responds on a 2.1 power curve, not linearly: the composite raises the shaft to that power, so doubling this gives 2^2.1 = 4.3x, and the slider has a soft bottom end that ramps hard. That curve is the point rather than a side effect -- it crushes dim scattering harder than bright, which pulls the general haze down relative to the bright shaft cores. It also saturates the shaft per-channel, so the ScatterR/G/B tint spreads and warm tints get warmer; retune the tint if that goes too far, not this. The usable range sits around 55 rather than around 1 because accumLightStrength in the shader is left at 0.04 -- see the comment there; the two can only move together, and rescaling them silently makes every saved config 55x too bright. Values well above this are safe: in-scattered light is additive over the scene and the whole chain runs in FP16 before tonemapping, so a bright shaft is an HDR highlight for the tonemapper to roll off, not a washed-out frame.
 Anisotropy = 0.452                  # [0.0-0.9] Forward scattering bias (Henyey-Greenstein g). Controls how sharply light gathers toward the sun, and nothing else -- the phase function is normalised to peak at 1.0, so this sets the SHAPE of the lobe while Strength sets how much there is. Raw HG ties the two together (its peak climbs 7.4x from g=0.1 to g=0.6), which is why changing this used to change overall brightness. Shafts come from shadow occlusion, not from a tight lobe: too high and the effect collapses to a small bright patch around the sun, too low and it reads as flat haze across the whole frame.
@@ -1233,23 +1218,6 @@ refractionPower = 0.2               # Multiplier for the refraction.
 [_Shaders.Water.Status]
 Enabled = true                      # Replaces water shaders with a custom shader.
 
-[_Shaders.HudRaindrops.Main]
-AllObjects = true                    # Drops on every object out in the rain too (buildings, props, people; never the ground itself), not just your arms and weapon. Objects under cover stay dry (the top-down ortho map).
-AnimSpeed = 1.0                      # [0-8] How fast the drops come and go while it rains (faster in heavy rain).
-Darkness = 0.3                       # [0-1] How much a drop darkens the surface under it, as water soaking in. 0 leaves the colour as it is.
-Density = 0.6                       # [0-1] How many drops gather at full wetness.
-DebugView = 0                        # [0-1] 1 keeps the arms and weapon wet without rain, to try it out.
-DropSize = 8.0                       # [0.5-64] The drop pattern's tile in game units: the biggest drops are about a fortieth of it across. Bigger gives bigger drops.
-DryTime = 45.0                       # [0.5-600] Seconds for the drops to dry off after the rain, under cover or indoors.
-Gloss = 0.8                          # [0-1] How glossy the drops are.
-Reflection = 2.5                     # [0-8] How strongly the drops tilt the surface's normal: their highlights and reflections.
-Refraction = 1.0                     # [0-4] How strongly the drops bend and magnify the surface under them.
-WetGloss = 0.3                       # [0-1] How much glossier the wet surface between the drops gets.
-WetTime = 20.0                       # [0.5-600] Seconds in heavy rain for the arms and weapon to wet through (lighter rain takes longer).
-
-[_Shaders.HudRaindrops.Status]
-Enabled = true                       # Raindrops on the first-person arms and weapon in the rain (after Screen Space Shaders' HUD raindrops), drawn in their own shaders so they stay on the surface: they magnify the surface under them and catch the light. They gather while you stand in the rain (not under cover) and dry off afterwards.
-
 [_Shaders.WaterLens.Main]
 Amount = 0.1
 Time = 180.0
@@ -1283,6 +1251,20 @@ RippleStrength = 1.0                # [0.0-3.0] How strongly ripples bend the wa
 RippleRadius = 1.0                  # [0.1-2.0] How far a ripple spreads, in cells.
 RippleBreadth = 0.5                 # [0.05-1.0] Width of a ripple's ring, in cells.
 RippleLifetime = 0.5                # [0.05-4.0] How long a ripple lasts, in seconds.
+
+[_Shaders.WetnessEffects.HudRaindrops]
+Enabled = true                       # Raindrops on the first-person arms and weapon in the rain (after Screen Space Shaders' HUD raindrops), drawn in their own shaders so they stay on the surface: they magnify the surface under them and catch the light. They gather while you stand in the rain (not under cover) and dry off afterwards.
+AllObjects = true                    # Drops on every object out in the rain too (buildings, props, people; never the ground itself), not just your arms and weapon. Objects under cover stay dry (the top-down ortho map).
+AnimSpeed = 1.0                      # [0-8] How fast the drops come and go while it rains (faster in heavy rain).
+Darkness = 0.3                       # [0-1] How much a drop darkens the surface under it, as water soaking in. 0 leaves the colour as it is.
+Density = 0.6                       # [0-1] How many drops gather at full wetness.
+DebugView = 0                        # [0-1] 1 keeps the arms and weapon wet without rain, to try it out.
+DropSize = 8.0                       # [0.5-64] The drop pattern's tile in game units: the biggest drops are about a fortieth of it across. Bigger gives bigger drops.
+Gloss = 0.8                          # [0-1] How glossy the drops are.
+Reflection = 2.5                     # [0-8] How strongly the drops tilt the surface's normal: their highlights and reflections.
+Refraction = 1.0                     # [0-4] How strongly the drops bend and magnify the surface under them.
+WetGloss = 0.3                       # [0-1] How much glossier the wet surface between the drops gets.
+WetTime = 20.0                       # [0.5-600] Seconds in heavy rain for the arms and weapon to wet through (lighter rain takes longer), and for the drops to dry off again after the rain, under cover or indoors.
 
 [_Shaders.WetnessEffects.Debug]
 WetnessOverride = -1.0              # [-1.0-1.0] Force the wetness, whatever the weather (for testing: vanilla New Vegas has almost no rain). -1 off.

@@ -23,6 +23,10 @@ void AttachHooks() {
 	DetourAttach(&(PVOID&)ProcessImageSpaceShaders, &ProcessImageSpaceShadersHook);
 	DetourAttach(&(PVOID&)RenderWorldSceneGraph, &RenderWorldSceneGraphHook);
 	DetourAttach(&(PVOID&)RenderBlended, &RenderBlendedHook);   // glass writes no depth in a sandstorm
+	if (TheSettingManager->GetSettingI("Main.Main.Performance", "LampScissor")) {   // read at startup: the hooks are only for it
+		DetourAttach(&(PVOID&)RenderPassStandard, &RenderPassStandardHook);
+		DetourAttach(&(PVOID&)RenderPassSkinned, &RenderPassSkinnedHook);
+	}
 	DetourAttach(&(PVOID&)RenderFirstPerson, &RenderFirstPersonHook);
 	DetourAttach(&(PVOID&)SetShaders, &SetShadersHook);
 	DetourAttach(&(PVOID&)SetSamplerState, &SetSamplerStateHook);

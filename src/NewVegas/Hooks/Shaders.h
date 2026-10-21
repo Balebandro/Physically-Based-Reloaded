@@ -30,6 +30,8 @@ extern VirtFuncDetour kNoLightingPostGeometryDetour;
 void* __fastcall NoLightingShader__PrepareGeometryForRendering(void* apThis, void*, void* apGeometry, void* apPartition, void* apRendererData, void* apState);
 void __fastcall NoLightingShader__PostGeometry(void* apThis, void*, void* apProperties);
 namespace RainParticles { void SetRainSource(NiNode* Root, bool Cull, float Density); }
+// A diffuse texture's normal map by name ("foo.dds" -> "foo_n.dds", loose or in a BSA), cached; nullptr if there is none.
+namespace MaterialMaps { IDirect3DTexture9* FindNormalMap(const NiSourceTexture* Diffuse); }
 void UpdateFaceGenInteriorFlag();
 extern void(__thiscall* TestFrustumCull)(ShadowSceneLight*, NiCullingProcess*);
 void __fastcall TestFrustumCullHook(ShadowSceneLight* This, void*, NiCullingProcess* Culler);

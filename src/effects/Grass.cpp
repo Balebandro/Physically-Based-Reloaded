@@ -3,8 +3,7 @@
 #include "Grass.h"
 
 void GrassShaders::RegisterConstants() {
-	Constants.Brightness = D3DXVECTOR4(1.0f, 0.0f, 0.0f, 0.0f);
-	TheShaderManager->RegisterConstant("TESR_GrassScale", &Constants.Scale);
+	Constants.Brightness = D3DXVECTOR4(1.0f, 1.0f, 0.0f, 0.0f);
 	TheShaderManager->RegisterConstant("TESR_GrassBrightness", &Constants.Brightness);
 	TheShaderManager->RegisterConstant("TESR_GrassBend", &Constants.Bend);
 	TheShaderManager->RegisterConstant("TESR_GrassBendParams", &Constants.BendParams);
@@ -20,10 +19,8 @@ void GrassShaders::RegisterConstants() {
 void GrassShaders::UpdateSettings() {
 	if (!Enabled) return;
 
-	Constants.Scale.x = TheSettingManager->GetSettingF("Shaders.Grass.Main", "ScaleX");
-	Constants.Scale.y = TheSettingManager->GetSettingF("Shaders.Grass.Main", "ScaleY");
-	Constants.Scale.z = TheSettingManager->GetSettingF("Shaders.Grass.Main", "ScaleZ");
 	Constants.Brightness.x = std::clamp(TheSettingManager->GetSettingF("Shaders.Grass.Main", "Brightness"), 0.0f, 4.0f);
+	NightBrightness = std::clamp(TheSettingManager->GetSettingF("Shaders.Grass.Main", "NightBrightness"), 0.0f, 4.0f);
 
 	const char* bend = "Shaders.Grass.Interaction";
 	Interaction.Enabled = TheSettingManager->GetSettingI(bend, "Enabled") != 0;
@@ -46,6 +43,14 @@ void GrassShaders::UpdateSettings() {
 	Lights.Enabled = TheSettingManager->GetSettingI(lights, "Enabled") != 0;
 	Lights.MaxLights = std::clamp(TheSettingManager->GetSettingI(lights, "MaxLights"), 0, MaxGrassLights);
 	Lights.Strength = std::clamp(TheSettingManager->GetSettingF(lights, "Strength"), 0.0f, 1.0f);
+
+	const char* normals = "Shaders.Grass.NormalMaps";
+	NormalMaps.Enabled = TheSettingManager->GetSettingI(normals, "Enabled") != 0;
+	NormalMaps.Strength = std::clamp(TheSettingManager->GetSettingF(normals, "Strength"), 0.0f, 4.0f);
+
+	Specular.Enabled = TheSettingManager->GetSettingI(normals, "EnableSpecular") != 0;
+	Specular.Strength = std::clamp(TheSettingManager->GetSettingF(normals, "SpecularStrength"), 0.0f, 4.0f);
+	Specular.Glossiness = std::clamp(TheSettingManager->GetSettingF(normals, "Glossiness"), 1.0f, 512.0f);
 }
 
 // The lamps nearest the camera that reach anything near it, from both of NVR's light lists (the shadow-casting ones,
@@ -137,6 +142,10 @@ void GrassShaders::UpdateConstants() {
 	// Pixels a unit covers at a depth of 1: half the screen height times the projection's vertical scale.
 	Constants.LOD = D3DXVECTOR4(0.5f * (float)TheRenderManager->height * TheRenderManager->projMatrix._22, LOD.MinPixels, LOD.FadePixels, LOD.Enabled ? 1.0f : 0.0f);
 
+	// The night brightness, outdoors: full at night, 1 by day, following the same curve as the other day/night transitions.
+	const float day = TheShaderManager->GameState.isExterior ? TheShaderManager->GameState.transitionCurve : 1.0f;
+	Constants.Brightness.y = NightBrightness + (1.0f - NightBrightness) * day;
+
 	UpdateLights();
 
 	if (s.Debug && (DebugClock += max(dt, 0.0f)) >= 2.0f) {
@@ -146,12 +155,26 @@ void GrassShaders::UpdateConstants() {
 	}
 }
 
-void GrassShaders::SetBatchConstants(NiGeometry* Geometry) {
-	if (!Enabled || !LOD.Enabled || !Geometry || !Geometry->geomData) return;
-	NiGeometryData* data = Geometry->geomData;
-	float detail = 1.0f + LOD.DetailStrength * min((float)data->m_usVertices / LOD.DetailVertices, 1.0f);
-	D3DXVECTOR4 batch(max(data->m_kBound.Radius, 0.0f), detail, 0.0f, 0.0f);
+// Written for every shape, LOD or not: z (static) must never carry over from one shape to the next. x 0 turns the size
+// fade off for the shape (GrassLODFade).
+void GrassShaders::SetBatchConstants(NiGeometry* Geometry, bool Static) {
+	if (!Enabled || !Geometry || !Geometry->geomData) return;
+	D3DXVECTOR4 batch(0.0f, 1.0f, Static ? 1.0f : 0.0f, 0.0f);
+	if (LOD.Enabled) {
+		NiGeometryData* data = Geometry->geomData;
+		batch.x = max(data->m_kBound.Radius, 0.0f);
+		batch.y = 1.0f + LOD.DetailStrength * min((float)data->m_usVertices / LOD.DetailVertices, 1.0f);
+	}
 	TheRenderManager->device->SetVertexShaderConstantF(250, (const float*)&batch, 1);
+}
+
+// Rocks placed as grass (Rock Grass and the like) stand still: no sway, no bending. Known by their diffuse texture's path.
+static bool IsStaticGrass(const NiSourceTexture* Diffuse) {
+	const char* path = Diffuse ? Diffuse->ddsPath1 : nullptr;
+	if (!path) return false;
+	for (const char* p = path; *p; p++)
+		if (!_strnicmp(p, "rock", 4)) return true;
+	return false;
 }
 
 // Every grass shape as the game sets it up to draw: the grass shader's per-geometry setup (TallGrassShader, vtable
@@ -179,5 +202,30 @@ void GrassShaders::InstallHooks() {
 
 void GrassShaders::OnGrassShape(NiGeometry* Geometry) {
 	if (!Geometry) return;
-	SetBatchConstants(Geometry);
+
+	// The shape's diffuse texture: TallGrassShaderProperty (shade type 4) keeps it (an NiSourceTexture) at +0x84 (its
+	// getter 0xBB36C0, which TallGrassShader's texture setup 0xBAC950 binds to s0).
+	const NiSourceTexture* diffuse = nullptr;
+	if (NiShadeProperty* shade = (NiShadeProperty*)Geometry->GetProperty(NiProperty::kType_Shade))
+		if (shade->m_eShaderType == NiShadeProperty::kProp_TallGrass)
+			diffuse = *(NiSourceTexture**)((UInt8*)shade + 0x84);
+	SetBatchConstants(Geometry, IsStaticGrass(diffuse));
+
+	// Its normal map, from the diffuse texture's name. s1 goes through the render state cache, as MaterialMaps binds its
+	// maps, so the next shader using s1 gets its own back.
+	IDirect3DTexture9* map = nullptr;
+	if (Enabled && NormalMaps.Enabled && NormalMaps.Strength > 0.0f && diffuse)
+		map = MaterialMaps::FindNormalMap(diffuse);
+	if (map) {
+		NiDX9RenderState* state = TheRenderManager->renderState;
+		state->SetTexture(1, map);
+		state->SetSamplerState(1, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP, false);
+		state->SetSamplerState(1, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP, false);
+		state->SetSamplerState(1, D3DSAMP_MINFILTER, D3DTEXF_LINEAR, false);
+		state->SetSamplerState(1, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR, false);
+		state->SetSamplerState(1, D3DSAMP_MIPFILTER, D3DTEXF_LINEAR, false);
+		state->SetSamplerState(1, D3DSAMP_SRGBTEXTURE, FALSE, false);
+	}
+	D3DXVECTOR4 material(map ? 1.0f : 0.0f, NormalMaps.Strength, Specular.Enabled ? Specular.Strength : 0.0f, Specular.Glossiness);
+	TheRenderManager->device->SetPixelShaderConstantF(147, (const float*)&material, 1);
 }

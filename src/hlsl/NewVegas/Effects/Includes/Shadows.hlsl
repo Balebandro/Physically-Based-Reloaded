@@ -54,75 +54,14 @@ float GetPointLightContribution(float4 worldPos, float4 LightPos, float4 normal)
 }
 
 
-float Linstep(float a, float b, float v) {
-    return saturate((v - a) / (b - a));
-}
-
-// Reduces VSM light bleedning
-float ReduceLightBleeding(float pMax, float amount) {
-  // Remove the [0, amount] tail and linearly rescale (amount, 1].
-    return Linstep(amount, 1.0f, pMax);
-}
-
-float ChebyshevUpperBound(float2 moments, float mean, float minVariance,
-                          float lightBleedingReduction) {
-    // Compute variance
-    float variance = moments.y - (moments.x * moments.x);
-    variance = max(variance, minVariance);
-
-    // Compute probabilistic upper bound
-    float d = mean - moments.x;
-    float pMax = variance / (variance + (d * d));
-
-    pMax = ReduceLightBleeding(pMax, lightBleedingReduction);
-
-    // One-tailed Chebyshev
-    return (mean <= moments.x ? 1.0f : pMax);
-}
-
-float GetLightAmountValueVSM(float2 moments, float depth, float bias, float bleedReduction) {
-    return ChebyshevUpperBound(moments, depth, bias, bleedReduction);
-}
-
-float2 GetEVSMExponents(in float positiveExponent, in float negativeExponent, in float formatBits) {
-    const float maxExponent = formatBits == 0.0 ? 5.54f : 42.0f;
-
-    float2 lightSpaceExponents = float2(positiveExponent, negativeExponent);
-
-    // Clamp to maximum range of fp32/fp16 to prevent overflow/underflow
-    return min(lightSpaceExponents, maxExponent);
-}
-
-// Applies exponential warp to shadow map depth, input depth should be in [0, 1]
-float2 WarpDepth(float depth, float2 exponents) {
-    // Rescale depth into [-1, 1]
-    depth = 2.0f * depth - 1.0f;
-    float pos = exp(exponents.x * depth);
-    float neg = -exp(-exponents.y * depth);
-    return float2(pos, neg);
-}
-
-float GetLightAmountValueEVSM2(float2 moments, float depth, float bias, float bleedReduction, float formatBits) {
-    float2 exponents = GetEVSMExponents(40.0f, 5.0f, formatBits);
-    float2 warpedDepth = WarpDepth(depth, exponents);
-
-    // Derivative of warping at depth
-    float2 depthScale = bias * exponents * warpedDepth;
-    float2 minVariance = depthScale * depthScale;
-
-    return ChebyshevUpperBound(moments, warpedDepth.x, minVariance.x, bleedReduction);
-}
-
-float GetLightAmountValueEVSM4(float4 moments, float depth, float bias, float bleedReduction, float formatBits) {
-    float2 exponents = GetEVSMExponents(40.0f, 5.0f, formatBits);
-    float2 warpedDepth = WarpDepth(depth, exponents);
-
-    // Derivative of warping at depth
-    float2 depthScale = bias * exponents * warpedDepth;
-    float2 minVariance = depthScale * depthScale;
-
-    float posContrib = ChebyshevUpperBound(moments.xz, warpedDepth.x, minVariance.x, bleedReduction);
-    float negContrib = ChebyshevUpperBound(moments.yw, warpedDepth.y, minVariance.y, bleedReduction);
-    
-    return min(posContrib, negContrib);
+// Sun shadows (PCF): plain depths compared at the four nearest texels, bilinearly weighted.
+float ShadowPCF2x2(sampler2D atlas, float2 uv, float depth, float texel) {
+    float2 p = uv / texel - 0.5f;
+    float2 base = floor(p);
+    float2 f = p - base;
+    float2 uv0 = (base + 0.5f) * texel;
+    float4 d = float4(tex2Dlod(atlas, float4(uv0, 0.0f, 0.0f)).x, tex2Dlod(atlas, float4(uv0 + float2(texel, 0.0f), 0.0f, 0.0f)).x,
+                      tex2Dlod(atlas, float4(uv0 + float2(0.0f, texel), 0.0f, 0.0f)).x, tex2Dlod(atlas, float4(uv0 + texel, 0.0f, 0.0f)).x);
+    float4 lit = depth <= d ? 1.0f : 0.0f;
+    return lerp(lerp(lit.x, lit.y, f.x), lerp(lit.z, lit.w, f.x), f.y);
 }

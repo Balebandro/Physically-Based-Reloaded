@@ -29,8 +29,7 @@ public:
 	struct HudRaindropsSettings {
 		float DropSize;     // a drop texture tile, in game units
 		float Density;
-		float WetTime;
-		float DryTime;
+		float WetTime;		// seconds to wet through, and to dry off again
 		float Refraction;
 		float Reflection;
 		float Gloss;        // the drops'
@@ -73,6 +72,6 @@ private:
 	bool	Cleared = false;     // the wetness reset to 0 once its texture exists; until then no drops
 	float	Clock = 0.0f;        // the drops' clock: runs while it rains
 	float	DryingLeft = 0.0f;   // seconds the drops may still be drying (the passes run until then)
-	float	WorldWet = 0.0f;     // the world's objects' wetness (AllObjects): rain eased over WetTime / DryTime, 0 indoors
+	float	WorldWet = 0.0f;     // the world's objects' wetness (AllObjects): rain eased over WetTime both ways, 0 indoors
 	bool	DrawSet = false;     // the hooks' constants are nonzero on the device
 };

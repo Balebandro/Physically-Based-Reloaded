@@ -12,20 +12,16 @@ float4x4 TESR_ShadowCameraToLightTransformMiddle;
 float4x4 TESR_ShadowCameraToLightTransformFar;
 float4x4 TESR_ShadowCameraToLightTransformLod;
 float4 TESR_SmoothedSunDir;
-float4 TESR_ShadowFormatData; // x: mode, y: format bits per pixels
 float4 TESR_ShadowBlur; // x: 1 / atlas resolution, y: whether the lod cascade was updated
 float4 TESR_ShadowNearCenter; // x,y,z: center (world space), w: radius
 float4 TESR_ShadowMiddleCenter; // x,y,z: center (world space), w: radius
 float4 TESR_ShadowFarCenter; // x,y,z: center (world space), w: radius
 float4 TESR_ShadowLodCenter; // x,y,z: center (world space), w: radius
 
-static const float Mode = TESR_ShadowFormatData.x;
-static const float FormatBits = TESR_ShadowFormatData.y;
-
 // Normal-offset bias in shadow map TEXELS, not world units -- a fixed world-space offset is
 // several texels in the Near cascade and a fraction of one in the Lod cascade. See the note in
 // Shaders/Includes/Shadow.hlsl. Keep these three in step with the SHADOW_NORMAL_BIAS_TEXELS /
-// SHADOW_SLOPE_BIAS / SHADOW_FILTER_TAPS defaults there, or the two paths disagree.
+// SHADOW_SLOPE_BIAS defaults there, or the two paths disagree.
 //
 // An effect that has to agree with the forward path pixel for pixel defines
 // CASCADE_NORMAL_BIAS_TEXELS as the game shaders' 0 before including this; otherwise an edge
@@ -34,9 +30,6 @@ static const float FormatBits = TESR_ShadowFormatData.y;
     #define CASCADE_NORMAL_BIAS_TEXELS 2.5f
 #endif
 static const float NormalBiasTexels = CASCADE_NORMAL_BIAS_TEXELS;
-static const float SlopeBias = 1.0f;
-#define SHADOW_FILTER_TAPS 1
-#define SHADOW_FILTER_SPREAD 1.0f
 
 float4 ScreenCoordToTexCoord(float4 coord){
 	// apply perspective (perspective division) and convert from -1/1 to range to 0/1 (shadowMap range);
@@ -47,36 +40,8 @@ float4 ScreenCoordToTexCoord(float4 coord){
 	return coord;
 }
 
-// Moments for one cascade, optionally averaged over several taps.
-//
-// Averaging the MOMENTS and evaluating Chebyshev once is the correct order -- moments are
-// linearly filterable, which is the entire reason variance shadow maps exist. Averaging
-// four separate Chebyshev results would be both wrong and slower.
-// tex2Dlod, not tex2D: with forward compiled in, the deferred lookup sits inside a dynamic
-// branch, and a gradient-taking sample there is illegal (X3528). The atlas has no mipmaps, so
-// an explicit LOD 0 is exactly equivalent -- the forward path samples it the same way.
-float4 SampleShadowMoments(float2 uv, float2 quadrantOffset) {
-#if SHADOW_FILTER_TAPS <= 1
-    return tex2Dlod(TESR_ShadowAtlas, float4(uv, 0.0f, 0.0f));
-#else
-	// Taps must stay inside their own quadrant: the atlas packs four unrelated cascades into
-	// one texture, so a tap crossing a quadrant border reads another cascade's depths as if
-	// they belonged to this one. ShadowMapBlur.pso clamps for the same reason.
-    float texel = TESR_ShadowBlur.x;
-    float2 lo = quadrantOffset + texel * 0.5f;
-    float2 hi = quadrantOffset + 0.5f - texel * 0.5f;
-
-    float2 d = texel * SHADOW_FILTER_SPREAD;
-    float4 m;
-    m  = tex2Dlod(TESR_ShadowAtlas, float4(clamp(uv + d * float2( 1.0f,  0.5f), lo, hi), 0.0f, 0.0f));
-    m += tex2Dlod(TESR_ShadowAtlas, float4(clamp(uv + d * float2(-0.5f,  1.0f), lo, hi), 0.0f, 0.0f));
-    m += tex2Dlod(TESR_ShadowAtlas, float4(clamp(uv + d * float2(-1.0f, -0.5f), lo, hi), 0.0f, 0.0f));
-    m += tex2Dlod(TESR_ShadowAtlas, float4(clamp(uv + d * float2( 0.5f, -1.0f), lo, hi), 0.0f, 0.0f));
-    return m * 0.25f;
-#endif
-}
-
-float GetLightAmountValue(float4x4 lightTransform, float4 coord, float offsetX, float offsetY, float bias, float bleedReduction) {
+// One cascade's shadow: plain depths compared with PCF (the atlas holds depth only).
+float GetLightAmountValue(float4x4 lightTransform, float4 coord, float offsetX, float offsetY) {
     float4 LightSpaceCoord = ScreenCoordToTexCoord(mul(coord, lightTransform));
 
 	// Offset to the correct position in the atlas.
@@ -84,19 +49,7 @@ float GetLightAmountValue(float4x4 lightTransform, float4 coord, float offsetX, 
     LightSpaceCoord.x += offsetX;
     LightSpaceCoord.y += offsetY;
 
-    float4 shadowBufferValue = SampleShadowMoments(LightSpaceCoord.xy, float2(offsetX, offsetY));
-
-    float shadow;
-	
-	[branch]
-    if (Mode == 0.0f)
-        shadow = GetLightAmountValueVSM(shadowBufferValue.xy, LightSpaceCoord.z, bias, bleedReduction);
-    else if (Mode == 1.0f)
-        shadow = GetLightAmountValueEVSM2(shadowBufferValue.xy, LightSpaceCoord.z, bias, bleedReduction, FormatBits);
-	else
-        shadow = GetLightAmountValueEVSM4(shadowBufferValue, LightSpaceCoord.z, bias, bleedReduction, FormatBits);
-	
-    return shadow;
+    return ShadowPCF2x2(TESR_ShadowAtlas, LightSpaceCoord.xy, LightSpaceCoord.z - 0.0002f, TESR_ShadowBlur.x);
 }
 
 float GetLightAmount(float4 positionWS, float3 normal)
@@ -118,19 +71,15 @@ float GetLightAmount(float4 positionWS, float3 normal)
     float4 texelWorld = 4.0f * radii * max(TESR_ShadowBlur.x, 1.0f / 16384.0f);
     float4 offsetDistance = offsetScale * NormalBiasTexels * texelWorld;
 
-	// Slope-scaled variance floor: a grazing texel spans a long run of receiver depth and
-	// needs more slack before Chebyshev calls it occluded.
-    float bias = (Mode == 0.0f ? 0.00001f : 0.01f) * (1.0f + SlopeBias * offsetScale);
-
     const float blend = 0.9f;
 
 	// Each cascade is offset in its OWN texel scale -- one shared samplePos cannot suit all
 	// four when their texels differ by more than an order of magnitude.
 	float4 shadows = {
-        GetLightAmountValue(TESR_ShadowCameraToLightTransformNear,   float4(positionWS.xyz + offsetDistance.x * normal, 1.0f), 0.0, 0.0, bias, 0.1f),
-		GetLightAmountValue(TESR_ShadowCameraToLightTransformMiddle, float4(positionWS.xyz + offsetDistance.y * normal, 1.0f), 0.5, 0.0, bias, 0.2f),
-		GetLightAmountValue(TESR_ShadowCameraToLightTransformFar,    float4(positionWS.xyz + offsetDistance.z * normal, 1.0f), 0.0, 0.5, bias, 0.6f),
-		GetLightAmountValue(TESR_ShadowCameraToLightTransformLod,    float4(positionWS.xyz + offsetDistance.w * normal, 1.0f), 0.5, 0.5, bias, 0.8f),
+        GetLightAmountValue(TESR_ShadowCameraToLightTransformNear,   float4(positionWS.xyz + offsetDistance.x * normal, 1.0f), 0.0, 0.0),
+		GetLightAmountValue(TESR_ShadowCameraToLightTransformMiddle, float4(positionWS.xyz + offsetDistance.y * normal, 1.0f), 0.5, 0.0),
+		GetLightAmountValue(TESR_ShadowCameraToLightTransformFar,    float4(positionWS.xyz + offsetDistance.z * normal, 1.0f), 0.0, 0.5),
+		GetLightAmountValue(TESR_ShadowCameraToLightTransformLod,    float4(positionWS.xyz + offsetDistance.w * normal, 1.0f), 0.5, 0.5),
     };
 
     float4 distances = {

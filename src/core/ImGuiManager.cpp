@@ -2182,9 +2182,6 @@ static const char* kTonemappingModeNames[] = {
 static const char* kCinemaDofModeNames[] = {
 	"0 - Always", "1 - Not during dialog", "2 - Only during dialog", "3 - Disabled",
 };
-static const char* kShadowsModeNames[] = {
-	"0 - VSM", "1 - EVSM2", "2 - EVSM4",
-};
 // SleepingMode.Mode has no TOML comment; values derived from
 // src/core/Hooks/SleepingCommon.cpp's ShowSleepWaitMenuHook.
 static const char* kSleepingModeNames[] = {
@@ -2217,7 +2214,6 @@ static const std::unordered_map<std::string, EnumOptions> kEnumSettings = {
 	{ "Shaders.DepthOfField.ThirdPersonView.Mode",             ENUM_OPT(kCinemaDofModeNames) },
 	{ "Shaders.DepthOfField.VanityView.Mode",                  ENUM_OPT(kCinemaDofModeNames) },
 	{ "Main.SleepingMode.Main.Mode",                           ENUM_OPT(kSleepingModeNames) },
-	{ "Shaders.ShadowsExteriors.ShadowMaps.Mode",              ENUM_OPT(kShadowsModeNames) },
 	{ "Shaders.ShadowsExteriors.Main.Quality",                 ENUM_OPT(kShadowQualityNames) },
 	{ "Shaders.ShadowsExteriors.ShadowMaps.Format",            ENUM_OPT(kShadowFormatNames) },
 	{ "Shaders.ShadowsExteriors.ShadowMaps.CascadeResolution", ENUM_OPT(kShadowCascadeResolutionNames) },

@@ -18,15 +18,6 @@ class ShadowsExteriorEffect : public EffectRecord
 public:
 	ShadowsExteriorEffect() : EffectRecord("ShadowsExteriors") {};
 
-	static const int Modes = 3;
-	static const int FormatBits = 2;
-
-	D3DFORMAT Formats[Modes][FormatBits] = {
-		{D3DFMT_G16R16, D3DFMT_G32R32F},
-		{D3DFMT_G16R16F, D3DFMT_G32R32F},
-		{D3DFMT_A16B16G16R16F, D3DFMT_A32B32G32R32F},
-	};
-	
 	enum ShadowMapTypeEnum {
 		MapNear = 0,
 		MapMiddle = 1,
@@ -61,6 +52,11 @@ public:
 		// opposite polarity would turn a dropped constant into silently missing shadows,
 		// which is exactly the failure that made this a compile-time macro in the first place.
 		D3DXVECTOR4		ForwardData;
+		// [Shaders.ShadowsExteriors.SunSmoothing] CrossFade: the cascades as they were before the sun's last step
+		// (camera-relative, moved with the camera) and x: how much of them still shows (Includes/Shadow.hlsl).
+		D3DXMATRIX		OldCameraToLight[4];
+		D3DXVECTOR4		OldCenter[4];
+		D3DXVECTOR4		CrossFade;
 	};
 
 	// Settings
@@ -101,8 +97,6 @@ public:
 	};
 
 	struct ShadowMapStruct {
-		int					Mode;
-		int					FormatBits;
 		D3DFORMAT			Format;
 		int					CascadeResolution;
 		bool                Prefilter;
@@ -117,6 +111,7 @@ public:
 		float				CasterDrop;
 		bool				Instancing;		// copies of one mesh drawn together (ShadowRenderPass::RenderAccum)
 		bool				SkipCoveredCasters;	// leave out of a cascade what only an earlier one shades
+		bool				SmoothFilter;		// Mode 3: a 4x4 cubic B-spline filter instead of the 3x3 (TESR_ShadowBlur.z)
 	};
 
 	struct OrthoStruct {
@@ -163,6 +158,17 @@ public:
 		float				YawStepSize;
 		float				PitchStepSize;
 		float				MaxJumpAngle;
+		float				GlideSeconds;	// with QuantizeSun and SmoothSun: each step eased over this long
+		bool				CrossFade;		// with forward shadows: a step fades from the old cascades to the new
+	};
+
+	// [Shaders.ContactHardening]: sun shadows sharp where a caster touches, softer further off (Mode 3, forward).
+	struct ContactHardeningStruct {
+		bool				Enabled;
+		float				SunSize;
+		float				MaxSoftness;
+		bool				Smooth;
+		bool				AtNight;
 	};
 
 	struct SettingsShadowStruct {
@@ -172,6 +178,7 @@ public:
 		ExteriorsStruct		Exteriors;
 		InteriorsStruct		Interiors;
 		SunSmoothingStruct  SunSmoothing;
+		ContactHardeningStruct ContactHardening;
 	};
 	SettingsShadowStruct	Settings;
 	ShadowStruct			Constants;
@@ -223,6 +230,21 @@ public:
 	// is below the horizon. The atlas and the camera-relative ShadowCameraToLight transforms are then
 	// stale -- see UpdateConstants for why they must not be sampled.
 	bool		SunMapsStale = false;
+
+	// Sun step glide and cross-fade (NVR UNOFFICIAL Optimized).
+	D3DXVECTOR3	SunGlideFrom = D3DXVECTOR3(0.0f, 0.0f, 1.0f);
+	D3DXVECTOR3	SunGlideTo = D3DXVECTOR3(0.0f, 0.0f, 1.0f);
+	ULONGLONG	SunGlideStart = 0;
+	bool		SunGlideValid = false;
+	bool		SunCrossFadeReady = false;
+	bool		SunCrossFading = false;
+	IDirect3DTexture9* ShadowAtlasOldTexture = nullptr;
+	IDirect3DSurface9* ShadowAtlasOldSurface = nullptr;
+	D3DXMATRIX	SunFadeMatrix[4];
+	D3DXVECTOR4	SunFadeCenter[4];
+	D3DXVECTOR3	SunFadeCamera[4];
+	bool		StartSunCrossFade();
+	void		UpdateSunCrossFade(float oldWeight);
 
 	void		GetCascadeDepths();
 	D3DXMATRIX	GetCascadeViewProj(ShadowMapSettings* ShadowMap, D3DXVECTOR3* SunDir);

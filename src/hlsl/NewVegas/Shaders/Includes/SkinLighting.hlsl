@@ -25,9 +25,11 @@
 #if defined(__INTELLISENSE__)
     #include "PBR.hlsl"
     #include "PBRScale.hlsl"
+    #include "Pointlights.hlsl"
 #else
     #include "Includes/PBR.hlsl"
     #include "Includes/PBRScale.hlsl"
+    #include "Includes/Pointlights.hlsl"   // the lamp look (TESR_LampLook)
 #endif
 
 // c136 and c146 sit either side of SkyAmbient.hlsl's TESR_SkyIrradiance (c137-c145).
@@ -193,6 +195,7 @@ float3 SkinLight(float3 albedo, float3 N, float3 Nsoft, float3 geometricNormal, 
     selfShadowed = selfShadowed * selfShadowed * (3.0f - 2.0f * selfShadowed) * saturate(TESR_SkinExtraData.z);
     float3 shadowColor = SkinShadow(shadow);
     float3 diffuse = albedo * (direct * shadowColor + wrapped * lerp(shadowColor, 1.0f, selfShadowed));
+    if (!sun) diffuse += albedo * lampBounce(dot(N, L));   // a lamp's light back off its surroundings (TESR_LampLook)
 
     // Transmission only through thin features (ears, nostrils, fingers: high curvature), and only
     // where the light reaches the far side of the surface (Jimenez: saturate(0.3 - N.L)).
@@ -214,7 +217,7 @@ float3 SkinLampLight(float3 albedo, float3 N, float3 Nsoft, float3 V, float3 L, 
     float3 light = decodeColor(lightColor) * TESR_PBRData.z;
     L = normalize(L);
     specular = SkinSpecular(N, V, L, light, false);
-    return albedo * SkinDiffusion(N, Nsoft, L) * light;
+    return albedo * (SkinDiffusion(N, Nsoft, L) + lampBounce(dot(N, L))) * light;   // with the lamp's bounce (TESR_LampLook)
 }
 
 // Sky reflection off both lobes. Sets skyReflectedFraction, so call it BEFORE SkinAmbient.

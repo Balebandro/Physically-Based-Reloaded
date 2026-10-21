@@ -120,20 +120,13 @@ float4 TESR_ShadowNearCenter;
 float4 TESR_ShadowMiddleCenter;
 float4 TESR_ShadowFarCenter;
 float4 TESR_ShadowLodCenter;
-float4 TESR_ShadowFormatData; // x: mode, y: format bits
-
-static const float ShadowMode = TESR_ShadowFormatData.x;
-static const float ShadowFormatBits = TESR_ShadowFormatData.y;
+float4 TESR_ShadowBlur; // x: 1 / atlas resolution
 
 float4 ScreenCoordToTexCoord(float4 coord) {
     coord.xyz /= coord.w;
     coord.x = coord.x * 0.5f + 0.5f;
     coord.y = coord.y * -0.5f + 0.5f;
     return coord;
-}
-
-float4 SampleShadowMoments(float2 uv) {
-    return tex2Dlod(TESR_ShadowAtlas, float4(uv, 0.0f, 0.0f));
 }
 
 // A cascade's shadow map is an orthographic slab, 2*sphereRadius thick, oriented along the sun.
@@ -162,26 +155,10 @@ bool OutsideShadowMap(float3 projected) {
     return max(max(abs(projected.x), abs(projected.y)), abs(projected.z * 2.0f - 1.0f)) > 1.0f;
 }
 
-// Light-bleed reduction, adjusted for the atlas format so the effect works on either.
-//
-// GetEVSMExponents clamps the EVSM positive exponent to 5.54 on a 16-bit atlas (Format = 0)
-// against 40 on a 32-bit one. The narrower warp leaves the Chebyshev bound markedly looser, so
-// pMax sits higher and occluded points read as partly lit. ReduceLightBleeding removes exactly
-// that tail, which makes it the right place to compensate -- rather than requiring the wider
-// format, which costs double atlas bandwidth across the whole shadow system.
-//
-// A ray march is far more exposed to this than surface shading. A shaded surface sits a few
-// units behind its occluder, where the bound is still tight; march samples sit hundreds of
-// units behind one, where it is weakest. So the shared defaults, tuned for surfaces, are too
-// permissive here on 16-bit even though they are fine for the deferred path.
-float BleedReduction(float amount) {
-    return ShadowFormatBits == 0.0f ? lerp(amount, 0.9f, 0.45f) : amount;
-}
-
 // Samples one cascade, or returns -1 when the point does not fall inside that cascade's map.
 // The caller uses that to pick a cascade, which is the whole reason this reports it rather
 // than clamping: selecting on the projection itself needs no TESR_Shadow*Center constant.
-float TryCascade(float4x4 lightTransform, float4 coord, float offsetX, float offsetY, float bias, float bleedReduction) {
+float TryCascade(float4x4 lightTransform, float4 coord, float offsetX, float offsetY) {
     float4 projected = mul(coord, lightTransform);
     projected.xyz /= projected.w;
     if (OutsideShadowMap(projected.xyz)) return -1.0f;
@@ -191,21 +168,12 @@ float TryCascade(float4x4 lightTransform, float4 coord, float offsetX, float off
     lightSpaceCoord.x += offsetX;
     lightSpaceCoord.y += offsetY;
 
-    float4 moments = SampleShadowMoments(lightSpaceCoord.xy);
-
-    [branch]
-    if (ShadowMode == 0.0f)
-        return GetLightAmountValueVSM(moments.xy, lightSpaceCoord.z, bias, bleedReduction);
-    else if (ShadowMode == 1.0f)
-        return GetLightAmountValueEVSM2(moments.xy, lightSpaceCoord.z, bias, bleedReduction, ShadowFormatBits);
-    else
-        return GetLightAmountValueEVSM4(moments, lightSpaceCoord.z, bias, bleedReduction, ShadowFormatBits);
+    return ShadowPCF2x2(TESR_ShadowAtlas, lightSpaceCoord.xy, lightSpaceCoord.z - 0.0002f, TESR_ShadowBlur.x);
 }
 
 float GetSunShadowAmount(float3 positionWS) {
     if (!TESR_ShadowFade.y) return 1.0f;
 
-    const float bias = ShadowMode == 0.0f ? 0.00001f : 0.01f;
     float4 coord = float4(positionWS, 1.0f);
 
     // Cascade chosen by whether the point projects inside each map, nearest first -- not by
@@ -225,10 +193,10 @@ float GetSunShadowAmount(float3 positionWS) {
     // strictly more correct -- a bounding sphere overlaps the map it approximates rather than
     // matching it -- at the cost of the smooth cross-fade the radii allowed, which is worth
     // losing to get occlusion at all.
-    float shadow = TryCascade(TESR_ShadowCameraToLightTransformNear,   coord, 0.0f, 0.0f, bias, BleedReduction(0.1f));
-    if (shadow < 0.0f) shadow = TryCascade(TESR_ShadowCameraToLightTransformMiddle, coord, 0.5f, 0.0f, bias, BleedReduction(0.2f));
-    if (shadow < 0.0f) shadow = TryCascade(TESR_ShadowCameraToLightTransformFar,    coord, 0.0f, 0.5f, bias, BleedReduction(0.6f));
-    if (shadow < 0.0f) shadow = TryCascade(TESR_ShadowCameraToLightTransformLod,    coord, 0.5f, 0.5f, bias, BleedReduction(0.8f));
+    float shadow = TryCascade(TESR_ShadowCameraToLightTransformNear,   coord, 0.0f, 0.0f);
+    if (shadow < 0.0f) shadow = TryCascade(TESR_ShadowCameraToLightTransformMiddle, coord, 0.5f, 0.0f);
+    if (shadow < 0.0f) shadow = TryCascade(TESR_ShadowCameraToLightTransformFar,    coord, 0.0f, 0.5f);
+    if (shadow < 0.0f) shadow = TryCascade(TESR_ShadowCameraToLightTransformLod,    coord, 0.5f, 0.5f);
 
     // Outside every cascade there is no occlusion information, so lit is the only safe answer.
     if (shadow < 0.0f) return 1.0f;

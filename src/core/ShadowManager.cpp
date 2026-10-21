@@ -67,6 +67,8 @@ void ShadowManager::Initialize() {
 		Logger::Log("[ERROR]: Could not load one or more of the ShadowMap generation shaders. Reinstall the mod.");
     }
 
+	TheShaderManager->RegisterConstant("TESR_ContactHardeningData", &TheShadowManager->ContactHardeningData);
+
 	UINT ShadowCubeMapSize = TheShaderManager->Effects.ShadowsExteriors->Settings.Interiors.ShadowCubeMapSize;
 	TheShadowManager->ShadowCubeMapViewPort = { 0, 0, ShadowCubeMapSize, ShadowCubeMapSize, 0.0f, 1.0f };
 
@@ -459,6 +461,73 @@ static bool IsUnderNode(const NiAVObject* Object, const NiNode* Root) {
 	return false;
 }
 
+// Still lamp shadow cube maps ([Main.Main.Performance] ReuseStillCubeMaps), after NVR UNOFFICIAL Optimized's static
+// cube map reuse (P41, P44). A cube map holds the distance from its lamp over its radius, whatever the camera does, so
+// while the lamp, its radius, the cell and the texture stay the same and the casters RenderShadowCubeMap draws (the
+// lamp's geometry list) are the same and in the same place, the cube map already there is still right. A list with
+// anything that moves of itself (skinned meshes: people, creatures; tree leaves in the wind) is drawn every frame.
+struct StillCubeMap {
+	const void*	Light = nullptr;
+	const void*	Texture = nullptr;
+	const void*	Cell = nullptr;
+	float		X = 0.0f, Y = 0.0f, Z = 0.0f, Radius = 0.0f;
+	UInt64		CasterHash = 0;
+	bool		Still = false;		// the last drawing had only still casters
+	bool		Valid = false;
+};
+
+static UInt64 HashBytes(UInt64 hash, const void* data, size_t size) {
+	const unsigned char* bytes = static_cast<const unsigned char*>(data);
+	for (size_t i = 0; i < size; ++i) { hash ^= bytes[i]; hash *= 1099511628211ULL; }   // FNV-1a
+	return hash;
+}
+
+// The casters' state, summed so the list's order does not matter; false when one of them moves of itself (or none).
+static bool StillCasters(const ShadowSceneLight* light, UInt64& hash) {
+	hash = 1469598103934665603ULL;
+	if (!light || !light->kGeometryList.start) return false;
+	for (auto entry = light->kGeometryList.start; entry; entry = entry->next) {
+		NiGeometry* geo = entry->data;
+		if (!geo) continue;
+		NiShadeProperty* shade = static_cast<NiShadeProperty*>(geo->GetProperty(NiProperty::kType_Shade));
+		if (geo->skinInstance || (shade && shade->m_eShaderType == NiShadeProperty::kProp_SpeedTreeLeaf)) return false;
+		UInt64 caster = 1469598103934665603ULL;
+		caster = HashBytes(caster, &geo, sizeof(geo));
+		caster = HashBytes(caster, &geo->m_flags, sizeof(geo->m_flags));
+		caster = HashBytes(caster, &geo->m_worldTransform, sizeof(geo->m_worldTransform));
+		if (geo->m_kWorldBound) caster = HashBytes(caster, geo->m_kWorldBound, sizeof(*geo->m_kWorldBound));
+		if (shade) {
+			caster = HashBytes(caster, &shade->m_usFlags, sizeof(shade->m_usFlags));
+			caster = HashBytes(caster, &shade->m_eShaderType, sizeof(shade->m_eShaderType));
+		}
+		if (NiMaterialProperty* material = static_cast<NiMaterialProperty*>(geo->GetProperty(NiProperty::kType_Material)))
+			caster = HashBytes(caster, &material->fAlpha, sizeof(material->fAlpha));
+		hash += caster * 0x9E3779B185EBCA87ULL;
+	}
+	return true;
+}
+
+// Whether slot's cube map can stay as it is this frame; records what it is drawn for otherwise.
+static bool StillCubeMapCurrent(StillCubeMap& slot, const ShadowSceneLight* light, const void* texture, const void* cell, float radiusMult) {
+	if (!light || !light->sourceLight || !texture) { slot.Valid = false; return false; }
+	const NiPointLight* source = light->sourceLight;
+	StillCubeMap now;
+	now.Light = light;
+	now.Texture = texture;
+	now.Cell = cell;
+	now.X = source->m_worldTransform.pos.x;
+	now.Y = source->m_worldTransform.pos.y;
+	now.Z = source->m_worldTransform.pos.z;
+	now.Radius = source->CanCarry ? 256.0f : source->Spec.r * radiusMult;   // as RenderShadowCubeMap
+	now.Still = StillCasters(light, now.CasterHash);
+	now.Valid = true;
+	const bool current = slot.Valid && slot.Still && now.Still && slot.Light == now.Light && slot.Texture == now.Texture &&
+		slot.Cell == now.Cell && slot.X == now.X && slot.Y == now.Y && slot.Z == now.Z && slot.Radius == now.Radius &&
+		slot.CasterHash == now.CasterHash;
+	if (!current) slot = now;   // redrawn this frame for these
+	return current;
+}
+
 void ShadowManager::RenderShadowCubeMap(ShadowSceneLight** Lights, UInt32 LightIndex) {
 	if (Lights[LightIndex] == NULL) return; // No light at current index
 	
@@ -790,6 +859,15 @@ void ShadowManager::RenderShadowMaps() {
 			Shadows->Constants.ShadowFade.y = 0.0f;
 		}
 
+		// [Shaders.ContactHardening] (read only by the shaders compiled with CONTACT_HARDENING: Mode 3, forward).
+		{
+			const bool night = TheShaderManager->GameState.dayLight <= 0.0f && !Shadows->Settings.ContactHardening.AtNight;
+			const bool on = Shadows->Settings.ContactHardening.Enabled && !night;
+			ContactHardeningData.x = on ? 0.00925f * Shadows->Settings.ContactHardening.SunSize : 0.0f;
+			ContactHardeningData.y = Shadows->Settings.ContactHardening.MaxSoftness;
+			ContactHardeningData.z = Shadows->Settings.ContactHardening.Smooth ? 1.0f : 0.0f;
+		}
+
 		if (ExteriorEnabled && SunDir.z > 0.0f) {
 			// Recalculate billboard vectors for speedtree leaves shader.
 			RecalculateBillboardVectors(&SunDir);
@@ -807,7 +885,7 @@ void ShadowManager::RenderShadowMaps() {
 			for (int i = MapNear; i < MapOrtho; i++) {
 				ShadowsExteriorEffect::ShadowMapSettings* ShadowMap = &Shadows->ShadowMaps[i];
 
-				if (!Shadows->Settings.ShadowMaps.LimitFrequency || i != MapLod || !(FrameCounter % 4)) {
+				if (ForceAllCascades || !Shadows->Settings.ShadowMaps.LimitFrequency || i != MapLod || !(FrameCounter % 4)) {
 					Shadows->Constants.ShadowViewProj = Shadows->GetCascadeViewProj(ShadowMap, &SunDir);
 					// Caster culling, not on a cascade drawn only every fourth frame: turning would show what it left out.
 					const bool cull = Shadows->Settings.ShadowMaps.CasterCulling && ShadowMap->CasterPlanesValid &&
@@ -845,6 +923,8 @@ void ShadowManager::RenderShadowMaps() {
 				message += std::to_string(i);
 				shadowMapTimer.LogTime(message.c_str());
 			}
+
+			ForceAllCascades = false;
 
 			// Resolve MSAA.
 			if (Shadows->ShadowAtlasSurfaceMSAA)
@@ -907,7 +987,15 @@ void ShadowManager::RenderShadowMaps() {
 		// (PointShadows2 lights it without a shadow lookup), so it is not drawn.
 		const int cubeMapsDrawn = TheSettingManager->GetSettingI("Main.Main.Performance", "SkipUnusedCubeMap") ?
 			min(ShadowsInteriors->LightPoints, ShadowCubeMapsMax - 1) : ShadowsInteriors->LightPoints;
+		const bool reuseStill = TheSettingManager->GetSettingI("Main.Main.Performance", "ReuseStillCubeMaps") != 0;
+		static StillCubeMap stillCubeMaps[ShadowCubeMapsMax];
 		for (int i = 0; i < cubeMapsDrawn; i++) {
+
+			// [Main.Main.Performance] ReuseStillCubeMaps: the same lamp over the same casters, none of them moving, keeps
+			// the cube map it already has.
+			if (reuseStill && StillCubeMapCurrent(stillCubeMaps[i], ShadowLights[i], Shadows->Textures.ShadowCubeMapTexture[i],
+					Player ? Player->parentCell : nullptr, ShadowsInteriors->LightRadiusMult))
+				continue;
 
 			// Render targets set in function due to rendering multiple faces.
 			RenderShadowCubeMap(ShadowLights, i);

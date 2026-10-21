@@ -287,7 +287,7 @@ float4 PSLightColor[10] : register(c3);
 
 // Point light i: d is its light vector / radius.
 float3 PointLight(int i, float3 d, float3 albedo, float3 N, float3 Nsoft, float3 geometricNormal, float3 V, out float3 specular) {
-    float3 lightColor = PSLightColor[FIRST_POINT + i].rgb * (1.0f - saturate(dot(d, d)));
+    float3 lightColor = PSLightColor[FIRST_POINT + i].rgb * lampFalloff(1.0f - saturate(dot(d, d)));   // the lamp look's falloff (TESR_LampLook)
     #ifdef MANY
         // Unused slots (EmittanceColor.a lights are live) can hold anything, NaN included, so
         // they are branched around, not multiplied by 0. The branch also keeps the compiler
@@ -470,7 +470,7 @@ PS_OUTPUT main(PS_INPUT IN) {
                 if (i >= TESR_MergedLightCount.x) break;
                 float3 toLamp = TESR_MergedLightPosition[i].xyz - IN.shadowWorldPos.xyz;
                 float3 d = float3(dot(normalize(IN.tangent.xyz), toLamp), dot(normalize(IN.binormal.xyz), toLamp), dot(normalize(IN.normal.xyz), toLamp)) / TESR_MergedLightPosition[i].w;
-                float3 lampColor = TESR_MergedLightColor[i].rgb * (1.0f - saturate(dot(d, d)));
+                float3 lampColor = TESR_MergedLightColor[i].rgb * lampFalloff(1.0f - saturate(dot(d, d)));
                 diffuseLight += SkinLampLight(albedo, N, Nsoft, V, d, lampColor, specular);
                 specularLight += specular;
             }
