@@ -163,6 +163,14 @@ static bool IsSeeThroughPass(IDirect3DDevice9* Device) {
 	if (test && reference >= 32) return false;   // a cut-out (some glass tests at a near-zero reference)
 	void* pass = *(void**)0x011F91E0;   // BSShaderManager::pCurrentRenderPass; its first member is the geometry
 	NiGeometry* geometry = pass ? *(NiGeometry**)pass : nullptr;
+	// Characters and creatures keep their depth, or they get the dust behind them and look see-through: skinned meshes
+	// (hair, blended clothing and armour), and unskinned ones hung on a skeleton's bones (hats, helmets, goggles).
+	if (geometry && geometry->skinInstance) return false;
+	if (geometry) {
+		NiNode* node = geometry->m_parent;
+		for (int depth = 0; node && depth < 32; ++depth, node = node->m_parent)
+			if (node->m_pcName && !_strnicmp(node->m_pcName, "Bip01", 5)) return false;
+	}
 	// Water keeps its depth, the water effects read its surface; except from underwater, where the world above is seen
 	// through it as through glass and must get the dust of its own distance.
 	SandstormEffect* sandstorm = TheShaderManager->Effects.Sandstorm;
