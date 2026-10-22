@@ -290,7 +290,8 @@ void ShaderManager::UpdateConstants() {
 		InterfaceManager->IsActive(Menu::kMenuType_SlotMachine) ||
 		InterfaceManager->IsActive(Menu::kMenuType_Blackjack) ||
 		InterfaceManager->IsActive(Menu::kMenuType_Roulette) ||
-		InterfaceManager->IsActive(Menu::kMenuType_Caravan);
+		InterfaceManager->IsActive(Menu::kMenuType_Caravan) ||
+		InterfaceManager->IsActive(Menu::kMenuType_RaceSex);   // the Reflectron: a rendered menu over the frozen background, like the Pip-Boy
 	GameState.isDialog = InterfaceManager->IsActive(Menu::MenuType::kMenuType_Dialog);
 	GameState.isPersuasion = InterfaceManager->IsActive(Menu::MenuType::kMenuType_Persuasion);
 	
