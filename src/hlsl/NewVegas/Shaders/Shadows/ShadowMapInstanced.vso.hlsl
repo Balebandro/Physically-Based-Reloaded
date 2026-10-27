@@ -25,11 +25,13 @@ VS_OUTPUT main(VS_INPUT IN) {
     r0 = float4(dot(IN.world0, r0), dot(IN.world1, r0), dot(IN.world2, r0), 1.0f);
     r0 = mul(r0, TESR_ShadowViewProjTransform);
 
+    // The true depth, interpolated unclamped: ShadowMap.pso pancakes per pixel.
+    OUT.texcoord_0 = r0;
+
     // Pancaking to ensure geometry outside of near plane is not culled.
     r0.z = max(r0.z, 0.0f);
 
     OUT.position = r0;
-    OUT.texcoord_0 = r0;
     OUT.texcoord_1 = IN.texcoord_0;
     return OUT;
 };

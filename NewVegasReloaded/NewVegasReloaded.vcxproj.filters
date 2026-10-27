@@ -429,9 +429,6 @@
     <ClCompile Include="..\src\effects\Tonemapping.cpp">
       <Filter>Effects</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\effects\VolumetricLight.cpp">
-      <Filter>Effects</Filter>
-    </ClCompile>
     <ClCompile Include="..\src\effects\VolumetricFog.cpp">
       <Filter>Effects</Filter>
     </ClCompile>
@@ -553,6 +550,9 @@
       <Filter>Effects</Filter>
     </ClCompile>
     <ClCompile Include="..\src\effects\Underwater.cpp">
+      <Filter>Effects</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\effects\VolumetricLight.cpp">
       <Filter>Effects</Filter>
     </ClCompile>
     <ClCompile Include="..\src\NewVegas\nvse\GameNi.cpp">

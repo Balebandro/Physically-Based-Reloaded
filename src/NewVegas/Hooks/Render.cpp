@@ -43,7 +43,7 @@ void __fastcall RenderHook(Main* This, UInt32 edx, BSRenderedTexture* RenderedTe
 
 void (__thiscall* SetShaders)(BSShader*, UInt32) = (void (__thiscall*)(BSShader*, UInt32))Hooks::SetShaders;
 void __fastcall SetShadersHook(BSShader* This, UInt32 edx, UInt32 PassIndex) {
-	
+
 	void* CurrentRenderPass = *(void**)0x011F91E0;   // BSShaderManager::pCurrentRenderPass; pGeometry is its first member
 	NiGeometry* Geometry = CurrentRenderPass ? *(NiGeometry**)CurrentRenderPass : nullptr;
 	NiD3DPass* Pass = *(NiD3DPass**)0x0126F74C;
@@ -149,9 +149,41 @@ HRESULT __fastcall SetSamplerStateHook(NiDX9RenderState* This, UInt32 edx, UInt3
 // an alpha test of any strength (fences, wire and torn sheets are solid where drawn and keep their depth). Water keeps
 // its own (the water effects read its surface).
 static bool InBlendedStage = false;
+// Hair in the volumetric light. A blended character surface (hair) writes its depth where it is all but transparent, and
+// the light is added after the scene by depth alone: a strand's faint edge, mostly the sky behind it, got the strand's air
+// (a dark grainy rim against a lit sky), or with its depth dropped the sky's air over the strand's colour (bright grain).
+// While the light is on, in the world scene's blended stage, each such draw is drawn once more into the light's coverage
+// mask (TESR_VolumetricLightCoverage, cleared as the world scene starts), adding its alpha (c = a + c (1 - a)), so the
+// light can give each pixel its share of the air in front of the strand and of the air behind it.
+static bool InCharacterCoverage = false;
 
 typedef HRESULT (STDMETHODCALLTYPE* DrawIndexedPrimitiveFn)(IDirect3DDevice9*, D3DPRIMITIVETYPE, INT, UINT, UINT, UINT, UINT);
 static DrawIndexedPrimitiveFn DrawIndexedPrimitiveNext = nullptr;
+
+static NiGeometry* CurrentPassGeometry() {
+	void* pass = *(void**)0x011F91E0;   // BSShaderManager::pCurrentRenderPass; its first member is the geometry
+	return pass ? *(NiGeometry**)pass : nullptr;
+}
+
+// Characters and creatures: skinned meshes (hair, blended clothing and armour), and unskinned ones hung on a skeleton's
+// bones (hats, helmets, goggles).
+static bool IsCharacterGeometry(NiGeometry* geometry) {
+	if (!geometry) return false;
+	if (geometry->skinInstance) return true;
+	NiNode* node = geometry->m_parent;
+	for (int depth = 0; node && depth < 32; ++depth, node = node->m_parent)
+		if (node->m_pcName && !_strnicmp(node->m_pcName, "Bip01", 5)) return true;
+	return false;
+}
+
+// A blended character draw that writes depth: its base pass (see InCharacterCoverage), not a light added over it.
+static bool IsCharacterBlendedPass(IDirect3DDevice9* Device) {
+	DWORD blend = FALSE, zwrite = FALSE;
+	Device->GetRenderState(D3DRS_ALPHABLENDENABLE, &blend);
+	Device->GetRenderState(D3DRS_ZWRITEENABLE, &zwrite);
+	if (!blend || !zwrite) return false;
+	return IsCharacterGeometry(CurrentPassGeometry());
+}
 
 static bool IsSeeThroughPass(IDirect3DDevice9* Device) {
 	DWORD blend = FALSE, zwrite = FALSE, test = FALSE, reference = 0;
@@ -161,16 +193,9 @@ static bool IsSeeThroughPass(IDirect3DDevice9* Device) {
 	Device->GetRenderState(D3DRS_ALPHATESTENABLE, &test);
 	Device->GetRenderState(D3DRS_ALPHAREF, &reference);
 	if (test && reference >= 32) return false;   // a cut-out (some glass tests at a near-zero reference)
-	void* pass = *(void**)0x011F91E0;   // BSShaderManager::pCurrentRenderPass; its first member is the geometry
-	NiGeometry* geometry = pass ? *(NiGeometry**)pass : nullptr;
-	// Characters and creatures keep their depth, or they get the dust behind them and look see-through: skinned meshes
-	// (hair, blended clothing and armour), and unskinned ones hung on a skeleton's bones (hats, helmets, goggles).
-	if (geometry && geometry->skinInstance) return false;
-	if (geometry) {
-		NiNode* node = geometry->m_parent;
-		for (int depth = 0; node && depth < 32; ++depth, node = node->m_parent)
-			if (node->m_pcName && !_strnicmp(node->m_pcName, "Bip01", 5)) return false;
-	}
+	NiGeometry* geometry = CurrentPassGeometry();
+	// Characters and creatures keep their depth, or they get the dust behind them and look see-through.
+	if (IsCharacterGeometry(geometry)) return false;
 	// Water keeps its depth, the water effects read its surface; except from underwater, where the world above is seen
 	// through it as through glass and must get the dust of its own distance.
 	SandstormEffect* sandstorm = TheShaderManager->Effects.Sandstorm;
@@ -187,23 +212,66 @@ static HRESULT STDMETHODCALLTYPE DrawIndexedPrimitiveHook(IDirect3DDevice9* Devi
 		Device->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
 		return result;
 	}
+	IDirect3DSurface9* coverage = TheShaderManager->Effects.VolumetricLight->Textures.CoverageSurface;
+	if (InCharacterCoverage && coverage && IsCharacterBlendedPass(Device)) {
+		const HRESULT result = DrawIndexedPrimitiveNext(Device, Type, Base, MinIndex, Vertices, Start, Count);
+		// Again into the coverage mask, on the depth it just wrote, alpha only. All set back at once, as above: the render
+		// state cache never sees these (a render target change resets the viewport: kept).
+		IDirect3DSurface9* target = nullptr;
+		D3DVIEWPORT9 viewport;
+		DWORD colorWrite, zwrite, zfunc, separate, sourceAlpha, destAlpha, alphaOp;
+		Device->GetRenderTarget(0, &target);
+		Device->GetViewport(&viewport);
+		Device->GetRenderState(D3DRS_COLORWRITEENABLE, &colorWrite);
+		Device->GetRenderState(D3DRS_ZWRITEENABLE, &zwrite);
+		Device->GetRenderState(D3DRS_ZFUNC, &zfunc);
+		Device->GetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, &separate);
+		Device->GetRenderState(D3DRS_SRCBLENDALPHA, &sourceAlpha);
+		Device->GetRenderState(D3DRS_DESTBLENDALPHA, &destAlpha);
+		Device->GetRenderState(D3DRS_BLENDOPALPHA, &alphaOp);
+		Device->SetRenderTarget(0, coverage);
+		Device->SetViewport(&viewport);
+		Device->SetRenderState(D3DRS_COLORWRITEENABLE, D3DCOLORWRITEENABLE_ALPHA);
+		Device->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+		Device->SetRenderState(D3DRS_ZFUNC, D3DCMP_LESSEQUAL);
+		Device->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE);
+		Device->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ONE);
+		Device->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA);
+		Device->SetRenderState(D3DRS_BLENDOPALPHA, D3DBLENDOP_ADD);
+		DrawIndexedPrimitiveNext(Device, Type, Base, MinIndex, Vertices, Start, Count);
+		Device->SetRenderTarget(0, target);
+		Device->SetViewport(&viewport);
+		Device->SetRenderState(D3DRS_COLORWRITEENABLE, colorWrite);
+		Device->SetRenderState(D3DRS_ZWRITEENABLE, zwrite);
+		Device->SetRenderState(D3DRS_ZFUNC, zfunc);
+		Device->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, separate);
+		Device->SetRenderState(D3DRS_SRCBLENDALPHA, sourceAlpha);
+		Device->SetRenderState(D3DRS_DESTBLENDALPHA, destAlpha);
+		Device->SetRenderState(D3DRS_BLENDOPALPHA, alphaOp);
+		if (target) target->Release();
+		return result;
+	}
 	return DrawIndexedPrimitiveNext(Device, Type, Base, MinIndex, Vertices, Start, Count);
 }
 
 void (__thiscall* RenderBlended)(void*, UInt32) = (void (__thiscall*)(void*, UInt32))Hooks::RenderBlended;
 void __fastcall RenderBlendedHook(void* This, UInt32 edx, UInt32 Arg) {
 	SandstormEffect* Sandstorm = TheShaderManager->Effects.Sandstorm;
-	bool hide = false;
-	if (InWorldScene && Sandstorm && Sandstorm->HidesBlendedDepth()) {
+	VolumetricLightEffect* VolumetricLight = TheShaderManager->Effects.VolumetricLight;
+	const bool hides = Sandstorm && Sandstorm->HidesBlendedDepth();
+	const bool covers = VolumetricLight && VolumetricLight->Enabled && VolumetricLight->Textures.CoverageSurface;
+	bool world = false;
+	if (InWorldScene && (hides || covers)) {
 		// The world's own depth surface, not a reflection's or cube map's.
 		IDirect3DSurface9* depth = nullptr;
 		TheRenderManager->device->GetDepthStencilSurface(&depth);
 		if (depth) {
-			hide = depth == TheTextureManager->TerrainBlendWorldDepth;
+			world = depth == TheTextureManager->TerrainBlendWorldDepth;
 			depth->Release();
 		}
 	}
-	if (hide && !DrawIndexedPrimitiveNext) {
+	const bool hide = world && hides, cover = world && covers;
+	if ((hide || cover) && !DrawIndexedPrimitiveNext) {
 		// Chained in the device's vtable (DrawProfiler patches the same slot, once, keeping what it finds).
 		void** vtbl = *(void***)TheRenderManager->device;
 		DWORD old;
@@ -213,8 +281,10 @@ void __fastcall RenderBlendedHook(void* This, UInt32 edx, UInt32 Arg) {
 		VirtualProtect(&vtbl[82], sizeof(void*), old, &old);
 	}
 	InBlendedStage = hide;
+	InCharacterCoverage = cover;
 	RenderBlended(This, Arg);
 	InBlendedStage = false;
+	InCharacterCoverage = false;
 }
 
 void (__thiscall* RenderWorldSceneGraph)(Main*, Sun*, UInt8, UInt8, UInt8) = (void (__thiscall*)(Main*, Sun*, UInt8, UInt8, UInt8))Hooks::RenderWorldSceneGraph;
@@ -244,6 +314,19 @@ void __fastcall RenderWorldSceneGraphHook(Main* This, UInt32 edx, Sun* SkySun, U
 	TheTextureManager->TerrainBlendLogScene = TheShaderManager->GameState.isExterior && (++sceneCount % 2000) == 300;
 	TheTextureManager->TerrainBlendLog.clear();
 
+	// The volumetric light's coverage mask, empty for this scene's hair (see InCharacterCoverage).
+	if (IDirect3DSurface9* coverage = TheShaderManager->Effects.VolumetricLight ? TheShaderManager->Effects.VolumetricLight->Textures.CoverageSurface : nullptr) {
+		IDirect3DDevice9* Device = TheRenderManager->device;
+		IDirect3DSurface9* target = nullptr;
+		D3DVIEWPORT9 viewport;
+		Device->GetRenderTarget(0, &target);
+		Device->GetViewport(&viewport);
+		Device->SetRenderTarget(0, coverage);
+		Device->Clear(0, NULL, D3DCLEAR_TARGET, D3DCOLOR_ARGB(0, 0, 0, 0), 1.0f, 0);
+		Device->SetRenderTarget(0, target);
+		Device->SetViewport(&viewport);
+		if (target) target->Release();
+	}
 	LampScissor::BeginFrame();
 	InWorldScene = true;
 	(*RenderWorldSceneGraph)(This, SkySun, IsFirstPerson, WireFrame, Arg4);
@@ -455,6 +538,7 @@ void __cdecl ProcessImageSpaceShadersHook(NiDX9Renderer* Renderer, BSRenderedTex
 		OutputSurface = TheRenderManager->currentRTGroup->RenderTargets[0]->data->Surface;
 		if (!TheSettingManager->SettingsMain.Main.RenderPreTonemapping) TheShaderManager->RenderEffectsPreTonemapping(OutputSurface);
 		TheShaderManager->RenderEffects(OutputSurface);
+		ReShadeIntegration::RenderEffects(OutputSurface);
 		TheRenderManager->CheckAndTakeScreenShot(OutputSurface, TheSettingManager->SettingsMain.Main.HDRScreenshot);
 	}
 

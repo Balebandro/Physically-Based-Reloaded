@@ -150,7 +150,11 @@ void TerrainShaders::UpdateSettings() {
 	BlendingSettings.HeightBlend = max(0.0f, TheSettingManager->GetSettingF("Shaders.Terrain.Blending", "HeightBlend"));
 	BlendingSettings.SlopeBlend = max(0.0f, TheSettingManager->GetSettingF("Shaders.Terrain.Blending", "SlopeBlend"));
 	BlendingSettings.MinPixels = max(0.0f, TheSettingManager->GetSettingF("Shaders.Terrain.Blending", "MinPixels"));
-	BlendingConstants.Shape = D3DXVECTOR4(BlendingSettings.GroundWidth, BlendingSettings.HeightBlend, BlendingSettings.SlopeBlend, BlendingSettings.MinPixels);
+	BlendingSettings.ShadowDrop = std::clamp(TheSettingManager->GetSettingF("Shaders.Terrain.Blending", "ShadowDrop"), 0.0f, 4.0f);
+	// HeightEdge (from NVR UNOFFICIAL Optimized) travels in the sign of Shape.y: 1 negative, 2 less 10.
+	const int heightEdge = std::clamp(TheSettingManager->GetSettingI("Shaders.Terrain.Blending", "HeightEdge"), 0, 2);
+	const float shapeY = heightEdge == 2 ? -(BlendingSettings.HeightBlend + 10.0f) : heightEdge == 1 ? -BlendingSettings.HeightBlend : BlendingSettings.HeightBlend;
+	BlendingConstants.Shape = D3DXVECTOR4(BlendingSettings.GroundWidth, shapeY, BlendingSettings.SlopeBlend, BlendingSettings.MinPixels);
 	BlendingSettings.MaxDistance = TheSettingManager->GetSettingF("Shaders.Terrain.Blending", "MaxDistance");
 	BlendingConstants.Data.y = BlendingSettings.BlendDistance;
 	BlendingConstants.Data.z = BlendingSettings.MaxDistance;

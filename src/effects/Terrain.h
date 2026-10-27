@@ -104,12 +104,13 @@ public:
 		float HeightBlend;	// how much the land texture's height map shapes the edge
 		float SlopeBlend;	// BlendDistance multiplier on steep land
 		float MinPixels;	// the fade's minimum width on screen
+		float ShadowDrop;	// BlendDistance multiplier the land is lowered by in the sun shadow maps (ShadowManager)
 	};
 	BlendingSettingsStruct BlendingSettings;
 
 	struct BlendingStruct {
 		D3DXVECTOR4		Data;		// x: on for this draw, y: blend distance, z: max distance, w: debug view
-		D3DXVECTOR4		Shape;		// x: ground width, y: height blend, z: slope blend, w: minimum pixels
+		D3DXVECTOR4		Shape;		// x: ground width, y: height blend (negative: HeightEdge 1, less 10: HeightEdge 2), z: slope blend, w: minimum pixels
 	};
 	BlendingStruct	BlendingConstants;
 

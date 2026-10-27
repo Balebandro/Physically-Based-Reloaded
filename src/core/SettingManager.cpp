@@ -408,7 +408,19 @@ void SettingManager::LoadSettings() {
 	SettingsMain.Main.HDRScreenshot = GetSettingI("Main.Main.Misc", "HDRScreenshot");
 	SettingsMain.Main.ReplaceIntro = GetSettingI("Main.Main.Misc", "ReplaceIntro");
 	SettingsMain.Main.ForceMSAA = GetSettingI("Main.Main.Misc", "ForceMSAA");
+	SettingsMain.Main.AlphaAA = GetSettingI("Main.Main.Misc", "AlphaAA");
 	SettingsMain.Main.SkipFog = GetSettingI("Main.Main.Misc", "SkipFog");
+	SettingsMain.Main.GodRaysLowRes = GetSettingI("Main.Main.ReducedQuality", "GodRaysLowRes");
+	SettingsMain.Main.ReShadeDepthCompat = GetSettingI("Main.Main.Performance", "ReShadeDepthCompat");
+	SettingsMain.Main.ReShadeNVRDepth = GetSettingI("Main.Main.Performance", "ReShadeNVRDepth");
+	SettingsMain.Main.ReShadeBeforeHUD = GetSettingI("Main.Main.Performance", "ReShadeBeforeHUD");
+	SettingsMain.Main.ReShadeDepthNearRemap = GetSettingI("Main.Main.Performance", "ReShadeDepthNearRemap");
+	SettingsMain.Main.ReShadeMenuGuard = GetSettingI("Main.Main.Performance", "ReShadeMenuGuard");
+	SettingsMain.Main.ReShadeMenuGuardVATS = GetSettingI("Main.Main.Performance", "ReShadeMenuGuardVATS");
+	{
+		Configuration::ConfigNode node;
+		ReShadeIntegration::SetMenuGuardEffects(Config.FillNode(&node, "Main.Main.Performance", "ReShadeMenuGuardEffects") ? node.Value : "");
+	}
 	SettingsMain.Main.RenderEffects = GetSettingI("Main.Main.Misc", "RenderEffects");
 	SettingsMain.Main.RenderPreTonemapping = GetSettingI("Main.Main.Misc", "RenderPreTonemapping");
 	SettingsMain.Main.PresetManagerEnabled = GetSettingI("Main.Main.Misc", "PresetManagerEnabled");

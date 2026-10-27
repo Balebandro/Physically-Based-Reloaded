@@ -6,7 +6,8 @@ float4 TESR_GameTime;
 float4 TESR_ExposureData; // x:min brightness, y;max brightness, z:dark adapt speed, w: light adapt speed
 
 sampler2D TESR_RenderedBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
-sampler2D TESR_AvgLumaBuffer : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
+// Last frame's TESR_AvgLumaBuffer (this pass renders to that one; reading it here would be reading the target).
+sampler2D TESR_AvgLumaPrevBuffer : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
 sampler2D TESR_DepthBuffer : register(s2) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 
 static const float decreaseRate = -TESR_ExposureData.z; // max value for adaptation speed towards darker screens
@@ -68,7 +69,7 @@ static const float HyperFocalDistance = max(0.0000001, TESR_DepthOfFieldData.x *
 
 // calculates the current focal distance for depth of field shader and animates the value.
 float getFocalDistance() {
-	float oldFocus = tex2D(TESR_AvgLumaBuffer, center).b;
+	float oldFocus = tex2D(TESR_AvgLumaPrevBuffer, center).b;
 
 	// gets the autofocus depth based on a local average, scaled with player movement speed (to avoid flicker during fast movement)
 	float2 speed = saturate(abs(float2(TESR_MotionBlurData.x, TESR_MotionBlurData.y))) + 0.1;
@@ -90,7 +91,7 @@ float getFocalDistance() {
 
 float4 AvgLuma(VSOUT IN) : COLOR0
 {	
-	float2 oldLuma = tex2D(TESR_AvgLumaBuffer, center).rg;
+	float2 oldLuma = tex2D(TESR_AvgLumaPrevBuffer, center).rg;
 
 	// samples 100 different locations around the screen to calculate an average
 	float4 color = float4(0, 0, 0, 0);
@@ -106,7 +107,12 @@ float4 AvgLuma(VSOUT IN) : COLOR0
 		total++;
 	}
 	color /= total;
-	float newLuma = (luma(color) + (7 * oldLuma.r)) / 8; // average over 8 frames
+	// A NaN or infinite sample (or an unset first frame) would stay in the running average for good: keep the last value.
+	float frameLuma = luma(color);
+	if (!(frameLuma >= 0 && frameLuma < 65504)) frameLuma = (oldLuma.r >= 0 && oldLuma.r < 65504) ? oldLuma.r : 0;
+	if (!(oldLuma.r >= 0 && oldLuma.r < 65504)) oldLuma.r = frameLuma;
+	if (!(oldLuma.g >= 0 && oldLuma.g < 65504)) oldLuma.g = frameLuma;
+	float newLuma = (frameLuma + (7 * oldLuma.r)) / 8; // average over 8 frames
 
 	// gradually change average luma
 	float animatedLuma = stepTo(oldLuma.g, newLuma, TESR_GameTime.w * decreaseRate, TESR_GameTime.w * increaseRate);

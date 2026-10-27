@@ -9,6 +9,7 @@
 #include "includes/Helpers.hlsl"
 #define LAMP_LOOK_PS
 #include "includes/Pointlights.hlsl"   // the lamp look's falloff (TESR_LampLook)
+#include "includes/AlphaAA.hlsl"
 
 // The grass brightness settings (Shaders.Grass.Main): x Brightness multiplies the lit colour, before fog; y the night
 // brightness (NightBrightness eased by the day/night transition) on the sun and ambient. c146 is past
@@ -124,7 +125,7 @@ PS_OUTPUT main(PS_INPUT IN) {
     float3 litColor = (lighting * albedo.rgb + specular) * TESR_GrassBrightness.x;
 
     OUT.color.rgb = lerp(litColor, IN.fog.rgb, IN.fog.w);
-    OUT.color.a = saturate(albedo.a * 1.75f) * IN.sun.w;
+    OUT.color.a = AlphaAA(saturate(albedo.a * 1.75f) * IN.sun.w);
 
     return OUT;
 };

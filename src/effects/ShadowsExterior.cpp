@@ -353,6 +353,12 @@ void ShadowsExteriorEffect::UpdateSettings() {
 	Settings.ContactHardening.MaxSoftness = max(min(TheSettingManager->GetSettingF("Shaders.ShadowsExteriors.ContactHardening", "MaxSoftness"), 32.0f), 1.0f);
 	Settings.ContactHardening.Smooth = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.ContactHardening", "Smooth") != 0;
 	Settings.ContactHardening.AtNight = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.ContactHardening", "AtNight") != 0;
+	// Logged when it is switched (in game too: the shaders then read the sun shadows as if built without it).
+	static int contactHardeningLogged = -1;
+	if (contactHardeningLogged != (int)Settings.ContactHardening.Enabled) {
+		contactHardeningLogged = Settings.ContactHardening.Enabled;
+		Logger::Log("Contact hardening: %s", Settings.ContactHardening.Enabled ? "on" : "off");
+	}
 
 	// Generic exterior shadows settings
 	Settings.Exteriors.Enabled = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.Main", "Enabled");
@@ -560,6 +566,7 @@ void ShadowsExteriorEffect::RegisterTextures() {
 
 	// Initialize shadow buffer
 	TheTextureManager->InitTexture("TESR_PointShadowBuffer", &Textures.ShadowPassTexture, &Textures.ShadowPassSurface, TheRenderManager->width, TheRenderManager->height, D3DFMT_G16R16);
+	TheTextureManager->InitTexture("TESR_PointShadowCopy", &Textures.ShadowPassCopyTexture, &Textures.ShadowPassCopySurface, TheRenderManager->width, TheRenderManager->height, D3DFMT_G16R16);
 
 	texturesInitialized = true;
 }

@@ -292,6 +292,7 @@ void ShaderManager::UpdateConstants() {
 		InterfaceManager->IsActive(Menu::kMenuType_Roulette) ||
 		InterfaceManager->IsActive(Menu::kMenuType_Caravan) ||
 		InterfaceManager->IsActive(Menu::kMenuType_RaceSex);   // the Reflectron: a rendered menu over the frozen background, like the Pip-Boy
+	GameState.RaceMenuIsOn = InterfaceManager->IsActive(Menu::kMenuType_RaceSex);
 	GameState.isDialog = InterfaceManager->IsActive(Menu::MenuType::kMenuType_Dialog);
 	GameState.isPersuasion = InterfaceManager->IsActive(Menu::MenuType::kMenuType_Persuasion);
 	
@@ -840,7 +841,10 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 	DrawProfiler::Scope ProfilerScope(DrawProfiler::PhaseEffects);
 	if (!TheSettingManager->SettingsMain.Main.RenderEffects) return; // Main toggle
 	if (!Player->parentCell) return;
-	if (GameState.OverlayIsOn && TESMain::IsMenuBackgroundReady()) return; // disable all effects during terminal/lockpicking sequences
+	// In the race menu only skin scattering runs: the face it shows is drawn with the skin shaders, while the other effects
+	// read the Reflectron's depth there and draw over the portrait (shadows and AO left a dark patch on it).
+	const bool skinOnly = GameState.RaceMenuIsOn && TESMain::IsMenuBackgroundReady();
+	if (GameState.OverlayIsOn && TESMain::IsMenuBackgroundReady() && !skinOnly) return; // disable all effects during terminal/lockpicking sequences
 
 	auto timer = TimeLogger();
 
@@ -857,13 +861,20 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 	RenderEffectToRT(Effects.Normals->Textures.NormalsSurface, Effects.Normals, false);
 
 	// render a shadow pass for point lights
-	if ((GameState.isExterior && Effects.ShadowsExteriors->Enabled) || (!GameState.isExterior && Effects.ShadowsInteriors->Enabled)) {
+	if (skinOnly) {
+		// no shadow pass: nothing reads it in the race menu
+	}
+	else if ((GameState.isExterior && Effects.ShadowsExteriors->Enabled) || (!GameState.isExterior && Effects.ShadowsInteriors->Enabled)) {
 		// separate lights in 2 batches, or with [Main.Main.Performance] MergedPointShadows all of them in one pass
 		// (PointShadows' technique 1, MergedPointShadows)
 		const bool morePointLights = Effects.ShadowsExteriors->Settings.Interiors.LightPoints > 6;
 		ID3DXEffect* pointShadows = Effects.PointShadows->Effect;
 		const bool merged = morePointLights && pointShadows && TheSettingManager->GetSettingI("Main.Main.Performance", "MergedPointShadows") &&
 			pointShadows->GetTechnique(1) && pointShadows->GetTechnique(1) == pointShadows->GetTechniqueByName("MergedPointShadows");
+		// The two that read the shadow pass (light added to it, then the contact shadow blurs and the composite) read a copy
+		// taken before each of their passes.
+		Effects.PointShadows2->PassCopy = Effects.ShadowsExteriors->Textures.ShadowPassCopySurface;
+		Effects.SunShadows->PassCopy = Effects.ShadowsExteriors->Textures.ShadowPassCopySurface;
 		RenderEffectToRT(Effects.ShadowsExteriors->Textures.ShadowPassSurface, Effects.PointShadows, true, merged ? 1 : 0);
 		if (morePointLights && !merged) RenderEffectToRT(Effects.ShadowsExteriors->Textures.ShadowPassSurface, Effects.PointShadows2, false);
 		if (GameState.isExterior) RenderEffectToRT(Effects.ShadowsExteriors->Textures.ShadowPassSurface, Effects.SunShadows, false);
@@ -891,6 +902,10 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 	// colour the skin shader wrote, which any effect before it would change. Screen-space shadows
 	// and AO then darken the scattered skin like everything else.
 	Effects.SkinScattering->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);   // pass 2 reads the unblurred scene
+	if (skinOnly) {
+		timer.LogTime("ShaderManager::RenderEffectsPreTonemapping");
+		return;   // the race menu: skin scattering only (see above)
+	}
 
 	// The environment the PBR materials reflect next frame, from the scene as drawn (skin
 	// scattering only blurs skin; RenderedSurface holds its result).
@@ -910,22 +925,6 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 	Effects.HudRaindrops->UpdateWetness(Device);
 	Device->SetRenderTarget(0, RenderTarget);
 
-	// March into VolumetricLight's own half res buffer first (technique 0); the Composite pass
-	// below (technique 1) reads it back at full res. Same two-step pattern as FlashlightBeam,
-	// including the guard, which is not optional: RenderEffectToRT switches the render target
-	// BEFORE EffectRecord::Render can test Enabled/ShouldRender, so an unguarded call rebinds
-	// every frame even in interiors where this effect never draws. Worse, if the surface is null
-	// -- texture creation failed, or a device reset released it before RegisterTextures ran again
-	// -- it becomes SetRenderTarget(0, NULL), which D3D9 forbids for target 0 and leaves the
-	// device with no colour target for whatever draws next.
-	if (Effects.VolumetricLight->Textures.VolumetricSurface &&
-		Effects.VolumetricLight->Enabled &&
-		Effects.VolumetricLight->ShouldRender()) {
-		RenderEffectToRT(Effects.VolumetricLight->Textures.VolumetricSurface, Effects.VolumetricLight, true);
-		Effects.VolumetricLight->RenderTemporal(Device);
-		Device->SetRenderTarget(0, RenderTarget);
-	}
-
 	// Beam march first, into its own half res buffer, so the Flashlight Combine pass can
 	// read it. Control.x already folds the effect toggle, the per view toggle and the
 	// strength together, so this one test gates the whole thing.
@@ -935,14 +934,20 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 	}
 	Effects.Flashlight->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, Effects.Flashlight->selectedPass, true, SourceSurface);
 	Effects.Underwater->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
-	Effects.VolumetricLight->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 1, false, SourceSurface);
 	Effects.VolumetricFog->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
+	// NVR Optimized's volumetric light, after the fog as there; its buffers first (half res), then the composite (technique 0).
+	if (Effects.VolumetricLight->Enabled && Effects.VolumetricLight->ShouldRender()) {
+		Effects.VolumetricLight->RenderBuffers(Device);
+		Device->SetRenderTarget(0, RenderTarget);
+		Effects.VolumetricLight->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
+	}
 	// After the fog, which it thickens into dust; before the god rays, so the sun shafts shine through it.
 	Effects.Sandstorm->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 	Effects.GodRays->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, true, SourceSurface);
 
 	// calculate average luma for use by shaders
 	if (avglumaRequired) {
+		Device->StretchRect(Effects.AvgLuma->Textures.AvgLumaSurface, NULL, Effects.AvgLuma->Textures.AvgLumaPrevSurface, NULL, D3DTEXF_NONE);
 		RenderEffectToRT(Effects.AvgLuma->Textures.AvgLumaSurface, Effects.AvgLuma, NULL);
 		Device->SetRenderTarget(0, RenderTarget); 	// restore device used for effects
 	}
@@ -1021,7 +1026,7 @@ void ShaderManager::RenderEffects(IDirect3DSurface9* RenderTarget) {
 	Effects.WaterLens->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 	Effects.LowHF->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 
-	Effects.DitherBuster->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
+	Effects.DitherBuster->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, Effects.DitherBuster->TechniqueIndex(), false, SourceSurface);
 	Effects.SMAA->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 
 	// cinema effect gets rendered very last because of vignetting/letterboxing

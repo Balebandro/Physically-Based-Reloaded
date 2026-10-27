@@ -379,10 +379,11 @@ float SunCascadeTap(float c, float3 worldPos, float3 worldNormal, float4 offsetD
     float offset = c < 0.5f ? offsetDistance.x : c < 1.5f ? offsetDistance.y : c < 2.5f ? offsetDistance.z : offsetDistance.w;
     float3 position = worldPos + offset * worldNormal;
 #if CONTACT_HARDENING
-    return SampleShadowAtlasPCSS(position, lightTransform, quadrant, bias, c < 1.5f && TESR_ContactHardeningData.x > 0.0f);
-#else
-    return SampleShadowAtlas(mul(float4(position, 1.0f), lightTransform), quadrant, bias, 0.0f);
+    // Switched off in game (TESR_ContactHardeningData.x 0): the same lookup as shaders built without it.
+    [branch] if (TESR_ContactHardeningData.x > 0.0f)
+        return SampleShadowAtlasPCSS(position, lightTransform, quadrant, bias, c < 1.5f);
 #endif
+    return SampleShadowAtlas(mul(float4(position, 1.0f), lightTransform), quadrant, bias, 0.0f);
 }
 
 // 1.0 in full light, towards 0 in shadow. Multiply the SUN term by it, before ambient.

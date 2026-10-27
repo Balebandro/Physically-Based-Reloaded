@@ -57,6 +57,10 @@ void AttachHooks() {
 	kNoLightingPrepareGeometryDetour.ReplaceVirtualFunc(0x10BB230 + 27 * 4, NoLightingShader__PrepareGeometryForRendering);   // rain particles culled under cover
 	kNoLightingPostGeometryDetour.ReplaceVirtualFunc(0x10BB230 + 35 * 4, NoLightingShader__PostGeometry);
 	kPipboyPostProcessDetour.ReplaceVirtualFunc(0x10780AC + 20 * 4, FOPipboyManager__RenderPostProcess);   // raindrops on the Pip-Boy screen
+	kGrassPrepareGeometryDetour.ReplaceVirtualFunc(0x10B8980 + 27 * 4, TallGrassShader__PrepareGeometryForRendering);   // AlphaAA (Hooks/Shaders.cpp)
+	kGrassPostGeometryDetour.ReplaceVirtualFunc(0x10B8980 + 35 * 4, TallGrassShader__PostGeometry);
+	kLeafPrepareGeometryDetour.ReplaceVirtualFunc(0x10B9190 + 27 * 4, SpeedTreeLeafShader__PrepareGeometryForRendering);
+	kLeafPostGeometryDetour.ReplaceVirtualFunc(0x10B9190 + 35 * 4, SpeedTreeLeafShader__PostGeometry);
 
 	WriteRelCall(0xBE0B73, NiD3DVertexShaderEx::Free);
 	WriteRelCall(0xBE0AF3, NiD3DPixelShaderEx::Free);

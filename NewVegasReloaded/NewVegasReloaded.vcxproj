@@ -66,7 +66,7 @@
       <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;_USRDLL;_USE_MATH_DEFINES;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeaderFile>
       </PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>$(SolutionDir)\Core;$(SolutionDir)lib\imgui;$(SolutionDir)lib\imgui\backends;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)\Core;$(SolutionDir)lib\imgui;$(SolutionDir)lib\imgui\backends;$(SolutionDir)lib\reshade;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <ForcedIncludeFiles>$(SolutionDir)\src\NewVegas\Framework.h</ForcedIncludeFiles>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
@@ -92,7 +92,7 @@
       <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;_USE_MATH_DEFINES;_CRT_SECURE_NO_WARNINGS;NEWVEGAS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeaderFile>
       </PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>$(SolutionDir)\Core;$(SolutionDir)lib\imgui;$(SolutionDir)lib\imgui\backends;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)\Core;$(SolutionDir)lib\imgui;$(SolutionDir)lib\imgui\backends;$(SolutionDir)lib\reshade;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <ForcedIncludeFiles>$(SolutionDir)\src\NewVegas\Framework.h</ForcedIncludeFiles>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
@@ -119,6 +119,7 @@
     <ClCompile Include="..\src\core\Device\Device.cpp" />
     <ClCompile Include="..\src\core\Device\Hook.cpp" />
     <ClCompile Include="..\src\core\EffectRecord.cpp" />
+    <ClCompile Include="..\src\core\ReShadeIntegration.cpp" />
     <ClCompile Include="..\src\core\FrameRateManager.cpp" />
     <ClCompile Include="..\src\core\GameEventManager.cpp" />
     <ClCompile Include="..\src\core\GameMenuManager.cpp" />
@@ -236,6 +237,7 @@
     <ClInclude Include="..\src\core\Device\Device.h" />
     <ClInclude Include="..\src\core\Device\Hook.h" />
     <ClInclude Include="..\src\core\EffectRecord.h" />
+    <ClInclude Include="..\src\core\ReShadeIntegration.h" />
     <ClInclude Include="..\src\core\FrameRateManager.h" />
     <ClInclude Include="..\src\core\GameEventManager.h" />
     <ClInclude Include="..\src\core\GameMenuManager.h" />

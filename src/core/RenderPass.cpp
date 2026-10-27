@@ -142,6 +142,7 @@ void ShadowRenderPass::UpdateConstants(NiGeometry* Geo) {
 	ShadowConstants->Data.x = 0.0f; // Type of geo (0 normal, 1 actors (skinned), 2 speedtree leaves)
 	ShadowConstants->Data.y = 0.0f; // Alpha Control
 	TheRenderManager->CreateD3DMatrix(&TheShaderManager->ShaderConst.ShadowWorld, &Geo->m_worldTransform);
+	if (LandDrop > 0.0f && LandSet.count(Geo)) TheShaderManager->ShaderConst.ShadowWorld._43 -= LandDrop;
 }
 
 

@@ -145,7 +145,7 @@ void BounceLightEffect::Render(IDirect3DDevice9* Device, IDirect3DSurface9* Rend
 	D3DXVECTOR4 layout((float)half.Width / original.Width, (float)half.Height / original.Height, 1.0f / half.Width, 1.0f / half.Height);
 	IDirect3DSurface9* depthSurface = nullptr;
 	Device->GetDepthStencilSurface(&depthSurface);
-	Device->SetDepthStencilSurface(nullptr);
+	if (!ReShadeIntegration::KeepDepthBound()) Device->SetDepthStencilSurface(nullptr);
 
 	const double now = TheFrameRateManager->Time;
 	const bool continuous = lastValid && lastQuarter == quarter && now - lastTime >= 0.0 && now - lastTime < 0.5 &&

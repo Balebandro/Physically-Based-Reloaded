@@ -9,12 +9,20 @@ struct SettingsMainStruct {
 	struct MainStruct {
 		bool	RemoveUnderwater;
 		bool	ForceMSAA;
+		bool	AlphaAA;			// [Main.Main.Misc] grass and leaf edges blended instead of alpha tested when there is no MSAA (Hooks/Shaders.cpp AlphaAA)
 		bool	ForceReflections;
 		bool	RemovePrecipitations;
 		bool	MemoryHeapManagement;
 		bool	MemoryTextureManagement;
 		bool	ReplaceIntro;
         bool    SkipFog;
+        bool    GodRaysLowRes;      // [Main.Main.ReducedQuality] god rays at quarter instead of half resolution (from NVR Optimized)
+        bool    ReShadeDepthCompat;   // [Main.Main.Performance] ReShade compatibility (from NVR Optimized, ReShadeIntegration.cpp)
+        bool    ReShadeNVRDepth;
+        bool    ReShadeBeforeHUD;
+        bool    ReShadeDepthNearRemap;
+        bool    ReShadeMenuGuard;
+        bool    ReShadeMenuGuardVATS;
         bool    RenderEffects;
         bool    RenderPreTonemapping;
         bool    PresetManagerEnabled; // master on/off for automatic per-location preset resolution -- docs/preset-manager-design.md

@@ -12,6 +12,7 @@ struct VS_OUTPUT {
 
 struct PS_OUTPUT {
     float4 color_0 : COLOR0;
+    float depth : DEPTH;
 };
 
 PS_OUTPUT main(VS_OUTPUT IN) {
@@ -23,9 +24,13 @@ PS_OUTPUT main(VS_OUTPUT IN) {
             discard;
     }
 	
-	float depth = IN.texcoord_0.z / IN.texcoord_0.w;
+	// Pancaked here, per pixel, not only per vertex: the vertex shaders' clamp bends a triangle that crosses the near
+	// plane (a roof or wall reaching far towards a low sun past a small cascade's box), interpolating depths behind
+	// the ground it shades, which then read lit. The depth test takes the same value, so the nearer caster wins.
+	float depth = saturate(IN.texcoord_0.z / IN.texcoord_0.w);
 
 	OUT.color_0 = float4(depth, 0.0f, 0.0f, 1.0f);
+	OUT.depth = depth;
 
 	return OUT;	
 };

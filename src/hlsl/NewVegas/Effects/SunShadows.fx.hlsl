@@ -20,7 +20,7 @@ float4 TESR_ShadowForwardData; // x: 1 when the forward path is SUPPRESSED
 sampler2D TESR_DepthBuffer : register(s0) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_ShadowAtlas : register(s1) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_NormalsBuffer : register(s2) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
-sampler2D TESR_PointShadowBuffer : register(s3)  = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
+sampler2D TESR_PointShadowCopy : register(s3)  = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 sampler2D TESR_NoiseSampler : register(s4) < string ResourceName = "Effects\bluenoise256.dds"; > = sampler_state { ADDRESSU = WRAP; ADDRESSV = WRAP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = LINEAR; };
 
 #define CONTACT_STEPNUM 12
@@ -82,7 +82,7 @@ float4 ScreenSpaceShadow(VSOUT IN) : COLOR0
 	// are too coarse for those; anything larger is theirs. Result in the red channel, point
 	// light attenuation passes through in green.
 	float2 uv = IN.UVCoord;
-	float4 color = tex2D(TESR_PointShadowBuffer, uv);
+	float4 color = tex2D(TESR_PointShadowCopy, uv);
 	// tex2Dlod, not random(): the compiler sinks this sample to where it is used, past the dynamic
 	// returns below, and warns (X4121) about a gradient sample in flow control. The noise has no
 	// use for mips anyway.
@@ -156,7 +156,7 @@ float4 Shadow(VSOUT IN) : COLOR0
 	float2 uv = IN.UVCoord;
 
 	// Sample Screen Space shadows
-	float4 Shadow = tex2D(TESR_PointShadowBuffer, IN.UVCoord);
+	float4 Shadow = tex2D(TESR_PointShadowCopy, IN.UVCoord);
     Shadow = pow(Shadow, TESR_ShadowScreenSpaceData.w);
 
 	if (!TESR_ShadowFade.y) return Shadow; // disable shadow maps if ShadowFade.y == 0 (setting for shadow map disabled)
@@ -200,12 +200,12 @@ technique {
 
 	pass {
 		VertexShader = compile vs_3_0 FrameVS();
-	 	PixelShader = compile ps_3_0 DepthBlur(TESR_PointShadowBuffer, OffsetMaskH, TESR_ShadowScreenSpaceData.y, 3500, CONTACT_BLUR_END);
+	 	PixelShader = compile ps_3_0 DepthBlur(TESR_PointShadowCopy, OffsetMaskH, TESR_ShadowScreenSpaceData.y, 3500, CONTACT_BLUR_END);
 	}
 
 	pass {
 		VertexShader = compile vs_3_0 FrameVS();
-	 	PixelShader = compile ps_3_0 DepthBlur(TESR_PointShadowBuffer, OffsetMaskV, TESR_ShadowScreenSpaceData.y, 3500, CONTACT_BLUR_END);
+	 	PixelShader = compile ps_3_0 DepthBlur(TESR_PointShadowCopy, OffsetMaskV, TESR_ShadowScreenSpaceData.y, 3500, CONTACT_BLUR_END);
 	}
 
     pass {

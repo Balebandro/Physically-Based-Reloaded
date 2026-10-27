@@ -68,35 +68,37 @@ float4 Downsample(VSOUT IN, uniform sampler2D buffer) : COLOR0 {
     return downsample;
 }
 
-// Intermediary upsamples.
-float4 Upsample(VSOUT IN, uniform sampler2D buffer, uniform sampler2D addBuffer) : COLOR0 {
+// The upsamples combine with the level they draw into (its downsample) through the blend unit, which the passes set
+// to result = src.rgb + dst.rgb * src.a: reading that level here would read the render target, which is undefined
+// (under DXVK it read stale texels now and then, and the bloom, and with it the tonemapped frame, flickered).
+
+// Intermediary upsamples: dst lerped toward the upsample, or the upsample added to it.
+float4 Upsample(VSOUT IN, uniform sampler2D buffer) : COLOR0 {
     float2 uv = IN.UVCoord;
-    
+
     const float2 filterRadius = { TESR_BloomData.x, TESR_BloomData.y };
-    
+
     float4 upsample = UpsampleTent9(buffer, uv, filterRadius);
-    float4 nextMip = tex2D(addBuffer, uv);
-    
+
     [branch] if (TESR_BloomData.z > 0.0) {
-        return float4(lerp(nextMip.rgb, upsample.rgb, TESR_BloomData.z), 1);
+        return float4(upsample.rgb * TESR_BloomData.z, 1 - TESR_BloomData.z);   // lerp(dst, upsample, z)
     } else {
-        return float4(upsample.rgb + nextMip.rgb, 1);
+        return float4(upsample.rgb, 1);                                       // upsample + dst
     }
 }
 
 // Last upsample that normalizes the result if needed.
-float4 UpsampleLast(VSOUT IN, uniform sampler2D buffer, uniform sampler2D addBuffer) : COLOR0 {
+float4 UpsampleLast(VSOUT IN, uniform sampler2D buffer) : COLOR0 {
     float2 uv = IN.UVCoord;
-    
+
     const float2 filterRadius = { TESR_BloomData.x, TESR_BloomData.y };
-    
+
     float4 upsample = UpsampleTent9(buffer, uv, filterRadius);
-    float4 nextMip = tex2D(addBuffer, uv);
-    
+
     [branch] if (TESR_BloomData.z > 0.0) {
-        return float4(lerp(nextMip.rgb, upsample.rgb, TESR_BloomData.z), 1);
+        return float4(upsample.rgb * TESR_BloomData.z, 1 - TESR_BloomData.z);   // lerp(dst, upsample, z)
     } else {
-        return float4((upsample.rgb + nextMip.rgb) * TESR_BloomData.w, 1);
+        return float4(upsample.rgb * TESR_BloomData.w, TESR_BloomData.w);      // (upsample + dst) * w
     }
 }
 
@@ -173,7 +175,8 @@ technique // 8
 {
     pass {
         VertexShader = compile vs_3_0 FrameVS();
-        PixelShader = compile ps_3_0 Upsample(TESR_BloomBuffer128, TESR_BloomBuffer64); // output to BloomBuffer64
+        PixelShader = compile ps_3_0 Upsample(TESR_BloomBuffer128); // output to BloomBuffer64
+        AlphaBlendEnable = true; SrcBlend = One; DestBlend = SrcAlpha; BlendOp = Add;
     }
 }
 
@@ -181,7 +184,8 @@ technique // 9
 {
     pass {
         VertexShader = compile vs_3_0 FrameVS();
-        PixelShader = compile ps_3_0 Upsample(TESR_BloomBuffer64, TESR_BloomBuffer32); // output to BloomBuffer32
+        PixelShader = compile ps_3_0 Upsample(TESR_BloomBuffer64); // output to BloomBuffer32
+        AlphaBlendEnable = true; SrcBlend = One; DestBlend = SrcAlpha; BlendOp = Add;
     }
 }
 
@@ -189,7 +193,8 @@ technique // 10
 {
     pass {
         VertexShader = compile vs_3_0 FrameVS();
-        PixelShader = compile ps_3_0 Upsample(TESR_BloomBuffer32, TESR_BloomBuffer16); // output to BloomBuffer16
+        PixelShader = compile ps_3_0 Upsample(TESR_BloomBuffer32); // output to BloomBuffer16
+        AlphaBlendEnable = true; SrcBlend = One; DestBlend = SrcAlpha; BlendOp = Add;
     }
 }
 
@@ -197,7 +202,8 @@ technique // 11
 {
     pass {
         VertexShader = compile vs_3_0 FrameVS();
-        PixelShader = compile ps_3_0 Upsample(TESR_BloomBuffer16, TESR_BloomBuffer8); // output to BloomBuffer8
+        PixelShader = compile ps_3_0 Upsample(TESR_BloomBuffer16); // output to BloomBuffer8
+        AlphaBlendEnable = true; SrcBlend = One; DestBlend = SrcAlpha; BlendOp = Add;
     }
 }
 
@@ -206,7 +212,8 @@ technique // 12
 	pass
 	{
 		VertexShader = compile vs_3_0 FrameVS();
-        PixelShader = compile ps_3_0 Upsample(TESR_BloomBuffer8, TESR_BloomBuffer4); // output to BloomBuffer4
+        PixelShader = compile ps_3_0 Upsample(TESR_BloomBuffer8); // output to BloomBuffer4
+        AlphaBlendEnable = true; SrcBlend = One; DestBlend = SrcAlpha; BlendOp = Add;
     }	
 }
 
@@ -215,7 +222,8 @@ technique // 13
 	pass
 	{
 		VertexShader = compile vs_3_0 FrameVS();
-        PixelShader = compile ps_3_0 Upsample(TESR_BloomBuffer4, TESR_BloomBuffer2); // output to BloomBuffer2
+        PixelShader = compile ps_3_0 Upsample(TESR_BloomBuffer4); // output to BloomBuffer2
+        AlphaBlendEnable = true; SrcBlend = One; DestBlend = SrcAlpha; BlendOp = Add;
     }	
 }
 
@@ -224,6 +232,7 @@ technique // 14
 	pass
 	{
 		VertexShader = compile vs_3_0 FrameVS();
-		PixelShader = compile ps_3_0 UpsampleLast(TESR_BloomBuffer2, TESR_BloomBuffer); // output to BloomBuffer
+		PixelShader = compile ps_3_0 UpsampleLast(TESR_BloomBuffer2); // output to BloomBuffer
+        AlphaBlendEnable = true; SrcBlend = One; DestBlend = SrcAlpha; BlendOp = Add;
 	}	
 }

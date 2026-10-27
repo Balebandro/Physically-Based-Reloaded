@@ -186,6 +186,7 @@ public:
 		bool					VATSIsOn;
 		bool					PipBoyIsOn;
 		bool					OverlayIsOn;
+		bool					RaceMenuIsOn;   // the race menu (also in OverlayIsOn): skin scattering still runs there
 		bool					isRainy;
 		bool					isSnow;
 		bool					isCloudy;

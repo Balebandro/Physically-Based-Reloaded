@@ -24,6 +24,7 @@ void FrameRateManager::UpdatePerformance() {
 	Time = (double)(PerformanceCounterEnd.QuadPart - PerformanceCounterStart) / (double)PerformanceFrequency;
 	ElapsedTime = Time - LastTime;
 	LastTime = Time;
+	FrameNumber++;
 
 }
 

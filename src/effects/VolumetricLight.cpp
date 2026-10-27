@@ -1,155 +1,114 @@
-// CREDIT: VolumetricLight effect / shader by mcstfuerson. Used with permission.
-//         Ported to New Vegas Reloaded by Conor.
-// See the credit header in src/hlsl/NewVegas/Effects/VolumetricLight.fx.hlsl.
-
-#include <algorithm>
-#include <cmath>
-
 #include "VolumetricLight.h"
 
-// Advance the march's dither each frame when something will average the frames back together.
-//
-// This effect's own Temporal pass is that something, and so is TAA: either blends roughly the last ten
-// frames, so a dither that moves each frame averages out into smooth shafts, where a fixed one leaves
-// the same grain in every frame and accumulation cannot touch it. So while either is on the dither
-// moves by itself; DitherMotion forces it without them, where it only trades a still pattern for
-// shimmer.
-//
-// The step is the golden ratio per frame, the additive sequence that spreads any run of frames most
-// evenly over [0, 1). Counted in frames rather than seconds, so it is the same at any frame rate.
-// Kept in double and wrapped here: the shader only ever sees the fractional offset.
-void VolumetricLightEffect::UpdateConstants() {
-	bool temporal = TemporalActive() || (TheShaderManager->Effects.TAA && TheShaderManager->Effects.TAA->Enabled);
-	if (Settings.DitherMotion || temporal) {
-		ditherPhase = std::fmod(ditherPhase + 0.6180339887498949, 1.0);
-		Constants.Data4.w = (float)ditherPhase;
-	}
-	else {
-		Constants.Data4.w = 0.0f;
-	}
+static void ReadLook(const char* section, VolumetricLightEffect::LookStruct& look) {
+	look.Strength = std::clamp(TheSettingManager->GetSettingF(section, "Strength"), 0.0f, 10.0f);
+	look.Darken = std::clamp(TheSettingManager->GetSettingF(section, "Darken"), 0.0f, 1.0f);
+	look.Density = std::clamp(TheSettingManager->GetSettingF(section, "Density"), 0.0f, 10.0f);
+	look.MaxDistance = std::clamp(TheSettingManager->GetSettingF(section, "MaxDistance"), 100.0f, 30000.0f);
+	look.Anisotropy = std::clamp(TheSettingManager->GetSettingF(section, "Anisotropy"), 0.0f, 0.9f);
 }
 
 void VolumetricLightEffect::UpdateSettings() {
-	Settings.Strength = TheSettingManager->GetSettingF("Shaders.VolumetricLight.Main", "Strength");
-	Settings.Anisotropy = TheSettingManager->GetSettingF("Shaders.VolumetricLight.Main", "Anisotropy");
-	Settings.Dither = TheSettingManager->GetSettingI("Shaders.VolumetricLight.Main", "Dither");
-	Settings.AccumDistance = TheSettingManager->GetSettingF("Shaders.VolumetricLight.Main", "AccumDistance");
-	Settings.NightDistance = TheSettingManager->GetSettingF("Shaders.VolumetricLight.Main", "NightDistance");
-	Settings.ScatterReference = TheSettingManager->GetSettingF("Shaders.VolumetricLight.Main", "ScatterReference");
-	Settings.FogInfluence = TheSettingManager->GetSettingF("Shaders.VolumetricLight.Main", "FogInfluence");
-	Settings.Extinction = TheSettingManager->GetSettingF("Shaders.VolumetricLight.Main", "Extinction");
-	Settings.HeightFalloff = TheSettingManager->GetSettingF("Shaders.VolumetricLight.Main", "HeightFalloff");
-	Settings.DitherMotion = TheSettingManager->GetSettingI("Shaders.VolumetricLight.Main", "DitherMotion");
-
-	// A missing key reads as 0. For the weight and the gamma 0 would mean no history or a box
-	// collapsed onto the mean, so those fall back to their defaults; Temporal itself is a plain toggle.
-	Settings.Temporal = TheSettingManager->GetSettingI("Shaders.VolumetricLight.Main", "Temporal") != 0;
-	float weight = TheSettingManager->GetSettingF("Shaders.VolumetricLight.Main", "TemporalWeight");
-	Settings.TemporalWeight = weight > 0.0f ? (std::min)((std::max)(weight, 0.5f), 0.97f) : 0.9f;
-	float gamma = TheSettingManager->GetSettingF("Shaders.VolumetricLight.Main", "TemporalClipGamma");
-	Settings.TemporalClipGamma = gamma > 0.0f ? (std::min)((std::max)(gamma, 0.5f), 3.0f) : 1.25f;
-
-	Settings.ScatterColor.x = TheSettingManager->GetSettingF("Shaders.VolumetricLight.Coloring", "ScatterR");
-	Settings.ScatterColor.y = TheSettingManager->GetSettingF("Shaders.VolumetricLight.Coloring", "ScatterG");
-	Settings.ScatterColor.z = TheSettingManager->GetSettingF("Shaders.VolumetricLight.Coloring", "ScatterB");
-
-	Constants.Data1 = D3DXVECTOR4(Settings.ScatterColor.x, Settings.ScatterColor.y, Settings.ScatterColor.z, Settings.AccumDistance);
-	// A missing key reads as 0, which falls back to AccumDistance: no separate night range. Never
-	// longer than AccumDistance either -- this only ever shortens the reach at night.
-	float nightDistance = Settings.NightDistance > 0.0f ? (std::min)(Settings.NightDistance, Settings.AccumDistance) : Settings.AccumDistance;
-	Constants.Data2 = D3DXVECTOR4(max(nightDistance, 1.0f), 0.0f, 0.0f, 0.0f);
-	// Extinction floored above zero rather than at it: the shader divides by sigmaT to integrate
-	// each step analytically. It carries its own epsilon for that, but keeping a real value here
-	// means the medium always has some attenuation, which is what makes transmittance meaningful.
-	Constants.Data3 = D3DXVECTOR4(Settings.Strength, max(Settings.Extinction, 0.001f), Settings.FogInfluence, Settings.Anisotropy);
-	// HeightFalloff passes through unclamped: 0 is a real setting, meaning a uniform medium with
-	// no altitude gradient, and the shader tests for it explicitly.
-	//
-	// ScatterReference is floored hard because the shader divides by it. It is the path length
-	// the scattering and extinction coefficients are expressed against, and it is deliberately
-	// NOT AccumDistance any more -- see the note at invReference in VolumetricLight.fx.hlsl.
-	// w, the dither's per-frame offset, is set every frame in UpdateConstants.
-	Constants.Data4 = D3DXVECTOR4(max(Settings.ScatterReference, 1.0f), Settings.Dither ? 1.0f : 0.0f,
-		max(Settings.HeightFalloff, 0.0f), Constants.Data4.w);
+	const char* section = "Shaders.VolumetricLight.Main";
+	ReadLook(section, Settings.Day);
+	ReadLook("Shaders.VolumetricLight.Night", Settings.Night);
+	Settings.Steps = std::clamp(TheSettingManager->GetSettingI(section, "Steps"), 4, 48);
+	Settings.Temporal = std::clamp(TheSettingManager->GetSettingF(section, "Temporal"), 0.0f, 0.97f);
+	Settings.BlurRadius = std::clamp(TheSettingManager->GetSettingF(section, "BlurRadius"), 0.0f, 8.0f);
+	Settings.RainStrength = std::clamp(TheSettingManager->GetSettingF(section, "RainStrength"), 0.0f, 1.0f);
 }
 
 void VolumetricLightEffect::RegisterConstants() {
-	TheShaderManager->RegisterConstant("TESR_VolumetricLightData1", &Constants.Data1);
+	TheShaderManager->RegisterConstant("TESR_VolumetricLightData", &Constants.Data);
 	TheShaderManager->RegisterConstant("TESR_VolumetricLightData2", &Constants.Data2);
 	TheShaderManager->RegisterConstant("TESR_VolumetricLightData3", &Constants.Data3);
-	TheShaderManager->RegisterConstant("TESR_VolumetricLightData4", &Constants.Data4);
-	TheShaderManager->RegisterConstant("TESR_VolumetricLightTemporal", &Constants.Temporal);
-	TheShaderManager->RegisterConstant("TESR_VolumetricLightPrevProjection", &Constants.PrevProjection);
-	TheShaderManager->RegisterConstant("TESR_VolumetricLightCameraDelta", &Constants.CameraDelta);
-	TheShaderManager->RegisterConstant("TESR_VolumetricLightPrevViewTransform", (D3DXVECTOR4*)&Constants.PrevViewTransform);
+	TheShaderManager->RegisterConstant("TESR_VolumetricLightLayout", &Constants.Layout);
+	TheShaderManager->RegisterConstant("TESR_VolumetricLightReproject", (D3DXVECTOR4*)&Constants.Reproject);
 }
 
 void VolumetricLightEffect::RegisterTextures() {
-	// Half resolution: the march is the expensive part (14 cascade-shadow samples per pixel) and
-	// the shaft has no fine detail that needs full res. Composite reads it through a bilinear
-	// sampler, which upsamples it. Mirrors FlashlightBeamEffect's TESR_VolumetricBuffer.
-	TheTextureManager->InitTexture("TESR_VolumetricLightBuffer", &Textures.VolumetricTexture, &Textures.VolumetricSurface,
-		TheRenderManager->width / 2, TheRenderManager->height / 2, D3DFMT_A16B16G16R16F);
+	const UINT w = (TheRenderManager->width + 1) / 2, h = (TheRenderManager->height + 1) / 2;
+	TheTextureManager->InitTexture("TESR_VolumetricLightMarch", &Textures.MarchTexture, &Textures.MarchSurface, w, h, D3DFMT_A16B16G16R16F);
+	TheTextureManager->InitTexture("TESR_VolumetricLightBuffer", &Textures.BlurTexture, &Textures.BlurSurface, w, h, D3DFMT_A16B16G16R16F);
+	TheTextureManager->InitTexture("TESR_VolumetricLightTemp", &Textures.TempTexture, &Textures.TempSurface, w, h, D3DFMT_A16B16G16R16F);
+	TheTextureManager->InitTexture("TESR_VolumetricLightHistory", &Textures.HistoryTexture, &Textures.HistorySurface, w, h, D3DFMT_A16B16G16R16F);
+	TheTextureManager->InitTexture("TESR_VolumetricLightCoverage", &Textures.CoverageTexture, &Textures.CoverageSurface, TheRenderManager->width, TheRenderManager->height, D3DFMT_A8R8G8B8);
+	Constants.Layout = D3DXVECTOR4(1.0f / w, 1.0f / h, 0.0f, 0.0f);
+}
 
-	// The temporal filter's pair, same size and format so the copies between them are plain
-	// StretchRects. History is last frame's filtered march; Accum is this frame's, written by the
-	// Temporal pass, which cannot write the History it is reading.
-	TheTextureManager->InitTexture("TESR_VolumetricLightAccum", &Textures.AccumTexture, &Textures.AccumSurface,
-		TheRenderManager->width / 2, TheRenderManager->height / 2, D3DFMT_A16B16G16R16F);
-	TheTextureManager->InitTexture("TESR_VolumetricLightHistory", &Textures.HistoryTexture, &Textures.HistorySurface,
-		TheRenderManager->width / 2, TheRenderManager->height / 2, D3DFMT_A16B16G16R16F);
+void VolumetricLightEffect::UpdateConstants() {
+	const float day = std::clamp(TheShaderManager->GameState.isDayTime, 0.0f, 1.0f);
+	const LookStruct& d = Settings.Day;
+	const LookStruct& n = Settings.Night;
+
+	const ShadowsExteriorEffect* shadows = TheShaderManager->Effects.ShadowsExteriors;
+	float fade = 1.0f - std::clamp(shadows->Constants.ShadowFade.x, 0.0f, 1.0f);
+	fade *= std::lerp(1.0f, Settings.RainStrength, std::clamp(TheShaderManager->Effects.Rain->Constants.RainAnimator.GetValue(), 0.0f, 1.0f));
+
+	Constants.Data.x = std::lerp(n.Strength, d.Strength, day);
+	Constants.Data.y = std::lerp(n.Darken, d.Darken, day);
+	Constants.Data.z = std::lerp(n.Density, d.Density, day) * 0.001f;
+	Constants.Data.w = std::lerp(n.MaxDistance, d.MaxDistance, day);
+	Constants.Data2.x = (float)Settings.Steps;
+	Constants.Data2.y = std::lerp(n.Anisotropy, d.Anisotropy, day);
+	Constants.Data2.z = fade;
+	Constants.Data3.y = Settings.BlurRadius;
 }
 
 bool VolumetricLightEffect::ShouldRender() {
-	return TheShaderManager->GameState.isExterior && !TheShaderManager->GameState.isUnderwater;
+	const ShadowsExteriorEffect* shadows = TheShaderManager->Effects.ShadowsExteriors;
+	return TheShaderManager->GameState.isExterior && !TheShaderManager->GameState.isUnderwater &&
+		shadows && shadows->Constants.ShadowFade.y > 0.0f &&
+		Constants.Data2.z > 0.001f && (Constants.Data.x > 0.0f || Constants.Data.y > 0.0f) &&
+		Textures.MarchSurface && Textures.BlurSurface && Textures.TempSurface && Textures.HistorySurface;
 }
 
-bool VolumetricLightEffect::TemporalActive() {
-	return Settings.Temporal && Textures.AccumSurface && Textures.HistorySurface;
-}
+void VolumetricLightEffect::RenderBuffers(IDirect3DDevice9* Device) {
+	const bool temporal = Settings.Temporal > 0.0f;
+	const D3DXMATRIX& view = TheRenderManager->viewMatrix;
+	const D3DXMATRIX& invView = TheRenderManager->InvViewMatrix;
 
-// Record the camera this frame's march used, for next frame's reprojection. The same camera TAA
-// remembers: ShaderManager sets the scene camera up right before the effect chains run.
-void VolumetricLightEffect::RememberCamera() {
-	Constants.PrevViewTransform = TheRenderManager->viewMatrix;
-	Constants.PrevProjection = D3DXVECTOR4(TheRenderManager->projMatrix._11, TheRenderManager->projMatrix._22, 0.0f, 0.0f);
-	prevCameraPosition = TheRenderManager->CameraPosition;
-}
-
-// Temporal filter over the half-res march, run right after it. Its result replaces the raw march in
-// TESR_VolumetricLightBuffer, so Composite reads the filtered one without knowing, and is kept in
-// History for next frame.
-//
-// The history is only trusted when this pass also ran on the frame immediately before. Any gap -- an
-// interior, underwater, the effect or Temporal switched off, a menu that stopped the effect chain --
-// means the history shows somewhere else or some other time, so it starts over. A new cell (a load or
-// a teleport) starts over too.
-void VolumetricLightEffect::RenderTemporal(IDirect3DDevice9* Device) {
-	if (!TemporalActive() || !Enabled || Effect == nullptr || !ShouldRender()) {
-		historyValid = false;
-		return;
+	const UINT now = TheFrameRateManager->FrameNumber;
+	const bool drewLastFrame = lastRenderedFrame + 1 == now;
+	bool usable = temporal && haveHistory && drewLastFrame;
+	if (usable) {
+		const double dx = (double)invView._41 - lastInvView._41, dy = (double)invView._42 - lastInvView._42,
+			dz = (double)invView._43 - lastInvView._43;
+		usable = dx * dx + dy * dy + dz * dz < 500.0 * 500.0;
 	}
+	if (usable) {
+		const double move[3] = { (double)invView._41 - lastInvView._41, (double)invView._42 - lastInvView._42,
+			(double)invView._43 - lastInvView._43 };
+		D3DXMATRIX toLastView;
+		for (int i = 0; i < 3; i++) {
+			for (int j = 0; j < 3; j++) toLastView.m[i][j] = lastView.m[i][j];
+			toLastView.m[i][3] = 0.0f;
+		}
+		for (int j = 0; j < 3; j++)
+			toLastView.m[3][j] = (float)(move[0] * lastView.m[0][j] + move[1] * lastView.m[1][j] + move[2] * lastView.m[2][j]);
+		toLastView.m[3][3] = 1.0f;
+		D3DXMatrixMultiply(&Constants.Reproject, &toLastView, &lastProj);
+	}
+	Constants.Data3.x = usable ? Settings.Temporal : 0.0f;
+	Constants.Data2.w = temporal ? (float)(now % 64) : 0.0f;
 
-	double now = TheFrameRateManager->Time;
-	double previousFrame = now - TheFrameRateManager->ElapsedTime;
-	bool consecutive = lastTemporalTime >= 0.0 && std::fabs(previousFrame - lastTemporalTime) < 1e-6;
-	if (!consecutive || TheShaderManager->GameState.isCellChanged) historyValid = false;
-	lastTemporalTime = now;
+	auto pass = [&](IDirect3DSurface9* target, UINT technique) {
+		Device->SetRenderTarget(0, target);
+		Render(Device, target, target, technique, false, target);
+	};
+	if (temporal) {
+		pass(Textures.MarchSurface, 1);
+		pass(Textures.TempSurface, 3);
+		Device->StretchRect(Textures.TempSurface, NULL, Textures.HistorySurface, NULL, D3DTEXF_NONE);
+	}
+	else
+		pass(Textures.TempSurface, 1);
+	pass(Textures.MarchSurface, 2);
+	pass(Textures.BlurSurface, 4);
 
-	// With no usable history, last frame's camera becomes this frame's: the reprojection is the
-	// identity, and the shader ignores the history anyway because Temporal.y is 0.
-	if (!historyValid) RememberCamera();
-
-	D3DXVECTOR4 delta = TheRenderManager->CameraPosition - prevCameraPosition;
-	Constants.CameraDelta = D3DXVECTOR4(delta.x, delta.y, delta.z, 0.0f);
-	Constants.Temporal = D3DXVECTOR4(Settings.TemporalWeight, historyValid ? 1.0f : 0.0f, Settings.TemporalClipGamma, 0.0f);
-
-	// Technique 2 into Accum; Render's RenderedSurface copy then puts the result into the march
-	// buffer for Composite. History gets its own copy for next frame.
-	Device->SetRenderTarget(0, Textures.AccumSurface);
-	Render(Device, Textures.AccumSurface, Textures.VolumetricSurface, 2, false, NULL);
-	Device->StretchRect(Textures.AccumSurface, NULL, Textures.HistorySurface, NULL, D3DTEXF_NONE);
-
-	RememberCamera();
-	historyValid = true;
+	haveHistory = temporal;
+	lastRenderedFrame = now;
+	lastView = view;
+	lastInvView = invView;
+	lastProj = TheRenderManager->projMatrix;
 }

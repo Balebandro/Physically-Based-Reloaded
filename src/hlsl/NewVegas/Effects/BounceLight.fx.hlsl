@@ -67,19 +67,7 @@ VSOUT HalfVS(VSIN IN)
 #include "Includes/Helpers.hlsl"
 #include "Includes/Depth.hlsl"
 #include "Includes/Blur.hlsl"
-
-// Ported from NVR UNOFFICIAL Optimized (P81), whose Depth.hlsl has these: there the depth buffer keeps the linear depth
-// alone and rebuilds the projected one; here it holds both (x linear, y projected), and this gives the same y.
-float projectedDepthFromLinear(float linear01)
-{
-	float viewZ = max(linear01 * farZ, 1.0e-6);
-	return nearZ * (farZ - viewZ) / (viewZ * (farZ - nearZ));
-}
-
-float readDepthLod(float2 coord)
-{
-	return tex2Dlod(TESR_DepthBuffer, float4(coord, 0.0f, 0.0f)).x * farZ;
-}
+// projectedDepthFromLinear and readDepthLod: Includes/Depth.hlsl (from NVR UNOFFICIAL Optimized, as this effect).
 
 float3 NormalLod(float2 uv)
 {

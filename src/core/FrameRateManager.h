@@ -14,6 +14,7 @@ public:
 	double			Time;
 	double			LastTime;
 	double			ElapsedTime;
+	unsigned int	FrameNumber = 0;	// frames since start (UpdatePerformance), for effects that look back a few frames
 	double			SmartControlMPF;
 	double			LastPerformance;
 };

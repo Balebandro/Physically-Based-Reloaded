@@ -1,4 +1,5 @@
 #pragma once
+#include <unordered_set>
 
 class RenderPass {
 public:
@@ -20,6 +21,11 @@ public:
 	void DrawGeometryBuffer(NiGeometry* Geo, NiGeometryBufferData* GeoData);
 	void DrawSkinnedGeometryBuffer(NiGeometry* Geo, NiGeometryBufferData* GeoData, NiSkinPartition::Partition* Partition);
 	void RenderAccum();
+
+	// Terrain blending's ShadowDrop: the loaded land's geometry in the sun shadow map being drawn, and how far down
+	// it is drawn there (ShadowManager::RenderShadowMap; 0 off).
+	static inline float LandDrop = 0.0f;
+	static inline std::unordered_set<NiGeometry*> LandSet;
 };
 
 

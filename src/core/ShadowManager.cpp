@@ -210,6 +210,20 @@ bool ShadowManager::CastsIntoView(const NiBound* Bound) {
 }
 
 
+// Terrain blending's ShadowDrop (from NVR UNOFFICIAL Optimized): with Forward Shadows, the part of an object the
+// faded land reveals sat in the land's own sun shadow (a dark strip along the seam). The loaded land is drawn into
+// the sun cascades BlendDistance x ShadowDrop lower, less with a low sun (where the drop would move the land's
+// shadows sideways): only what is buried deeper than the blend band stays shadowed by it.
+static bool AccumulatingLand = false;
+static float SunLandDropScale = 0.0f;
+
+static float ShadowMapLandDrop() {
+	TerrainShaders* terrain = TheShaderManager->Shaders.Terrain;
+	const bool drop = terrain && terrain->BlendingSettings.Enabled && TheTextureManager->TerrainBlendDepthTexture;
+	return drop ? terrain->BlendingSettings.BlendDistance * terrain->BlendingSettings.ShadowDrop * SunLandDropScale : 0.0f;
+}
+
+
 // Detect which pass the object must be added to
 void ShadowManager::AccumObject(NiAVObject* NiObject, ShadowsExteriorEffect::FormsStruct* Forms, bool isLODLand) {
 	NiGeometry* geo = static_cast<NiGeometry*>(NiObject);
@@ -226,7 +240,7 @@ void ShadowManager::AccumObject(NiAVObject* NiObject, ShadowsExteriorEffect::For
 	else if (speedTreePass->AccumObject(geo)) {}
 	else if (Forms->Lod && isLODLand && terrainLODPass->AccumObject(geo)) {}
 	else if (Forms->AlphaEnabled && alphaPass->AccumObject(geo)) {}
-	else geometryPass->AccumObject(geo);
+	else if (geometryPass->AccumObject(geo) && AccumulatingLand && RenderPass::LandDrop > 0.0f) RenderPass::LandSet.insert(geo);
 }
 
 
@@ -328,6 +342,9 @@ void ShadowManager::RenderShadowMap(ShadowsExteriorEffect::ShadowMapSettings* Sh
 	RenderState->SetRenderState(D3DRS_DEPTHBIAS, (DWORD)0.0f, RenderStateArgs);
 	RenderState->SetRenderState(D3DRS_SLOPESCALEDEPTHBIAS, (DWORD)0.0f, RenderStateArgs);
 
+	RenderPass::LandDrop = ShadowMapLandDrop();
+	RenderPass::LandSet.clear();
+
 	if (ShadowMap->Forms.Lod) {
 		AccumChildren(BGSTerrainManager::GetRootLandLODNode(), &ShadowMap->Forms, true, true, &ShadowMap->ShadowMapFrustumPlanes);
 		AccumChildren(BGSTerrainManager::GetRootObjectLODNode(), &ShadowMap->Forms, false, true, &ShadowMap->ShadowMapFrustumPlanes);
@@ -352,6 +369,9 @@ void ShadowManager::RenderShadowMap(ShadowsExteriorEffect::ShadowMapSettings* Sh
 		ClearShadowCascade(&ShadowMap->ShadowMapViewPort, &ShadowMap->ClearColor);
 
 	RenderAccums();
+
+	RenderPass::LandDrop = 0.0f;
+	RenderPass::LandSet.clear();
 }
 
 
@@ -359,8 +379,11 @@ void ShadowManager::AccumExteriorCell(TESObjectCELL* Cell, ShadowsExteriorEffect
 	if (!Cell || Cell->IsInterior())
 		return;
 
-	if (ShadowMap->Forms.Terrain)
+	if (ShadowMap->Forms.Terrain) {
+		AccumulatingLand = true;
 		AccumChildren(Cell->GetChildNode(TESObjectCELL::kCellNode_Land), &ShadowMap->Forms, true, false, &ShadowMap->ShadowMapFrustumPlanes);
+		AccumulatingLand = false;
+	}
 
 	TList<TESObjectREFR>::Entry* Entry = &Cell->objectList.First;
 	while (Entry) {
@@ -765,6 +788,14 @@ void ShadowManager::RenderShadowMaps() {
 	bool ExteriorEnabled = isExterior && TheShaderManager->Effects.ShadowsExteriors->Enabled && ShadowsExteriors->Enabled;
 	bool InteriorEnabled = !isExterior && TheShaderManager->Effects.ShadowsInteriors->Enabled;
 
+	// Sun shadows switched off (the ShadowsExteriors effect itself, or its Main.Enabled): the effect's UpdateConstants does
+	// not run while it is off, which left ShadowFade.y at 1 and the forward shaders sampling the last atlas drawn. They
+	// read ShadowFade.y 0 as no sun shadows (as below the horizon, see SunMapsStale).
+	if (isExterior && !ExteriorEnabled) {
+		Shadows->Constants.ShadowFade.x = 1.0f;
+		Shadows->Constants.ShadowFade.y = 0.0f;
+	}
+
 	// early out in case shadow rendering is not required
 	if (!ExteriorEnabled && !InteriorEnabled && !TheShaderManager->orthoRequired || !ShadowShadersLoaded) {
 		return;
@@ -882,6 +913,7 @@ void ShadowManager::RenderShadowMaps() {
 
 			Device->SetDepthStencilSurface(Shadows->ShadowAtlasDepthSurface);
 
+			SunLandDropScale = min(1.0f, 2.0f * max(SunDir.z, 0.0f));
 			for (int i = MapNear; i < MapOrtho; i++) {
 				ShadowsExteriorEffect::ShadowMapSettings* ShadowMap = &Shadows->ShadowMaps[i];
 
@@ -925,6 +957,7 @@ void ShadowManager::RenderShadowMaps() {
 			}
 
 			ForceAllCascades = false;
+			SunLandDropScale = 0.0f;   // the ortho map keeps the land where it is
 
 			// Resolve MSAA.
 			if (Shadows->ShadowAtlasSurfaceMSAA)

@@ -187,6 +187,10 @@ public:
 	struct ShadowTextures {
 		IDirect3DTexture9* ShadowPassTexture;
 		IDirect3DSurface9* ShadowPassSurface;
+		// TESR_PointShadowCopy: the shadow pass as it was before each pass of PointShadows2 / SunShadows (their PassCopy),
+		// which read that instead of the buffer they draw into.
+		IDirect3DTexture9* ShadowPassCopyTexture;
+		IDirect3DSurface9* ShadowPassCopySurface;
 		IDirect3DCubeTexture9* ShadowCubeMapTexture[ShadowCubeMapsMax];
 		IDirect3DSurface9* ShadowCubeMapSurface[ShadowCubeMapsMax][6];
 		IDirect3DTexture9* ShadowSpotlightTexture[SpotLightsMax];

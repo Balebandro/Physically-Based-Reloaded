@@ -4,6 +4,7 @@
 // Vanilla: oC0.rgb = albedo * lighting, oC0.a = albedo.a
 #include "includes/Shadow.hlsl"
 #include "includes/Leaf.hlsl"
+#include "includes/AlphaAA.hlsl"
 
 PS_OUTPUT main(PS_INPUT IN) {
     PS_OUTPUT OUT;
@@ -13,7 +14,7 @@ PS_OUTPUT main(PS_INPUT IN) {
     float3 lit = albedo.rgb * lighting;
 
     OUT.color.rgb = lit;
-    OUT.color.a = albedo.a;
+    OUT.color.a = AlphaAA(albedo.a);
 
     return OUT;
 };

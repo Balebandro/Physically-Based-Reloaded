@@ -32,6 +32,7 @@ void EffectRecord::DisposeEffect() {
 	TextureShaderValues = nullptr;
 	TextureShaderValuesCount = 0;
 
+	LoadGeneration++;
 	Enabled = false;
 }
 
@@ -197,6 +198,7 @@ bool EffectRecord::LoadEffect() {
 
 	if (Effect) {
 		this->Effect = Effect;
+		LoadGeneration++;
 		CreateCT(EffectSource, NULL); //Create the object which will associate a register index to a float pointer for constants updates;
 		Logger::Log("Effect loaded: %s", EffectCompiledPath);
 	}
@@ -390,6 +392,39 @@ bool EffectRecord::SwitchEffect() {
 }
 
 
+D3DXHANDLE EffectRecord::TechniqueHandle(CachedHandle& cache, const char* name) {
+	if (cache.Generation != LoadGeneration) {
+		cache.Generation = LoadGeneration;
+		cache.Handle = Effect ? Effect->GetTechniqueByName(name) : NULL;
+	}
+	return cache.Handle;
+}
+
+D3DXHANDLE EffectRecord::ParameterHandle(CachedHandle& cache, const char* name) {
+	if (cache.Generation != LoadGeneration) {
+		cache.Generation = LoadGeneration;
+		cache.Handle = Effect ? Effect->GetParameterByName(NULL, name) : NULL;
+	}
+	return cache.Handle;
+}
+
+void EffectRecord::BindPassTextures() {
+	for (UINT stage = 0; stage < 16; stage++)
+		if (PassTextures[stage]) {
+			TheRenderManager->device->SetTexture(stage, PassTextures[stage]);
+			TheRenderManager->renderState->NoteDeviceTexture(stage, PassTextures[stage]);
+		}
+}
+
+void EffectRecord::ClearPassTextures() {
+	for (UINT stage = 0; stage < 16; stage++) {
+		if (!PassTextures[stage]) continue;
+		PassTextures[stage] = nullptr;
+		TheRenderManager->device->SetTexture(stage, nullptr);
+		TheRenderManager->renderState->NoteDeviceTexture(stage, nullptr);
+	}
+}
+
 /**
 * Renders the given effect shader.
 */
@@ -420,6 +455,7 @@ void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTar
 				if (ClearRenderTarget) Device->Clear(0L, NULL, D3DCLEAR_TARGET, D3DCOLOR_ARGB(255, 0, 0, 0), 1.0f, 0L);
 				Effect->BeginPass(p);
 				RebindSlotTextures();
+				BindPassTextures();
 				Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
 				Effect->EndPass();
 				chain.Commit();
@@ -443,7 +479,9 @@ void EffectRecord::Render(IDirect3DDevice9* Device, IDirect3DSurface9* RenderTar
 		Effect->Begin(&Passes, NULL);
 		for (UINT p = 0; p < Passes; p++) {
 			if (ClearRenderTarget) Device->Clear(0L, NULL, D3DCLEAR_TARGET, D3DCOLOR_ARGB(255, 0, 0, 0), 1.0f, 0L);
+			if (PassCopy) Device->StretchRect(RenderTarget, NULL, PassCopy, NULL, D3DTEXF_NONE);
 			Effect->BeginPass(p);
+			BindPassTextures();
 			Device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
 			Effect->EndPass();
 			if (RenderedSurface && RenderedSurface != RenderTarget) Device->StretchRect(RenderTarget, NULL, RenderedSurface, NULL, D3DTEXF_LINEAR); // copy the result from the pass into the texture

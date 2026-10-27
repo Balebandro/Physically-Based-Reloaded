@@ -1605,3 +1605,100 @@ void UpdateFaceGenInteriorFlag() {
     const bool NVRSkin = TheShaderManager->Shaders.Skin && TheShaderManager->Shaders.Skin->Enabled && TheSettingManager->SettingsMain.Main.RenderEffects;
     FaceGenInteriorFlag = NVRSkin ? 0 : Interior;
 }
+
+// --- Anti-aliased alpha test ([Main.Main.Misc] AlphaAA) ----------------------------------------
+// Grass and SpeedTree leaves are alpha tested, so without MSAA (and the alpha to coverage of the game's
+// transparency multisampling) their edges step and crawl. Their NVR shaders (Includes/AlphaAA.hlsl) turn the alpha
+// into a one-pixel ramp inside the vanilla edge, and here those draws blend it instead of testing it. The test stays
+// on, just past 0, so the pixels drawn, and the depth they write, are vanilla's. Set after the game's own per-geometry
+// setup has applied the mesh's alpha property and put back after the draw, as the land's blending does
+// (TerrainShaders::BeginLandDraw). Left alone under MSAA, where the game's alpha to coverage does the job.
+namespace AlphaAA {
+    static const D3DRENDERSTATETYPE States[] = {
+        D3DRS_ALPHABLENDENABLE, D3DRS_SRCBLEND, D3DRS_DESTBLEND, D3DRS_BLENDOP,
+        D3DRS_SEPARATEALPHABLENDENABLE, D3DRS_SRCBLENDALPHA, D3DRS_DESTBLENDALPHA, D3DRS_ALPHAREF,
+    };
+    static constexpr UInt32 StateCount = sizeof(States) / sizeof(States[0]);
+    static constexpr UInt32 AlphaRefIndex = 7;
+    static DWORD Saved[StateCount];
+    static bool Set = false;
+
+    // Device and the game's cache together: the cache skips a state it believes already set.
+    static void SetState(D3DRENDERSTATETYPE State, DWORD Value) {
+        TheRenderManager->renderState->SetRenderState(State, Value, RenderStateArgs);
+        TheRenderManager->device->SetRenderState(State, Value);
+    }
+
+    static bool TargetMultisampled() {
+        IDirect3DSurface9* Target = nullptr;
+        if (FAILED(TheRenderManager->device->GetRenderTarget(0, &Target)) || !Target) return false;
+        D3DSURFACE_DESC Desc = {};
+        const bool Multisampled = SUCCEEDED(Target->GetDesc(&Desc)) && Desc.MultiSampleType != D3DMULTISAMPLE_NONE;
+        Target->Release();
+        return Multisampled;
+    }
+
+    static void OnDraw() {
+        if (!TheSettingManager->SettingsMain.Main.AlphaAA || !TheSettingManager->SettingsMain.Main.RenderEffects) return;
+        NiD3DPass* Pass = *(NiD3DPass**)0x0126F74C;   // NiD3DShader::m_pCurrentPass
+        NiD3DPixelShaderEx* PixelShader = Pass ? (NiD3DPixelShaderEx*)Pass->PixelShader : nullptr;
+        if (!PixelShader || !PixelShader->Name) return;
+        if (strncmp(PixelShader->Name, "GRASS", 5) && strncmp(PixelShader->Name, "STLEAF", 6)) return;
+        if (PixelShader->ShaderHandle == PixelShader->ShaderHandleBackup) return;   // the game's own shader: no ramp
+        NiDX9RenderState* RenderState = TheRenderManager->renderState;
+        if (!RenderState->GetRenderState(D3DRS_ALPHATESTENABLE) || RenderState->GetRenderState(D3DRS_ALPHABLENDENABLE)) return;
+        if (TargetMultisampled()) return;
+
+        for (UInt32 i = 0; i < StateCount; i++) Saved[i] = RenderState->GetRenderState(States[i]);
+        const float Data[4] = { 1.0f, Saved[AlphaRefIndex] / 255.0f, 0.0f, 0.0f };
+        TheRenderManager->device->SetPixelShaderConstantF(222, Data, 1);
+        SetState(D3DRS_ALPHABLENDENABLE, TRUE);
+        SetState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+        SetState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+        SetState(D3DRS_BLENDOP, D3DBLENDOP_ADD);
+        // The target's alpha is kept as it was, as the land's blending keeps it.
+        SetState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE);
+        SetState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO);
+        SetState(D3DRS_DESTBLENDALPHA, D3DBLEND_ONE);
+        // 1, not 0: under GREATEREQUAL a 0 would let the clear pixels past the edge through, writing depth.
+        SetState(D3DRS_ALPHAREF, 1);
+        Set = true;
+    }
+
+    static void EndDraw() {
+        if (!Set) return;
+        for (UInt32 i = 0; i < StateCount; i++) SetState(States[i], Saved[i]);
+        const float Off[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        TheRenderManager->device->SetPixelShaderConstantF(222, Off, 1);
+        Set = false;
+    }
+}
+
+// TallGrassShader's (vtable 0x10B8980) and SpeedTreeLeafShader's (vtable 0x10B9190) per-geometry virtuals, slots 27
+// and 35 as for the other shaders: AlphaAA around every grass and leaf draw.
+VirtFuncDetour kGrassPrepareGeometryDetour;
+VirtFuncDetour kGrassPostGeometryDetour;
+VirtFuncDetour kLeafPrepareGeometryDetour;
+VirtFuncDetour kLeafPostGeometryDetour;
+
+void* __fastcall TallGrassShader__PrepareGeometryForRendering(void* apThis, void*, void* apGeometry, void* apPartition, void* apRendererData, void* apState) {
+    void* Result = (void*)ThisCall(kGrassPrepareGeometryDetour.GetOverwrittenAddr(), apThis, apGeometry, apPartition, apRendererData, apState);
+    AlphaAA::OnDraw();
+    return Result;
+}
+
+void __fastcall TallGrassShader__PostGeometry(void* apThis, void*, void* apProperties) {
+    ThisCall(kGrassPostGeometryDetour.GetOverwrittenAddr(), apThis, apProperties);
+    AlphaAA::EndDraw();
+}
+
+void* __fastcall SpeedTreeLeafShader__PrepareGeometryForRendering(void* apThis, void*, void* apGeometry, void* apPartition, void* apRendererData, void* apState) {
+    void* Result = (void*)ThisCall(kLeafPrepareGeometryDetour.GetOverwrittenAddr(), apThis, apGeometry, apPartition, apRendererData, apState);
+    AlphaAA::OnDraw();
+    return Result;
+}
+
+void __fastcall SpeedTreeLeafShader__PostGeometry(void* apThis, void*, void* apProperties) {
+    ThisCall(kLeafPostGeometryDetour.GetOverwrittenAddr(), apThis, apProperties);
+    AlphaAA::EndDraw();
+}

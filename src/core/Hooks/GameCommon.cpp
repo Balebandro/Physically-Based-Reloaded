@@ -6,6 +6,7 @@ NiDX9Renderer* __fastcall InitializeRendererHook(NiDX9Renderer* This, UInt32 edx
 	TheRenderManager = (RenderManager*)(*InitializeRenderer)(This);
 	TheRenderManager->Initialize();
 	InitializeManagers();
+	ReShadeIntegration::Initialize();
 
 	// NVR's skin shader (SkinTemplate.hlsl) replaces every SKIN20xx shader by name, so another
 	// skin shader mod's replacements never run while it is enabled.

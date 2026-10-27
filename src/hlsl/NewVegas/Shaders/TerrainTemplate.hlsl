@@ -245,10 +245,19 @@ float terrainBlendDepthRange(TerrainBlendGap gap, float slope) {
 float getTerrainBlend(TerrainBlendGap gap, float landViewDepth, float slope) {
     float maxDistance = TESR_TerrainBlendData.z;
     if (landViewDepth > maxDistance || gap.covered < 0.0f) return -1.0f;   // the object in front: the depth test handles it
-    float distance = terrainBlendDepthRange(gap, slope);
-    if (distance < 0.05f) return -1.0f;   // parallel to the ground: nothing to fade
-    float range = clamp(gap.width * TESR_TerrainBlendShape.w, distance, distance * 4.0f);
-    float keep = saturate(gap.covered / range);
+    float keep;
+    [branch] if (TESR_TerrainBlendShape.y < -9.5f) {
+        // HeightEdge 2 (from NVR UNOFFICIAL Optimized): the band is BlendDistance x SlopeBlend alone, and the land
+        // turns solid sooner (at 35% of it); terrainBlendEdge's height contrast shapes the edge.
+        float range = max(TESR_TerrainBlendData.y * lerp(1.0f, TESR_TerrainBlendShape.z, saturate(slope * 2.0f)), 0.05f);
+        keep = saturate(gap.covered / (range * 0.35f));
+    }
+    else {
+        float distance = terrainBlendDepthRange(gap, slope);
+        if (distance < 0.05f) return -1.0f;   // parallel to the ground: nothing to fade
+        float range = clamp(gap.width * TESR_TerrainBlendShape.w, distance, distance * 4.0f);
+        keep = saturate(gap.covered / range);
+    }
     // Back to a hard edge over the last quarter before the max distance, so there's no visible line.
     return lerp(keep, 1.0f, saturate((landViewDepth / maxDistance - 0.75f) * 4.0f));
 }
@@ -257,6 +266,18 @@ float getTerrainBlend(TerrainBlendGap gap, float landViewDepth, float slope) {
 // further over the object, where it is low a little less. Strongest mid-fade, none at either end. height 0-1.
 float terrainBlendEdge(float keep, float height) {
     if (keep >= 1.0f) return 1.0f;
+    // HeightEdge 1 and 2 (TESR_TerrainBlendShape.y negative; from NVR UNOFFICIAL Optimized): a height-weighted
+    // blend of land against object, the land winning where its height map is high; 2 with strong contrast.
+    [branch] if (TESR_TerrainBlendShape.y < 0.0f) {
+        const bool edge2 = TESR_TerrainBlendShape.y < -9.5f;
+        const float strength = edge2 ? -TESR_TerrainBlendShape.y - 10.0f : -TESR_TerrainBlendShape.y;
+        if (strength <= 0.0f) return keep;
+        if (edge2) height = saturate((height - 0.5f) * 8.0f + 0.5f + 0.20f);
+        const float coveragePower = 1.0f + strength, heightPower = 4.0f * strength;
+        const float terrainWeight = pow(keep, coveragePower) * (0.001f + pow(saturate(height), heightPower));
+        const float meshWeight = pow(1.0f - keep, coveragePower) * (0.001f + pow(0.5f, heightPower));
+        return terrainWeight / max(terrainWeight + meshWeight, 0.000001f);
+    }
     return saturate(keep + (height - 0.5f) * TESR_TerrainBlendShape.y * 4.0f * keep * (1.0f - keep));
 }
 #endif
