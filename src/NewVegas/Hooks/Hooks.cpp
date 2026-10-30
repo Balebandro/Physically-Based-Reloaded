@@ -34,6 +34,7 @@ void AttachHooks() {
 	DetourAttach(&(PVOID&)AudioTweaks::ListenerUpdate, &AudioTweaks::ListenerUpdateHook);   // [Main.Main.Performance] ListenerRate, SkipRedundantVolume (core/AudioTweaks.h)
 
 	DetourAttach(&(PVOID&)GetWaterHeightLOD, &GetWaterHeightLODHook);
+	DetourAttach(&(PVOID&)IsWaterNodeVisible, &IsWaterNodeVisibleHook);   // always: water with no child nodes (crash in the reflection pass)
 	DetourAttach(&(PVOID&)RenderReflections, &RenderReflectionsHook);   // always: ForceReflections, CheapReflections, CheapUnderwaterTerrain
 
 	DetourAttach(&(PVOID&)RenderPipboy, &RenderPipboyHook);

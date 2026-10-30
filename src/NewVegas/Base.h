@@ -27,6 +27,7 @@ public:
 	static const UInt32 RenderReflections			= 0x004E1BC0;
 	static const UInt32 RenderPipboy				= 0x008761E0;
 	static const UInt32 GetWaterHeightLOD			= 0x0045CD80;
+	static const UInt32 IsWaterNodeVisible			= 0x004E62E0;
 	static const UInt32 ShowDetectorWindow			= 0x004D61B0;
 	static const UInt32 LoadForm					= 0x004601D0;
 	static const UInt32 UpdateFlyCam				= 0x0094A8C0;

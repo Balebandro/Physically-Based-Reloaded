@@ -453,6 +453,24 @@ float __fastcall GetWaterHeightLODHook(TESWorldSpace* This, UInt32 edx) {
 
 }
 
+// TESWaterSystem::IsWaterNodeVisible takes the first child of a water reference's 3D (NiNode::GetAt(0)) without
+// checking it has any. A LOD water reference whose 3D is a node with no children array yet (NiNode +0xA0 null)
+// crashed the game there, from UpdateLODWater in the water reflection pass (2026-10-30).
+// Such water is not visible: false, as for one with no 3D at all.
+bool (__thiscall* IsWaterNodeVisible)(void*, void*, void*) = (bool (__thiscall*)(void*, void*, void*))Hooks::IsWaterNodeVisible;
+bool __fastcall IsWaterNodeVisibleHook(void* This, UInt32 edx, void* Ref, void* Camera) {
+
+	if (Ref) {
+		void* Node = ((void* (__thiscall*)(void*))(*(void***)Ref)[0x1D0 / 4])(Ref);   // TESObjectREFR::Get3D
+		if (Node) {
+			const bool IsNode = ((void* (__thiscall*)(void*))(*(void***)Node)[3])(Node) != NULL;   // NiObject::IsNode
+			if (!IsNode || !*(void**)((UInt8*)Node + 0xA0)) return false;
+		}
+	}
+	return (*IsWaterNodeVisible)(This, Ref, Camera);
+
+}
+
 bool bSkippedRender_RenderedMenu = false;
 bool bDoneRender_LockPickMenu = false;
 

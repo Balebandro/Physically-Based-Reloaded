@@ -30,6 +30,9 @@ void __fastcall RenderPipboyHook(Main* This, UInt32 edx, NiGeometry* Geo, NiDX9R
 extern float(__thiscall* GetWaterHeightLOD)(TESWorldSpace*);
 float __fastcall GetWaterHeightLODHook(TESWorldSpace* This, UInt32 edx);
 
+extern bool(__thiscall* IsWaterNodeVisible)(void*, void*, void*);
+bool __fastcall IsWaterNodeVisibleHook(void* This, UInt32 edx, void* Ref, void* Camera);
+
 extern void(__cdecl* ProcessImageSpaceShaders)(NiDX9Renderer*, BSRenderedTexture*, BSRenderedTexture*);
 void __cdecl ProcessImageSpaceShadersHook(NiDX9Renderer* Renderer, BSRenderedTexture* RenderedTexture1, BSRenderedTexture* RenderedTexture2);
 
