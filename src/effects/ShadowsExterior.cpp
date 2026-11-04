@@ -345,7 +345,6 @@ void ShadowsExteriorEffect::UpdateSettings() {
 	Settings.SunSmoothing.PitchStepSize = std::clamp(TheSettingManager->GetSettingF("Shaders.ShadowsExteriors.SunSmoothing", "PitchStepSize"), 0.0f, 15.0f);
 	Settings.SunSmoothing.MaxJumpAngle = std::clamp(TheSettingManager->GetSettingF("Shaders.ShadowsExteriors.SunSmoothing", "MaxJumpAngle"), 5.0f, 30.0f);
 	Settings.SunSmoothing.GlideSeconds = std::clamp(TheSettingManager->GetSettingF("Shaders.ShadowsExteriors.SunSmoothing", "GlideSeconds"), 0.0f, 10.0f);
-	Settings.SunSmoothing.CrossFade = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.SunSmoothing", "CrossFade");
 
 	// Contact hardening (sun, PCF only: Mode 3 with forward shadows).
 	Settings.ContactHardening.Enabled = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.ContactHardening", "Enabled") != 0;
@@ -465,6 +464,8 @@ void ShadowsExteriorEffect::RegisterConstants() {
 	TheShaderManager->RegisterConstant("TESR_ShadowData", &Constants.Data);
 	TheShaderManager->RegisterConstant("TESR_ShadowFormatData", &Constants.FormatData);
 	TheShaderManager->RegisterConstant("TESR_ShadowForwardData", &Constants.ForwardData);
+	TheShaderManager->RegisterConstant("TESR_ShadowViewModelTransform", (D3DXVECTOR4*)&Constants.ShadowViewModelTransform);
+	TheShaderManager->RegisterConstant("TESR_ShadowViewModelData", &Constants.ShadowViewModelData);
 	TheShaderManager->RegisterConstant("TESR_ShadowBlur", &Constants.ShadowBlur);
 	TheShaderManager->RegisterConstant("TESR_ShadowScreenSpaceData", &Constants.ScreenSpaceData);
 	TheShaderManager->RegisterConstant("TESR_ShadowContactData", &Constants.ContactData);
@@ -484,18 +485,19 @@ void ShadowsExteriorEffect::RegisterConstants() {
 	TheShaderManager->RegisterConstant("TESR_ShadowLodCenter", &ShadowMaps[MapLod].ShadowMapCascadeCenterRadius);
 	TheShaderManager->RegisterConstant("TESR_ShadowCameraToLightTransformLod", (D3DXVECTOR4*)&ShadowMaps[MapLod].ShadowCameraToLight);
 	TheShaderManager->RegisterConstant("TESR_ShadowCameraToLightTransformOrtho", (D3DXVECTOR4*)&ShadowMaps[MapOrtho].ShadowCameraToLight);
-	TheShaderManager->RegisterConstant("TESR_ShadowOldCameraToLightTransformNear", (D3DXVECTOR4*)&Constants.OldCameraToLight[MapNear]);
-	TheShaderManager->RegisterConstant("TESR_ShadowOldCameraToLightTransformMiddle", (D3DXVECTOR4*)&Constants.OldCameraToLight[MapMiddle]);
-	TheShaderManager->RegisterConstant("TESR_ShadowOldCameraToLightTransformFar", (D3DXVECTOR4*)&Constants.OldCameraToLight[MapFar]);
-	TheShaderManager->RegisterConstant("TESR_ShadowOldCameraToLightTransformLod", (D3DXVECTOR4*)&Constants.OldCameraToLight[MapLod]);
-	TheShaderManager->RegisterConstant("TESR_ShadowOldNearCenter", &Constants.OldCenter[MapNear]);
-	TheShaderManager->RegisterConstant("TESR_ShadowOldMiddleCenter", &Constants.OldCenter[MapMiddle]);
-	TheShaderManager->RegisterConstant("TESR_ShadowOldFarCenter", &Constants.OldCenter[MapFar]);
-	TheShaderManager->RegisterConstant("TESR_ShadowOldLodCenter", &Constants.OldCenter[MapLod]);
-	TheShaderManager->RegisterConstant("TESR_ShadowCrossFade", &Constants.CrossFade);
-	Constants.CrossFade = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
 	TheShaderManager->RegisterConstant("TESR_ShadowCubeMapLightPosition", &Constants.ShadowCubeMapLightPosition);
 	TheShaderManager->RegisterConstant("TESR_ShadowLightPosition", (D3DXVECTOR4*)&Constants.ShadowLightPosition);
+}
+
+// The viewmodel's own shadow map (see the header), made or remade with the cascades. Its own resolution, at least
+// 4096: it covers only the arms and weapon, up close.
+void ShadowsExteriorEffect::CreateViewModelShadowMap(ULONG Size) {
+	Size = max(Size, (ULONG)4096);
+	if (ViewModelShadowSurface) { ViewModelShadowSurface->Release(); ViewModelShadowSurface = nullptr; }
+	if (ViewModelShadowTexture) { ViewModelShadowTexture->Release(); ViewModelShadowTexture = nullptr; }
+	if (ViewModelShadowDepthSurface) { ViewModelShadowDepthSurface->Release(); ViewModelShadowDepthSurface = nullptr; }
+	TheTextureManager->InitTexture("TESR_ShadowViewModel", &ViewModelShadowTexture, &ViewModelShadowSurface, Size, Size, D3DFMT_R32F);
+	TheRenderManager->device->CreateDepthStencilSurface(Size, Size, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &ViewModelShadowDepthSurface, NULL);
 }
 
 void ShadowsExteriorEffect::RegisterTextures() {
@@ -509,14 +511,6 @@ void ShadowsExteriorEffect::RegisterTextures() {
 	if (Settings.ShadowMaps.Prefilter)
 		TheTextureManager->InitTexture("TESR_ShadowAtlasBlur", &ShadowAtlasBlurTexture, &ShadowAtlasBlurSurface, ShadowAtlasSize, ShadowAtlasSize, Settings.ShadowMaps.Format, false);
 
-	// [Shaders.ShadowsExteriors.SunSmoothing] CrossFade: the atlas as it was before the sun's last step.
-	if (Settings.SunSmoothing.CrossFade && Settings.Exteriors.ForwardShadows) {
-		TheTextureManager->InitTexture("TESR_ShadowAtlasOld", &ShadowAtlasOldTexture, &ShadowAtlasOldSurface, ShadowAtlasSize, ShadowAtlasSize, Settings.ShadowMaps.Format, false);
-		SunCrossFadeReady = ShadowAtlasOldTexture && ShadowAtlasOldSurface;
-		Logger::Log("UNOFFICIAL sun shadow cross-fade %s (%lux%lu copy of the shadow atlas).", SunCrossFadeReady ? "on" : "FAILED, off",
-			ShadowAtlasSize, ShadowAtlasSize);
-	}
-
 	if (!Settings.ShadowMaps.MSAA)
 		TheRenderManager->device->CreateDepthStencilSurface(ShadowAtlasSize, ShadowAtlasSize, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &ShadowAtlasDepthSurface, NULL);
 	else {
@@ -529,6 +523,7 @@ void ShadowsExteriorEffect::RegisterTextures() {
 		ShadowMaps[i].ShadowMapResolution = (float)ShadowMapSize;
 		ShadowMaps[i].ShadowMapInverseResolution = 1.0f / (float)ShadowMapSize;
 	}
+	CreateViewModelShadowMap(ShadowMapSize);
 
 	TheShaderManager->CreateFrameVertex(ShadowAtlasSize, ShadowAtlasSize, &ShadowAtlasVertexBuffer);
 	Constants.ShadowBlur.x = 1.0f / (float)ShadowAtlasSize;
@@ -614,17 +609,6 @@ void ShadowsExteriorEffect::RecreateTextures(bool cascades, bool ortho, bool cub
 		if (Settings.ShadowMaps.Prefilter)
 			TheTextureManager->InitTexture("TESR_ShadowAtlasBlur", &ShadowAtlasBlurTexture, &ShadowAtlasBlurSurface, ShadowAtlasSize, ShadowAtlasSize, Settings.ShadowMaps.Format, false);
 
-		if (SunCrossFadeReady) {
-			if (ShadowAtlasOldSurface) ShadowAtlasOldSurface->Release();
-			if (ShadowAtlasOldTexture) ShadowAtlasOldTexture->Release();
-			ShadowAtlasOldSurface = nullptr;
-			ShadowAtlasOldTexture = nullptr;
-			TheTextureManager->InitTexture("TESR_ShadowAtlasOld", &ShadowAtlasOldTexture, &ShadowAtlasOldSurface, ShadowAtlasSize, ShadowAtlasSize, Settings.ShadowMaps.Format, false);
-			SunCrossFadeReady = ShadowAtlasOldTexture && ShadowAtlasOldSurface;
-			Constants.CrossFade.x = 0.0f;
-			TheShaderManager->ClearShaderSamplers("TESR_ShadowAtlasOld", 19);
-		}
-
 		if (!Settings.ShadowMaps.MSAA)
 			TheRenderManager->device->CreateDepthStencilSurface(ShadowAtlasSize, ShadowAtlasSize, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &ShadowAtlasDepthSurface, NULL);
 		else {
@@ -637,6 +621,8 @@ void ShadowsExteriorEffect::RecreateTextures(bool cascades, bool ortho, bool cub
 			ShadowMaps[i].ShadowMapResolution = (float)ShadowMapSize;
 			ShadowMaps[i].ShadowMapInverseResolution = 1.0f / (float)ShadowMapSize;
 		}
+		CreateViewModelShadowMap(ShadowMapSize);
+		TheShaderManager->ClearShaderSamplers("TESR_ShadowViewModel", 20);
 
 		TheShaderManager->CreateFrameVertex(ShadowAtlasSize, ShadowAtlasSize, &ShadowAtlasVertexBuffer);
 		Constants.ShadowBlur.x = 1.0f / (float)ShadowAtlasSize;
@@ -716,45 +702,35 @@ D3DXVECTOR3 ShadowsExteriorEffect::CalculateSmoothedSunDir() {
 
 	D3DXVECTOR3 SmoothedSunDir(Constants.SmoothedSunDir);
 
-	// GlideSeconds (NVR UNOFFICIAL Optimized): each quantized step eased over a fixed time, or with CrossFade,
-	// the shadows of the step before faded out under the new ones instead of sliding.
+	// GlideSeconds (NVR UNOFFICIAL Optimized): each quantized step eased over a fixed time. (Its CrossFade, the step
+	// before's shadows faded out under the new ones, was removed 2026-11-01 at the user's request.)
 	if (quantizeSun && smoothSun && Settings.SunSmoothing.GlideSeconds > 0.0f) {
 		const ULONGLONG now = GetTickCount64();
-		const bool crossFade = SunCrossFadeReady && Settings.SunSmoothing.CrossFade && Settings.Exteriors.ForwardShadows;
 		if (!SunGlideValid) {
 			SunGlideFrom = SunGlideTo = SunDir;
 			SunGlideValid = true;
-			SunCrossFading = false;
 		}
 		else if (D3DXVec3Dot(&SunDir, &SunGlideTo) < 0.99999f) {
 			const float stepAngle = acosf(std::clamp(D3DXVec3Dot(&SunDir, &SunGlideTo), -1.0f, 1.0f));
 			const bool oneStep = stepAngle < 1.5f * max(yawStepSize, pitchStepSize);
-			SunCrossFading = oneStep && crossFade && StartSunCrossFade();
 			static int logged = 0;
 			if (logged < 20) {
 				logged++;
 				Logger::Log("UNOFFICIAL sun step %.1f degrees: %s", D3DXToDegree(stepAngle),
-					!oneStep ? "jumps (bigger than one step: waiting, sleeping or loading)" : SunCrossFading ? "cross-fades" : "glides");
+					!oneStep ? "jumps (bigger than one step: waiting, sleeping or loading)" : "glides");
 			}
-			SunGlideFrom = oneStep && !SunCrossFading ? SmoothedSunDir : SunDir;
+			SunGlideFrom = oneStep ? SmoothedSunDir : SunDir;
 			SunGlideTo = SunDir;
 			SunGlideStart = now;
 		}
 		const float t = std::clamp((now - SunGlideStart) / (1000.0f * Settings.SunSmoothing.GlideSeconds), 0.0f, 1.0f);
 		const float eased = t * t * (3.0f - 2.0f * t);
-		if (SunCrossFading && crossFade && t < 1.0f) UpdateSunCrossFade(1.0f - eased);
-		else {
-			SunCrossFading = false;
-			Constants.CrossFade.x = 0.0f;
-		}
 		D3DXVec3Lerp(&SmoothedSunDir, &SunGlideFrom, &SunGlideTo, eased);
 		D3DXVec3Normalize(&SmoothedSunDir, &SmoothedSunDir);
 		Constants.SmoothedSunDir = D3DXVECTOR4(SmoothedSunDir, 0.0f);
 		return SmoothedSunDir;
 	}
 	SunGlideValid = false;
-	SunCrossFading = false;
-	Constants.CrossFade.x = 0.0f;
 
 	if (smoothSun) {
 		// Compute angle difference between smoothed and new direction
@@ -776,39 +752,6 @@ D3DXVECTOR3 ShadowsExteriorEffect::CalculateSmoothedSunDir() {
 	
 	Constants.SmoothedSunDir = D3DXVECTOR4(SmoothedSunDir, 0.0f);
 	return SmoothedSunDir;
-}
-
-// Keeps the atlas and the cascade transforms of the step before; ShadowManager redraws every cascade this frame.
-bool ShadowsExteriorEffect::StartSunCrossFade() {
-	HRESULT copied = TheRenderManager->device->StretchRect(ShadowAtlasSurface, NULL, ShadowAtlasOldSurface, NULL, D3DTEXF_NONE);
-	if (FAILED(copied)) {
-		static bool reported = false;
-		if (!reported) Logger::Log("UNOFFICIAL sun shadow cross-fade: copying the shadow atlas failed (%08lx), steps glide instead.", copied);
-		reported = true;
-		return false;
-	}
-	for (int i = MapNear; i <= MapLod; i++) {
-		SunFadeMatrix[i] = ShadowMaps[i].ShadowCameraToLight;
-		SunFadeCenter[i] = ShadowMaps[i].ShadowMapCascadeCenterRadius;
-		SunFadeCamera[i] = ShadowMaps[i].CameraTranslation;
-	}
-	TheShadowManager->ForceAllCascades = true;
-	return true;
-}
-
-// The old transforms are camera-relative: moved with the camera since they were kept.
-void ShadowsExteriorEffect::UpdateSunCrossFade(float oldWeight) {
-	const NiPoint3& position = WorldSceneGraph->camera->m_worldTransform.pos;
-	const D3DXVECTOR3 camera(position.x, position.y, position.z);
-	for (int i = MapNear; i <= MapLod; i++) {
-		const D3DXVECTOR3 moved = camera - SunFadeCamera[i];
-		D3DXMATRIX translation;
-		D3DXMatrixTranslation(&translation, moved.x, moved.y, moved.z);
-		Constants.OldCameraToLight[i] = translation * SunFadeMatrix[i];
-		Constants.OldCenter[i] = D3DXVECTOR4(SunFadeCenter[i].x - moved.x, SunFadeCenter[i].y - moved.y,
-			SunFadeCenter[i].z - moved.z, SunFadeCenter[i].w);
-	}
-	Constants.CrossFade.x = oldWeight;
 }
 
 

@@ -163,13 +163,11 @@ void ShaderRecord::AppendGlobalDefines(ShaderTemplate& Template) {
 	
 	// The sun shadow atlas holds plain depths, read with PCF: the only mode (Includes/Shadow.hlsl).
 	{
-		// NVR UNOFFICIAL Optimized's sun shadow options that change the forward shader code (Includes/Shadow.hlsl):
-		// both need the forward path.
+		// NVR UNOFFICIAL Optimized's sun shadow option that changes the forward shader code (Includes/Shadow.hlsl): it
+		// needs the forward path. (Its sun cross-fade, SUN_CROSSFADE, was removed 2026-11-01 at the user's request.)
 		const bool forward = TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.Main", "ForwardShadows") != 0;
 		AppendDefine("CONTACT_HARDENING", forward &&
 			TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.ContactHardening", "Enabled") ? "1" : "0");
-		AppendDefine("SUN_CROSSFADE", forward &&
-			TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.SunSmoothing", "CrossFade") ? "1" : "0");
 	}
 }
 

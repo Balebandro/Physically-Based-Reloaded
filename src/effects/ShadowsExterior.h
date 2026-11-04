@@ -52,11 +52,8 @@ public:
 		// opposite polarity would turn a dropped constant into silently missing shadows,
 		// which is exactly the failure that made this a compile-time macro in the first place.
 		D3DXVECTOR4		ForwardData;
-		// [Shaders.ShadowsExteriors.SunSmoothing] CrossFade: the cascades as they were before the sun's last step
-		// (camera-relative, moved with the camera) and x: how much of them still shows (Includes/Shadow.hlsl).
-		D3DXMATRIX		OldCameraToLight[4];
-		D3DXVECTOR4		OldCenter[4];
-		D3DXVECTOR4		CrossFade;
+		D3DXMATRIX		ShadowViewModelTransform;	// the viewmodel's own light transform (ShadowManager::RenderViewModelShadowMap)
+		D3DXVECTOR4		ShadowViewModelData;		// its map: x one texel (uv), y resolution
 	};
 
 	// Settings
@@ -159,7 +156,6 @@ public:
 		float				PitchStepSize;
 		float				MaxJumpAngle;
 		float				GlideSeconds;	// with QuantizeSun and SmoothSun: each step eased over this long
-		bool				CrossFade;		// with forward shadows: a step fades from the old cascades to the new
 	};
 
 	// [Shaders.ContactHardening]: sun shadows sharp where a caster touches, softer further off (Mode 3, forward).
@@ -213,6 +209,14 @@ public:
 	IDirect3DTexture9* ShadowAtlasBlurTexture = nullptr;
 	IDirect3DSurface9* ShadowAtlasBlurSurface = nullptr;
 
+	// The first-person arms and weapon alone, drawn with the near cascade's light transform at the start of the first-person
+	// render (ShadowManager::RenderViewModelShadowMap): their shadows on themselves, read only by the first-person draw
+	// (Shaders/Includes/Shadow.hlsl, TESR_ShadowViewModel). At least 4096.
+	IDirect3DTexture9* ViewModelShadowTexture = nullptr;
+	IDirect3DSurface9* ViewModelShadowSurface = nullptr;
+	IDirect3DSurface9* ViewModelShadowDepthSurface = nullptr;
+	void CreateViewModelShadowMap(ULONG Size);
+
 	IDirect3DVertexBuffer9* ShadowAtlasVertexBuffer;
 
 	// Ortho shadows for various effects.
@@ -235,20 +239,11 @@ public:
 	// stale -- see UpdateConstants for why they must not be sampled.
 	bool		SunMapsStale = false;
 
-	// Sun step glide and cross-fade (NVR UNOFFICIAL Optimized).
+	// Sun step glide (NVR UNOFFICIAL Optimized).
 	D3DXVECTOR3	SunGlideFrom = D3DXVECTOR3(0.0f, 0.0f, 1.0f);
 	D3DXVECTOR3	SunGlideTo = D3DXVECTOR3(0.0f, 0.0f, 1.0f);
 	ULONGLONG	SunGlideStart = 0;
 	bool		SunGlideValid = false;
-	bool		SunCrossFadeReady = false;
-	bool		SunCrossFading = false;
-	IDirect3DTexture9* ShadowAtlasOldTexture = nullptr;
-	IDirect3DSurface9* ShadowAtlasOldSurface = nullptr;
-	D3DXMATRIX	SunFadeMatrix[4];
-	D3DXVECTOR4	SunFadeCenter[4];
-	D3DXVECTOR3	SunFadeCamera[4];
-	bool		StartSunCrossFade();
-	void		UpdateSunCrossFade(float oldWeight);
 
 	void		GetCascadeDepths();
 	D3DXMATRIX	GetCascadeViewProj(ShadowMapSettings* ShadowMap, D3DXVECTOR3* SunDir);

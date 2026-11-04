@@ -24,6 +24,7 @@ public:
 	void					RenderShadowCubeMap(ShadowSceneLight** Lights, UInt32 LightIndex);
 	void					RenderShadowSpotlight(NiSpotLight** Lights, UInt32 LightIndex);
 	void					RenderShadowMaps();
+	bool					RenderViewModelShadowMap(NiCamera* FirstPersonCamera);
 	void					ClearShadowCascade(D3DVIEWPORT9* ViewPort, D3DXVECTOR4* ClearColor);
 	void                    BlurShadowAtlas();
 	bool					CastsIntoView(const NiBound* Bound);	// caster culling: whether this caster's shadow can reach the view
@@ -67,7 +68,6 @@ public:
 	int						CasterCoveringCount = 0;
 	UInt32					CastersCulled = 0;
 	UInt32					CastersCovered = 0;
-	bool					ForceAllCascades = false;	// draw every sun cascade this frame (the sun cross-fade's new atlas)
 	// [Shaders.ContactHardening] TESR_ContactHardeningData: x sun size (0: off), y max softness in texels, z Smooth.
 	D3DXVECTOR4				ContactHardeningData = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
 

@@ -917,7 +917,7 @@ void ShadowManager::RenderShadowMaps() {
 			for (int i = MapNear; i < MapOrtho; i++) {
 				ShadowsExteriorEffect::ShadowMapSettings* ShadowMap = &Shadows->ShadowMaps[i];
 
-				if (ForceAllCascades || !Shadows->Settings.ShadowMaps.LimitFrequency || i != MapLod || !(FrameCounter % 4)) {
+				if (!Shadows->Settings.ShadowMaps.LimitFrequency || i != MapLod || !(FrameCounter % 4)) {
 					Shadows->Constants.ShadowViewProj = Shadows->GetCascadeViewProj(ShadowMap, &SunDir);
 					// Caster culling, not on a cascade drawn only every fourth frame: turning would show what it left out.
 					const bool cull = Shadows->Settings.ShadowMaps.CasterCulling && ShadowMap->CasterPlanesValid &&
@@ -955,8 +955,6 @@ void ShadowManager::RenderShadowMaps() {
 				message += std::to_string(i);
 				shadowMapTimer.LogTime(message.c_str());
 			}
-
-			ForceAllCascades = false;
 			SunLandDropScale = 0.0f;   // the ortho map keeps the land where it is
 
 			// Resolve MSAA.
@@ -1093,8 +1091,223 @@ void ShadowManager::RenderShadowMaps() {
 
 
 /*
+ * The first-person arms and weapon casting their sun shadows on themselves (2026-11-01 user: "have the viewmodel cast shadows
+ * on itself"). The sun cascades are drawn from the world's cells, before the world, and never hold the viewmodel (its own
+ * scene graph; posed for the frame only as its render starts). Just before that render (Render.cpp, RenderFirstPersonHook)
+ * the viewmodel alone is drawn into its own map (TESR_ShadowViewModel) with its own light transform, an ortho box fitted
+ * around its parts (TESR_ShadowViewModelTransform; the near cascade spreads it over a few texels); only the first-person draw
+ * reads it (Shaders/Includes/Shadow.hlsl), so it shadows nothing in the world.
+ * The game draws the viewmodel moved to the origin (0x874C10) and, as everything, camera-relative to the camera drawing it
+ * (NiRenderer::kPosAdjust, set by Do_SetCameraData): here still the world camera's. So for this render both
+ * NVR's camera position (CreateD3DMatrix) and kPosAdjust are the first-person camera's: the map then holds what the
+ * first-person draw sees, and the bone matrices CalculateBoneMatrices computes and keeps for the frame are the ones that
+ * draw wants (made with the world camera's, the arms were drawn far off: invisible). Called inside the game's scene: the
+ * target, depth, viewport, the render states the passes change and TESR_ShadowData (the passes write their geometry type
+ * into it, and the game shaders read its darkness) are put back after. False when there is nothing to draw (no sun shadows).
+ */
+// The viewmodel's parts as spheres relative to Eye, for RenderViewModelShadowMap's light box: skinned meshes by the bound
+// NiSkinData keeps for each bone's vertices (in that bone's space), rigid ones by their model bound. Walked as
+// AccumChildren walks it; anything far from the camera (the first-person skeleton's lower body) is left out.
+static void ViewModelSpheres(NiAVObject* Object, const NiPoint3& Eye, std::vector<D3DXVECTOR4>& Spheres) {
+	if (!Object || Object->m_flags & NiAVObject::NiFlags::APP_CULLED) return;
+	auto Add = [&](const NiTransform& T, const NiBound& B) {
+		const NiPoint3 c = T.rot * B.Center;
+		const D3DXVECTOR4 s(T.pos.x + c.x * T.scale - Eye.x, T.pos.y + c.y * T.scale - Eye.y, T.pos.z + c.z * T.scale - Eye.z, B.Radius * T.scale);
+		if (s.x * s.x + s.y * s.y + s.z * s.z < 150.0f * 150.0f) Spheres.push_back(s);
+	};
+	if (Object->IsGeometry()) {
+		NiGeometry* Geo = static_cast<NiGeometry*>(Object);
+		NiSkinInstance* Skin = Geo->skinInstance;
+		if (Skin && Skin->SkinData && Skin->SkinData->BoneData && Skin->BoneObjects) {
+			for (UInt32 i = 0; i < Skin->SkinData->Bones; i++)
+				if (Skin->BoneObjects[i] && Skin->SkinData->BoneData[i].Verts) Add(Skin->BoneObjects[i]->m_worldTransform, Skin->SkinData->BoneData[i].Bound);
+		}
+		else if (Geo->geomData) Add(Geo->m_worldTransform, Geo->geomData->m_kBound);
+		return;
+	}
+	NiNode* Node = Object->IsNiNode();
+	if (!Node) return;
+	if (Node->IsKindOf<NiSwitchNode>()) {
+		NiSwitchNode* SwitchNode = static_cast<NiSwitchNode*>(Node);
+		if (SwitchNode->m_iIndex >= 0) ViewModelSpheres(Node->m_children.data[SwitchNode->m_iIndex], Eye, Spheres);
+		return;
+	}
+	for (int i = 0; i < Node->m_children.end; i++) ViewModelSpheres(Node->m_children.data[i], Eye, Spheres);
+}
+
+bool ShadowManager::RenderViewModelShadowMap(NiCamera* FirstPersonCamera) {
+	ShadowsExteriorEffect* Shadows = TheShaderManager->Effects.ShadowsExteriors;
+	if (!Shadows || !ShadowShadersLoaded || !TheSettingManager->SettingsMain.Main.RenderEffects) return false;
+	if (!TheShaderManager->GameState.isExterior || !Shadows->Enabled || !Shadows->Settings.Exteriors.Enabled || Shadows->SunMapsStale) return false;
+	if (Shadows->Constants.ShadowFade.y <= 0.0f || Shadows->Constants.ForwardData.x != 0.0f) return false;
+	if (!Player || !Player->firstPersonNiNode || !Shadows->ViewModelShadowSurface || !Shadows->ViewModelShadowDepthSurface) return false;
+	if (!FirstPersonCamera || !Player->firstPersonNiNode->m_kWorldBound) return false;
+
+	IDirect3DDevice9* Device = TheRenderManager->device;
+	NiDX9RenderState* RenderState = TheRenderManager->renderState;
+	IDirect3DSurface9* DepthSurface = NULL;
+	IDirect3DSurface9* RenderSurface = NULL;
+	D3DVIEWPORT9 viewport;
+	Device->GetDepthStencilSurface(&DepthSurface);
+	Device->GetRenderTarget(0, &RenderSurface);
+	Device->GetViewport(&viewport);
+	static const D3DRENDERSTATETYPE kStates[] = { D3DRS_ZENABLE, D3DRS_ZWRITEENABLE, D3DRS_ZFUNC, D3DRS_CULLMODE, D3DRS_ALPHABLENDENABLE,
+		D3DRS_ALPHATESTENABLE, D3DRS_ALPHAREF, D3DRS_ALPHAFUNC, D3DRS_DEPTHBIAS, D3DRS_SLOPESCALEDEPTHBIAS, D3DRS_STENCILENABLE, D3DRS_COLORWRITEENABLE,
+		D3DRS_SCISSORTESTENABLE, D3DRS_CLIPPLANEENABLE };
+	DWORD saved[_countof(kStates)];
+	for (int i = 0; i < _countof(kStates); i++) Device->GetRenderState(kStates[i], &saved[i]);
+	// The rest of the device state the draws below change, as the flashlight's MaterialPass keeps it (in the middle of the
+	// game's own draws): shaders, vertex layout, buffers, textures and their sampling, and every shader constant (the
+	// skinned pass writes bones from c9, the game sets some of its constants once per pass).
+	static const D3DSAMPLERSTATETYPE kSamplerStates[] = { D3DSAMP_ADDRESSU, D3DSAMP_ADDRESSV, D3DSAMP_MAGFILTER, D3DSAMP_MINFILTER, D3DSAMP_MIPFILTER };
+	IDirect3DVertexShader9* savedVS = NULL; IDirect3DPixelShader9* savedPS = NULL; IDirect3DVertexDeclaration9* savedDecl = NULL;
+	IDirect3DIndexBuffer9* savedIB = NULL; DWORD savedFVF = 0;
+	IDirect3DVertexBuffer9* savedVB[8] = {}; UINT savedOffset[8] = {}, savedStride[8] = {};
+	IDirect3DBaseTexture9* savedTex[16] = {}; DWORD savedSampler[16][_countof(kSamplerStates)];
+	static float savedVSConst[256][4], savedPSConst[224][4];
+	Device->GetVertexShader(&savedVS); Device->GetPixelShader(&savedPS); Device->GetVertexDeclaration(&savedDecl);
+	Device->GetIndices(&savedIB); Device->GetFVF(&savedFVF);
+	for (UINT i = 0; i < 8; i++) Device->GetStreamSource(i, &savedVB[i], &savedOffset[i], &savedStride[i]);
+	for (DWORD i = 0; i < 16; i++) {
+		Device->GetTexture(i, &savedTex[i]);
+		for (int s = 0; s < _countof(kSamplerStates); s++) Device->GetSamplerState(i, kSamplerStates[s], &savedSampler[i][s]);
+	}
+	Device->GetVertexShaderConstantF(0, &savedVSConst[0][0], 256);
+	Device->GetPixelShaderConstantF(0, &savedPSConst[0][0], 224);
+	const D3DXVECTOR4 savedData = Shadows->Constants.Data;
+	const D3DXMATRIX savedViewProj = Shadows->Constants.ShadowViewProj;
+
+	ShadowsExteriorEffect::ShadowMapSettings* Near = &Shadows->ShadowMaps[ShadowsExteriorEffect::MapNear];
+	D3DSURFACE_DESC desc;
+	Shadows->ViewModelShadowSurface->GetDesc(&desc);
+
+	// Camera-relative to the first-person camera (see above), put back at the end.
+	NiPoint3* PosAdjust = (NiPoint3*)0x011F474C;   // NiRenderer::kPosAdjust
+	const NiPoint3 savedPosAdjust = *PosAdjust;
+	const D3DXVECTOR4 savedCameraPosition = TheRenderManager->CameraPosition;
+	const NiPoint3 eye = FirstPersonCamera->m_worldTransform.pos;
+	*PosAdjust = eye;
+	TheRenderManager->CameraPosition = D3DXVECTOR4(eye.x, eye.y, eye.z, 1.0f);
+
+	// The light transform: an ortho box fitted, in the sun's frame, around the parts drawn (ViewModelSpheres; the
+	// viewmodel's root bound has no size), so the map's texels cover only the arms and weapon. The box is square, its
+	// size taken in 8-unit steps and its centre snapped to whole texels: the texel grid holds still while the weapon
+	// sways and the shadow edges do not crawl.
+	static std::vector<D3DXVECTOR4> spheres;
+	spheres.clear();
+	ViewModelSpheres(Player->firstPersonNiNode, eye, spheres);
+	D3DXVECTOR3 sunDir(Shadows->Constants.SmoothedSunDir.x, Shadows->Constants.SmoothedSunDir.y, Shadows->Constants.SmoothedSunDir.z);
+	D3DXVec3Normalize(&sunDir, &sunDir);
+	const D3DXVECTOR3 origin(0.0f, 0.0f, 0.0f);
+	const D3DXVECTOR3 upDir = fabsf(sunDir.z) > 0.99f ? D3DXVECTOR3(0.0f, 1.0f, 0.0f) : D3DXVECTOR3(0.0f, 0.0f, 1.0f);
+	D3DXMATRIX lightView, lightProj;
+	D3DXMatrixLookAtRH(&lightView, &sunDir, &origin, &upDir);
+	D3DXVECTOR3 lo(FLT_MAX, FLT_MAX, FLT_MAX), hi(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+	for (const D3DXVECTOR4& s : spheres) {
+		D3DXVECTOR3 v;
+		D3DXVec3TransformCoord(&v, (const D3DXVECTOR3*)&s, &lightView);
+		lo.x = min(lo.x, v.x - s.w); lo.y = min(lo.y, v.y - s.w); lo.z = min(lo.z, v.z - s.w);
+		hi.x = max(hi.x, v.x + s.w); hi.y = max(hi.y, v.y + s.w); hi.z = max(hi.z, v.z + s.w);
+	}
+	if (spheres.empty()) { lo = D3DXVECTOR3(-1.0f, -1.0f, -1.0f); hi = D3DXVECTOR3(1.0f, 1.0f, 1.0f); }
+	const float extent = max(8.0f, ceilf(max(hi.x - lo.x, hi.y - lo.y) / 8.0f) * 8.0f);
+	const float texelWorld = extent / (float)desc.Width;
+	const float cx = floorf((lo.x + hi.x) * 0.5f / texelWorld) * texelWorld;
+	const float cy = floorf((lo.y + hi.y) * 0.5f / texelWorld) * texelWorld;
+	const float zNear = -hi.z - 1.0f, zFar = -lo.z + 1.0f;   // right-handed: in front is -z
+	D3DXMatrixOrthoOffCenterRH(&lightProj, cx - 0.5f * extent, cx + 0.5f * extent, cy - 0.5f * extent, cy + 0.5f * extent, zNear, zFar);
+	Shadows->Constants.ShadowViewModelTransform = lightView * lightProj;
+	// ForwardData.z: depth bias (two texels' worth, in the box's depth), .w: normal offset (1.5 texels, world units).
+	Shadows->Constants.ForwardData.z = max(2.0f * texelWorld, 0.03f) / (zFar - zNear);
+	Shadows->Constants.ForwardData.w = max(1.5f * texelWorld, 0.03f);
+	Shadows->Constants.ShadowViewModelData = D3DXVECTOR4(1.0f / (float)desc.Width, (float)desc.Width, 0.0f, 0.0f);
+
+	Shadows->Constants.Data.z = 0.0f;   // a sun map (see RenderShadowMaps)
+	Shadows->Constants.ShadowViewProj = Shadows->Constants.ShadowViewModelTransform;
+	geometryPass->VertexShader = alphaPass->VertexShader = skinnedGeoPass->VertexShader = ShadowMapVertex;
+	geometryPass->PixelShader = alphaPass->PixelShader = skinnedGeoPass->PixelShader = ShadowMapPixel;
+
+	D3DVIEWPORT9 mapViewport = { 0, 0, desc.Width, desc.Height, 0.0f, 1.0f };
+	// Any other targets the game's scene left bound (multiple render targets) would not match the map's size, which
+	// drops every draw; put back at the end.
+	IDirect3DSurface9* savedRT[3] = {};
+	for (DWORD i = 1; i < 4; i++) { Device->GetRenderTarget(i, &savedRT[i - 1]); if (savedRT[i - 1]) Device->SetRenderTarget(i, NULL); }
+	Device->SetRenderTarget(0, Shadows->ViewModelShadowSurface);
+	Device->SetDepthStencilSurface(Shadows->ViewModelShadowDepthSurface);
+	Device->SetViewport(&mapViewport);
+	Device->Clear(0L, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DXCOLOR(1.0f, 1.0f, 1.0f, 1.0f), 1.0f, 0L);
+	RenderState->SetRenderState(D3DRS_ZFUNC, (1.0 - NiDX9Renderer::GetSingleton()->m_fZClear) ? D3DCMP_GREATEREQUAL : D3DCMP_LESSEQUAL, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_ZWRITEENABLE, D3DZB_TRUE, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_ALPHAREF, 0, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_ALPHAFUNC, D3DCMP_ALWAYS, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_DEPTHBIAS, 0, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_SLOPESCALEDEPTHBIAS, 0, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_STENCILENABLE, FALSE, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_COLORWRITEENABLE, D3DCOLORWRITEENABLE_RED | D3DCOLORWRITEENABLE_GREEN | D3DCOLORWRITEENABLE_BLUE | D3DCOLORWRITEENABLE_ALPHA, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE, RenderStateArgs);
+	RenderState->SetRenderState(D3DRS_CLIPPLANEENABLE, 0, RenderStateArgs);
+	// On the device as well: the first-person scene arrives with colour writes off (logged), and NiDX9RenderState may
+	// believe it already holds a value the device does not. The map's depth is plain (0 at the light), cleared to 1,
+	// whatever the scene's depth convention: nearest wins with LESSEQUAL.
+	Device->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE);
+	Device->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
+	Device->SetRenderState(D3DRS_ZFUNC, D3DCMP_LESSEQUAL);
+	Device->SetRenderState(D3DRS_COLORWRITEENABLE, 0xF);
+
+	// Every part of the viewmodel, however small (the near cascade's MinRadius would drop fingers and sights).
+	ShadowsExteriorEffect::FormsStruct forms = Near->Forms;
+	forms.MinRadius = 0.0f;
+	RenderPass::LandDrop = 0.0f;
+	AccumChildren(Player->firstPersonNiNode, &forms, false, false, nullptr);
+	RenderAccums();
+
+	for (int i = 0; i < _countof(kStates); i++) {
+		RenderState->SetRenderState(kStates[i], saved[i], RenderStateArgs);
+		Device->SetRenderState(kStates[i], saved[i]);   // (the cache may already hold it and skip the device)
+	}
+	*PosAdjust = savedPosAdjust;
+	TheRenderManager->CameraPosition = savedCameraPosition;
+	Shadows->Constants.Data = savedData;
+	Shadows->Constants.ShadowViewProj = savedViewProj;
+	Device->SetDepthStencilSurface(DepthSurface);
+	Device->SetRenderTarget(0, RenderSurface);
+	for (DWORD i = 1; i < 4; i++) if (savedRT[i - 1]) { Device->SetRenderTarget(i, savedRT[i - 1]); savedRT[i - 1]->Release(); }
+	Device->SetViewport(&viewport);
+	if (DepthSurface) DepthSurface->Release();
+	if (RenderSurface) RenderSurface->Release();
+	// (through NiDX9RenderState where it keeps its own idea of the state, so it and the device agree again)
+	RenderState->SetVertexShader(savedVS, false);
+	RenderState->SetPixelShader(savedPS, false);
+	if (savedDecl) RenderState->SetVertexDeclaration(savedDecl, false);
+	else RenderState->SetFVF(savedFVF, false);
+	Device->SetIndices(savedIB);
+	for (UINT i = 0; i < 8; i++) Device->SetStreamSource(i, savedVB[i], savedOffset[i], savedStride[i]);
+	for (DWORD i = 0; i < 16; i++) {
+		RenderState->SetTexture(i, savedTex[i]);
+		Device->SetTexture(i, savedTex[i]);   // (the cache may already hold it and skip the device)
+		for (int s = 0; s < _countof(kSamplerStates); s++) {
+			TheRenderManager->SetSamplerState(i, kSamplerStates[s], savedSampler[i][s]);
+			Device->SetSamplerState(i, kSamplerStates[s], savedSampler[i][s]);
+		}
+	}
+	Device->SetVertexShaderConstantF(0, &savedVSConst[0][0], 256);
+	Device->SetPixelShaderConstantF(0, &savedPSConst[0][0], 224);
+	if (savedVS) savedVS->Release();
+	if (savedPS) savedPS->Release();
+	if (savedDecl) savedDecl->Release();
+	if (savedIB) savedIB->Release();
+	for (UINT i = 0; i < 8; i++) if (savedVB[i]) savedVB[i]->Release();
+	for (DWORD i = 0; i < 16; i++) if (savedTex[i]) savedTex[i]->Release();
+	return true;
+}
+
+/*
  * Clear a part of the shadow map atlas based on the shadow mapping mode.
- * 
+ *
  * Note: Render target, view port should be set beforehand. Scene has to be already being rendered.
  */
 void ShadowManager::ClearShadowCascade(D3DVIEWPORT9* ViewPort, D3DXVECTOR4* ClearColor) {

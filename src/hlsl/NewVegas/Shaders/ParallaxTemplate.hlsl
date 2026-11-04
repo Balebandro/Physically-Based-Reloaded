@@ -142,6 +142,8 @@
 #ifdef VS
     #define SHADOW_INVPROJ_REG c240
     #define SHADOW_INVVIEW_REG c244
+#else
+    #define SHADOW_VIEWMODEL   // the first-person weapon's shadows on itself (Includes/Shadow.hlsl)
 #endif
 #include "includes/Shadow.hlsl"
 #ifdef MERGED_LIGHTS

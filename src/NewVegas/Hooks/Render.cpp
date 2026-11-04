@@ -12,6 +12,17 @@ static bool InWorldScene = false;
 // Inside RenderFirstPersonHook's call of the game's first person render.
 static bool InFirstPersonScene = false;
 
+// TESR_ShadowForwardData.y (c133, which ShadowsExteriorEffect binds directly once a frame): the viewmodel's own shadow map
+// is to be read (1) or not (0). On, its light transform too (TESR_ShadowViewModelTransform, c190): a shader the game keeps
+// bound from the world render would not re-upload NVR's constants.
+static void ViewModelShadows(float on) {
+	ShadowsExteriorEffect* shadows = TheShaderManager->Effects.ShadowsExteriors;
+	if (!shadows || shadows->Constants.ForwardData.y == on) return;
+	shadows->Constants.ForwardData.y = on;
+	TheRenderManager->device->SetPixelShaderConstantF(133, (const float*)&shadows->Constants.ForwardData, 1);
+	if (on > 0.0f) TheRenderManager->device->SetPixelShaderConstantF(190, (const float*)&shadows->Constants.ShadowViewModelTransform, 5);   // + ShadowViewModelData (c194)
+}
+
 void (__thiscall* Render)(Main*, BSRenderedTexture*, int, int) = (void (__thiscall*)(Main*, BSRenderedTexture*, int, int))Hooks::Render;
 void __fastcall RenderHook(Main* This, UInt32 edx, BSRenderedTexture* RenderedTexture, int Arg2, int Arg3) {
 	
@@ -375,9 +386,22 @@ void __fastcall RenderFirstPersonHook(Main* This, UInt32 edx, NiDX9Renderer* Ren
 	// Clear the depth buffer before rendering first person model to prevent clipping with world objects & other artefacts
 	TheRenderManager->Clear(NULL, NiRenderer::kClear_ZBUFFER);
 	//ThisCall(0x00874C10, Global);
+	// Its sun shadows on itself (2026-11-01 user): the viewmodel alone drawn into its own map (ShadowManager::
+	// RenderViewModelShadowMap, relative to This->camera, the first-person camera the game draws it with) before the game's
+	// first-person render, between draws. It is posed for the frame by now (moved to the origin and updated in 0x874C10,
+	// which also queued its cull task); the game clears its root's APP_CULLED only inside that render, so it is cleared
+	// here for the map's walk and put back. TESR_ShadowForwardData.y 1 tells the first-person draws to read the map.
+	if (Player && Player->firstPersonNiNode && Player->IsFirstPerson()) {
+		NiNode* ViewModel = Player->firstPersonNiNode;
+		const UInt32 culled = ViewModel->m_flags & NiAVObject::NiFlags::APP_CULLED;
+		ViewModel->m_flags &= ~NiAVObject::NiFlags::APP_CULLED;
+		ViewModelShadows(TheShadowManager->RenderViewModelShadowMap(This->camera) ? 1.0f : 0.0f);
+		ViewModel->m_flags |= culled;
+	}
 	InFirstPersonScene = true;
 	(*RenderFirstPerson)(This, Renderer, Geo, SkySun, RenderedTexture);
 	InFirstPersonScene = false;
+	ViewModelShadows(0.0f);
 	if (TheShaderManager->Effects.SkinScattering) TheShaderManager->Effects.SkinScattering->Unbind();
 	TheRenderManager->ResolveDepthBuffer(TheTextureManager->DepthTextureViewModel);
 }

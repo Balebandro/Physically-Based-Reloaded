@@ -165,9 +165,6 @@ float4 TESR_TerrainBlendShape;  // x: ground width, y: height blend, z: slope bl
 float4 TESR_CameraData;         // x: near, y: far
 float4 TESR_DepthConstants;     // z: 1 for reversed depth
 float4 TESR_ReciprocalResolution;
-// The sun shadow cross-fade (SUN_CROSSFADE, Includes/Shadow.hlsl) takes s15 for the old atlas: no terrain blending then,
-// as in NVR UNOFFICIAL Optimized.
-#if !SUN_CROSSFADE
 sampler2D TESR_TerrainBlendDepth : register(s15) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
 
 // Distance along the view axis from a depth buffer value.
@@ -280,7 +277,6 @@ float terrainBlendEdge(float keep, float height) {
     }
     return saturate(keep + (height - 0.5f) * TESR_TerrainBlendShape.y * 4.0f * keep * (1.0f - keep));
 }
-#endif
 
 // The blended diffuse colour (as blendDiffuseMaps) and the blended height for terrainBlendEdge (0.5 without a
 // height map).
@@ -420,7 +416,6 @@ PS_OUTPUT main(PS_INPUT IN) {
         finalColor = getTerrainDebug(TESR_TerrainPBRData.w, terrainRoughness, getTerrainSpecularScale(gloss, terrainRoughness), ambientNormal);
 
     float landAlpha = 1.0f;   // blended over what is behind it while terrain blending runs (alpha only: colour is untouched)
-#if !SUN_CROSSFADE
     // At the top level: the screen derivatives of the land's position and view depth (not centroid).
     float3 landPos = IN.lPosition.xyz;
     float landViewDepth = IN.lPosition.w;
@@ -449,7 +444,6 @@ PS_OUTPUT main(PS_INPUT IN) {
             }
         }
     }
-#endif
 
     [branch] if (WETNESS_DEBUG_COVER)
         finalColor = WetnessCoverDebug(shadowWorldPos, shadowNormal);

@@ -66,6 +66,8 @@
 #ifdef VS
     #define SHADOW_INVPROJ_REG c240
     #define SHADOW_INVVIEW_REG c244
+#else
+    #define SHADOW_VIEWMODEL   // the first-person arms' shadows on themselves (Includes/Shadow.hlsl)
 #endif
 #include "Includes/Shadow.hlsl"
 

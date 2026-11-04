@@ -63,7 +63,8 @@ float4 TESR_ShadowFormatData  : register(c129); // z: 1 outdoors (x, y: unused s
 float4 TESR_ShadowFade        : register(c130); // x: sunrise/sunset fade, y: shadow maps active
 float4 TESR_SmoothedSunDir    : register(c131);
 float4 TESR_ShadowBlur        : register(c132);
-float4 TESR_ShadowForwardData : register(c133); // x: 1 when the forward path is SUPPRESSED
+float4 TESR_ShadowForwardData : register(c133); // x: 1 when the forward path is SUPPRESSED, y: 1 in the first-person draw
+                                                // with the viewmodel's own shadow map drawn (TESR_ShadowViewModel below)
 
 // Object templates top out at s7. Override BEFORE including for wider sampler arrays --
 // TerrainTemplate's NormalMap[7] spans s7-s13.
@@ -76,26 +77,19 @@ float4 TESR_ShadowForwardData : register(c133); // x: 1 when the forward path is
 // back to TextureRecord's POINT/WRAP defaults. Game shaders only; Effects parse their own.
 sampler2D TESR_ShadowAtlas : register(SHADOW_ATLAS_SAMPLER_REG) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = NONE; };
 
-#ifndef SUN_CROSSFADE
-    #define SUN_CROSSFADE 0
-#endif
-#if SUN_CROSSFADE
-// The cascades before the sun's last step. Not where NVR UNOFFICIAL Optimized has them (c146-c166: this build's
-// skin, PBR and merged lamp constants), and without the Lod cascade (no room): the farthest shadows switch over.
-// c93-c99 and c190-c198 are clear in every pixel shader that includes this (c89-c92 terrain, c100-c107 the inverse
-// matrices above, c36-c88 the game's).
-row_major float4x4 TESR_ShadowOldCameraToLightTransformNear   : register(c93);
-row_major float4x4 TESR_ShadowOldCameraToLightTransformMiddle : register(c190);
-row_major float4x4 TESR_ShadowOldCameraToLightTransformFar    : register(c194);
-float4 TESR_ShadowOldNearCenter   : register(c97);
-float4 TESR_ShadowOldMiddleCenter : register(c98);
-float4 TESR_ShadowOldFarCenter    : register(c99);
-float4 TESR_ShadowCrossFade       : register(c198);
-// s10 in NVR UNOFFICIAL Optimized; ours holds the _rmaos map there (Includes/Object.hlsl).
-#ifndef SHADOW_OLD_ATLAS_SAMPLER_REG
-    #define SHADOW_OLD_ATLAS_SAMPLER_REG s15
-#endif
-sampler2D TESR_ShadowAtlasOld : register(SHADOW_OLD_ATLAS_SAMPLER_REG) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = NONE; };
+// The first-person arms and weapon on themselves (2026-11-01): the viewmodel alone, drawn just before the first-person
+// render with its own light transform, an ortho box fitted around it (ShadowManager::RenderViewModelShadowMap), at least
+// 4096 texels across; read when TESR_ShadowForwardData.y is 1 (that render only), so it shadows nothing else. .z is its
+// depth bias, .w its normal offset. Pixel shaders of the object, parallax and skin templates (SHADOW_VIEWMODEL), on s15,
+// the only sampler they leave free; the transform on c190-c193 (the cross-fade's old cascades had them), the map's texel
+// size on c194.
+#ifdef SHADOW_VIEWMODEL
+    #define VIEWMODEL_SELF_SHADOW 1
+sampler2D TESR_ShadowViewModel : register(s15) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = LINEAR; MINFILTER = LINEAR; MIPFILTER = NONE; };
+row_major float4x4 TESR_ShadowViewModelTransform : register(c190);
+float4 TESR_ShadowViewModelData : register(c194);   // x one texel (uv), y resolution
+#else
+    #define VIEWMODEL_SELF_SHADOW 0
 #endif
 
 // Normal-offset bias in SHADOW MAP TEXELS, not world units -- cascade texels span two orders
@@ -180,66 +174,6 @@ float SampleShadowAtlas(float4 lightSpace, float2 quadrantOffset, float bias, fl
     return ShadowPCF3x3(TESR_ShadowAtlas, lightSpace.xy, lightSpace.z - bias - 1.5f * ShadowSlopeBias, quadrantOffset);
 }
 
-#if SUN_CROSSFADE
-float SampleShadowAtlasOld(float4 lightSpace, float2 quadrantOffset, float bias, float bleedReduction) {
-    lightSpace.xyz /= lightSpace.w;
-    lightSpace.x = lightSpace.x * 0.5f + 0.5f;
-    lightSpace.y = lightSpace.y * -0.5f + 0.5f;
-    lightSpace.xy = lightSpace.xy * 0.5f + quadrantOffset;
-
-    return ShadowPCF3x3(TESR_ShadowAtlasOld, lightSpace.xy, lightSpace.z - bias - 1.5f * ShadowSlopeBias, quadrantOffset);
-}
-
-float GetOldSunShadow(float3 worldPos, float3 worldNormal, float offsetScale, float bias, out float covered) {
-    float4 radii = float4(TESR_ShadowOldNearCenter.w, TESR_ShadowOldMiddleCenter.w, TESR_ShadowOldFarCenter.w, 0.0f);
-    float4 texelWorld = 4.0f * radii * max(TESR_ShadowBlur.x, 1.0f / 16384.0f);
-    float4 offsetDistance = offsetScale * SHADOW_NORMAL_BIAS_TEXELS * texelWorld;
-    offsetDistance = max(offsetDistance, offsetScale * 1.5f * texelWorld);
-    const float blend = 0.9f;
-    float4 distances = float4(
-        length(worldPos - TESR_ShadowOldNearCenter.xyz),
-        length(worldPos - TESR_ShadowOldMiddleCenter.xyz),
-        length(worldPos - TESR_ShadowOldFarCenter.xyz),
-        1.0f);
-
-#define OLD_TAP_NEAR   SampleShadowAtlasOld(mul(float4(worldPos + offsetDistance.x * worldNormal, 1.0f), TESR_ShadowOldCameraToLightTransformNear),   float2(0.0f, 0.0f), bias, 0.1f)
-#define OLD_TAP_MIDDLE SampleShadowAtlasOld(mul(float4(worldPos + offsetDistance.y * worldNormal, 1.0f), TESR_ShadowOldCameraToLightTransformMiddle), float2(0.5f, 0.0f), bias, 0.2f)
-#define OLD_TAP_FAR    SampleShadowAtlasOld(mul(float4(worldPos + offsetDistance.z * worldNormal, 1.0f), TESR_ShadowOldCameraToLightTransformFar),    float2(0.0f, 0.5f), bias, 0.6f)
-
-    covered = 1.0f;
-    float shadow = 1.0f;
-    [branch] if (distances.x < radii.x) {
-        [branch] if (distances.x < radii.x * blend)
-            shadow = OLD_TAP_NEAR;
-        else
-            shadow = lerp(OLD_TAP_NEAR, OLD_TAP_MIDDLE, smoothstep(radii.x * blend, radii.x, distances.x));
-    }
-    else if (distances.y < radii.y) {
-        [branch] if (distances.y < radii.y * blend)
-            shadow = OLD_TAP_MIDDLE;
-        else
-            shadow = lerp(OLD_TAP_MIDDLE, OLD_TAP_FAR, smoothstep(radii.y * blend, radii.y, distances.y));
-    }
-    else if (distances.z < radii.z) {
-        [branch] if (distances.z < radii.z * blend)
-            shadow = OLD_TAP_FAR;
-        else {
-            // No old Lod cascade: hand over to the new shadows across the Far cascade's border.
-            shadow = OLD_TAP_FAR;
-            covered = 1.0f - smoothstep(radii.z * blend, radii.z, distances.z);
-        }
-    }
-    else {
-        covered = 0.0f;
-    }
-
-#undef OLD_TAP_NEAR
-#undef OLD_TAP_MIDDLE
-#undef OLD_TAP_FAR
-
-    return saturate(shadow);
-}
-#endif
 
 #ifndef CONTACT_HARDENING
     #define CONTACT_HARDENING 0
@@ -372,6 +306,33 @@ float3 GetShadowGeometricNormal(float3 worldPos) {
     return n * sign(dot(n, -worldPos));
 }
 
+#if VIEWMODEL_SELF_SHADOW
+// The viewmodel's map: its own transform and bias, PCF weighted by a tent 2.5 texels in radius (6x6 taps), so the
+// edges come out smooth rather than stepped at this resolution. A loop, not unrolled: every object shader carries it.
+float ViewModelSelfShadow(float3 position) {
+    float4 lightSpace = mul(float4(position, 1.0f), TESR_ShadowViewModelTransform);
+    lightSpace.xyz /= lightSpace.w;
+    float2 uv = float2(lightSpace.x * 0.5f + 0.5f, lightSpace.y * -0.5f + 0.5f);
+    [branch] if (any(uv < 0.0f) || any(uv > 1.0f)) return 1.0f;
+    float depth = lightSpace.z - TESR_ShadowForwardData.z;
+    float2 p = uv * TESR_ShadowViewModelData.y;
+    float2 first = floor(p - 0.5f) - 2.0f;
+    float lit = 0.0f, total = 0.0f;
+    [loop] for (int y = 0; y < 6; y++) {
+        float ty = first.y + y;
+        float wy = max(2.5f - abs(ty + 0.5f - p.y), 0.0f);
+        [unroll] for (int x = 0; x < 6; x++) {
+            float tx = first.x + x;
+            float w = max(2.5f - abs(tx + 0.5f - p.x), 0.0f) * wy;
+            float2 tapUV = saturate((float2(tx, ty) + 0.5f) * TESR_ShadowViewModelData.x);
+            lit += depth <= tex2Dlod(TESR_ShadowViewModel, float4(tapUV, 0.0f, 0.0f)).x ? w : 0.0f;
+            total += w;
+        }
+    }
+    return lit / max(total, 0.0001f);
+}
+#endif
+
 float SunCascadeTap(float c, float3 worldPos, float3 worldNormal, float4 offsetDistance, float bias) {
     float4x4 lightTransform = c < 0.5f ? TESR_ShadowCameraToLightTransformNear : c < 1.5f ? TESR_ShadowCameraToLightTransformMiddle :
                               c < 2.5f ? TESR_ShadowCameraToLightTransformFar : TESR_ShadowCameraToLightTransformLod;
@@ -471,13 +432,12 @@ float GetSunShadow(float3 worldPos, float3 worldNormal) {
 
     shadow = saturate(shadow);
 
-#if SUN_CROSSFADE
-    [branch] if (TESR_ShadowCrossFade.x > 0.0f) {
-        float covered;
-        float oldShadow = GetOldSunShadow(worldPos, worldNormal, offsetScale, bias, covered);
-        shadow = lerp(shadow, oldShadow, TESR_ShadowCrossFade.x * covered);
-    }
+#if VIEWMODEL_SELF_SHADOW
+    // The first-person draw: the arms and weapon on themselves, with the map's own normal offset.
+    [branch] if (TESR_ShadowForwardData.y > 0.0f)
+        shadow *= ViewModelSelfShadow(worldPos + TESR_ShadowForwardData.w * worldNormal);
 #endif
+
 
     // Fade out as the sun approaches the horizon, matching SunShadows.fx.
     shadow = lerp(shadow, 1.0f, saturate(TESR_ShadowFade.x));
