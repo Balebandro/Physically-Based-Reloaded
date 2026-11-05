@@ -75,6 +75,12 @@ namespace ShaderPrecompile {
 		else {
 			const char* profile = strstr(job.name.c_str(), ".vso") ? "vs_3_0" : "ps_3_0";
 			D3DXCompileShader(job.source.c_str(), (UINT)job.source.size(), NULL, NULL, "main", profile, NULL, &binary, &errors, NULL);
+			// UNOFFICIAL 2026-11-05 out of temporaries (X4505; the 7-layer land with the flashlight's G-buffer): again with IEEE strictness, which
+			// keeps the compiler from the reordering that ran it out (as ShaderRecord::LoadShader)
+			if (!binary && errors && strstr((const char*)errors->GetBufferPointer(), "X4505")) {
+				errors->Release(); errors = nullptr;
+				D3DXCompileShader(job.source.c_str(), (UINT)job.source.size(), NULL, NULL, "main", profile, D3DXSHADER_IEEE_STRICTNESS, &binary, &errors, NULL);
+			}
 		}
 		if (errors) {
 			job.log.push_back((const char*)errors->GetBufferPointer());

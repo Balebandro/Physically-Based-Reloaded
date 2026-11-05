@@ -249,6 +249,15 @@ ShaderRecord* ShaderRecord::LoadShader(const char* Name, const char* SubPath, Sh
 				&Errors,
 				&ConstantTable
 			);
+			// UNOFFICIAL 2026-11-05 out of temporaries (X4505; the 7-layer land with the flashlight's G-buffer): again with IEEE strictness, which
+			// keeps the compiler from the reordering that ran it out
+			if (!Shader && Errors && strstr((const char*)Errors->GetBufferPointer(), "X4505")) {
+				Errors->Release(); Errors = NULL;
+				if (ConstantTable) { ConstantTable->Release(); ConstantTable = NULL; }
+				D3DXCompileShader((const char*)ShaderSource->GetBufferPointer(), ShaderSource->GetBufferSize(), NULL, NULL, "main", ShaderProfile,
+					D3DXSHADER_IEEE_STRICTNESS, &Shader, &Errors, &ConstantTable);
+				if (Shader) Logger::Log("Shader %s: out of temporaries, compiled with IEEE strictness", Name);
+			}
 			if (Errors) Logger::Log((char*)Errors->GetBufferPointer());
 			if (Shader) {
 				Function = Shader->GetBufferPointer();
