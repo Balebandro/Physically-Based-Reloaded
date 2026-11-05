@@ -70,6 +70,7 @@
     #define SHADOW_VIEWMODEL   // the first-person arms' shadows on themselves (Includes/Shadow.hlsl)
 #endif
 #include "Includes/Shadow.hlsl"
+#include "Includes/GBuffer.hlsl"	// UNOFFICIAL 2026-11-05 the deferred flashlight's G-buffer (COLOR3, see there)
 
 #if defined(VS)
 
@@ -370,6 +371,9 @@ struct PS_OUTPUT {
     float4 color : COLOR0;
     float4 scatter : COLOR1;
     float4 albedo : COLOR2;
+#if GBUFFER_ON && !defined(DIFFUSE)
+    float4 gbNormal : COLOR3;	// UNOFFICIAL 2026-11-05 G-buffer (Includes/GBuffer.hlsl; bound only in the world's main list)
+#endif
 };
 
 PS_OUTPUT main(PS_INPUT IN) {
@@ -529,6 +533,11 @@ PS_OUTPUT main(PS_INPUT IN) {
         OUT.albedo = float4(saturate(adAlbedo), luma(color.rgb * adAlbedo));
     #else
         OUT.albedo = float4(saturate(baseColor.rgb), luma(color.rgb));
+    #endif
+    // UNOFFICIAL 2026-11-05 G-buffer (Includes/GBuffer.hlsl): the normal only (a 2: skin); COLOR1 / COLOR2 are the skin blur's, so the
+    // colour and material are filled in after the list from the skin blur's albedo target (core/GBuffer.h SkinFill).
+    #if GBUFFER_ON && !defined(DIFFUSE)
+        OUT.gbNormal = GBufferNormalOut(worldN, worldPos, 2.0f);
     #endif
     return OUT;
 }

@@ -34,6 +34,7 @@
 #define SHADOW_ATLAS_SAMPLER_REG s14
 #define SHADOW_OLD_ATLAS_SAMPLER_REG s15
 #include "includes/Shadow.hlsl"
+#include "includes/GBuffer.hlsl"	// UNOFFICIAL 2026-11-05 the deferred flashlight's G-buffer (COLOR1-3, see there)
 
 // Wetness Effects (Includes/Wetness.hlsl). The rain occlusion map goes on s13: free below seven textures
 // (NVR binds it with the shader), the seventh normal map's otherwise (see TERRAIN_FLAT_NORMAL7 above).
@@ -121,6 +122,11 @@ struct PS_INPUT
 
 struct PS_OUTPUT {
     float4 color_0 : COLOR0;
+#if GBUFFER_ON
+    float4 gbAlbedo : COLOR1;	// UNOFFICIAL 2026-11-05 G-buffer (Includes/GBuffer.hlsl; bound only in the world's main list)
+    float4 gbMaterial : COLOR2;
+    float4 gbNormal : COLOR3;
+#endif
 };
 
 #ifdef PS
@@ -372,6 +378,13 @@ PS_OUTPUT main(PS_INPUT IN) {
     baseColor = WetAlbedo(baseColor, wet.darkening, 1.0f);
 
     float3 lighting = getSunLighting(lightTS, SunColor.rgb, eyeDir, combinedNormal, AmbientColor.rgb, baseColor, gloss, specExponent, 1.0, parallaxShadowMultiplier, ambientNormal);
+    // UNOFFICIAL 2026-11-05 G-buffer (Includes/GBuffer.hlsl): class 4, the land's gloss as the vanilla specular. Its fog is left out (1):
+    // in terrain blending's fade the draw is blended by COLOR0's alpha, so these blend toward what is behind (the pass takes the land whole).
+    #if GBUFFER_ON
+        OUT.gbAlbedo = GBufferAlbedoOut(encodeColor(baseColor), 1.0f);
+        OUT.gbMaterial = GBufferMaterialOut(4.0f, 0.0f, gloss, -max(specExponent, 1.0f));
+        OUT.gbNormal = GBufferNormalOut(terrainWorldNormal, shadowWorldPos, 1.0f);
+    #endif
     lighting += skyReflection;
 
     // The water film: the sun's highlight on it and its reflection of the sky, over the land.

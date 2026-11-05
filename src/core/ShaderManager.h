@@ -128,7 +128,6 @@ public:
 		CinemaEffect*			Cinema;
 		ExposureEffect*			Exposure;
 		FlashlightEffect*		Flashlight;
-		FlashlightBeamEffect*	FlashlightBeam;
 		CombineDepthEffect*		CombineDepth;
 		DepthOfFieldEffect*		DepthOfField;
 		DebugEffect*			Debug;
@@ -213,7 +212,6 @@ public:
 	D3DXVECTOR4				SpotLightPosition[SpotLightsMax];
 	D3DXVECTOR4				SpotLightColor[SpotLightsMax];
 	D3DXVECTOR4				SpotLightDirection[SpotLightsMax];
-	D3DXVECTOR4				VolumetricData;		// xyz march light position, w first person strength floor
 	D3DXMATRIX				SpotLightWorldToLightMatrix[SpotLightsMax];
 	D3DXVECTOR4				LightPosition[TrackedLightsMax];
 	D3DXVECTOR4				LightColor[TrackedLightsMax + ShadowCubeMapsMax];

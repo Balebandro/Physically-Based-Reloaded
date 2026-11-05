@@ -1,4 +1,5 @@
 #pragma once
+void __fastcall MainListHook(void* Accumulator, void* edx, UInt32 First, UInt32 Last, UInt32 Arg3, SInt32 Group);	// UNOFFICIAL 2026-11-05 (0xB65BED)
 extern void(__thiscall* Render)(Main*, BSRenderedTexture*, int, int);
 void __fastcall RenderHook(Main* This, UInt32 edx, BSRenderedTexture* RenderedTexture, int Arg2, int Arg3);
 

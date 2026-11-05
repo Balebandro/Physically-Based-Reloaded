@@ -356,46 +356,21 @@ MinBrightness = 0.3                    # Brightness treshold below which the scr
 Enabled = true                         # Modulates screen gamma to correct exposure based on average brightness. Avoids screens that are too bright/dark.
 
 [_Shaders.Flashlight.Main]
-ColorR = 2.0                           # R Channel of the color of the flashlight
-ColorG = 2.0                           # G Channel of the color of the flashlight
-ColorB = 1.0                           # B Channel of the color of the flashlight
-Dimmer = 1.0                           # Dimmer for the color of the flashlight
-Angle = 30.0                           # Angle for the flashlight cone
-Distance = 1000                        # Distance radius for the light
-OffsetX = 0.0                          # X coordinate offset for the position of the light relative to the weapon position 
-OffsetY = 0.0                          # Y coordinate offset for the position of the light relative to the weapon position
-OffsetZ = 0.0                          # Z coordinate offset for the position of the light relative to the weapon position
-RenderShadows = false                  # Wether to use rendered shadows in the flashlight cone
-AttachToWeapon = true                  # The flashlight will move with the weapon instead of being fixed to the camera. It rides the weapon while aiming either way
-NearFade = 0.0                         # Fades the light out on surfaces closer than this many units, so point blank walls don't clip to white. 0 disables
-HotspotLimit = 0.0                     # Rolls off the brightest part of the lit pool without dimming the falloff around it. 0 disables
-CookieStrength = 0.0                   # Procedural rings and mottling in the beam, for structure on flat surfaces. 0 disables
-SoftEdges = false                      # Wrap lighting instead of clamped diffuse. Removes the speckle the reconstructed normals produce on grass and foliage, at the cost of a flatter beam. Does not change overall brightness
+Dimmer = 4.0                           # [0-50] How bright the flashlight is at the centre of its beam, in the lamps' units. Its colour is your Pip-Boy's HUD colour (the game's display settings).
+Distance = 1000                        # How far the beam reaches, in game units (it fades out well before this: see Deferred's Falloff).
+AttachToWeapon = true                  # The flashlight rides the weapon instead of the camera (in third person: the head). It rides the weapon while aiming either way.
 
-[_Shaders.Flashlight.MaterialLight]
-Enabled = false                        # Re-light nearby static geometry with its own normals, normal map and specular settings, instead of relying on normals reconstructed from depth
-Intensity = 0.015                      # Strength of the re-lit contribution
-Specular = 0.5                         # Scales the specular highlight. Multiplies the material own specular strength
-NormalStrength = 1.0                   # Scales the sideways component of the normal map. 1.0 uses the map as authored
-MaxGeometry = 2048                     # Cap on the number of objects re-lit in one frame
-DebugMode = 0                          # 0 renders normally, 1 to 7 visualise the pass, 8 draws everything it captured through walls
+[_Shaders.Flashlight.Deferred]
+Shadows = true                         # Everything in front of the flashlight casts a shadow in its beam (a shadow map drawn from the light every frame while it is on).
+ShadowSoftness = 5.0                   # [0-16] How soft the shadow edges are: the PCF blur's radius in texels of a 512 map. 16 bilinear PCF samples.
+ShadowBias = 0.004                     # [0-0.1] How far a surface may be behind its shadow map depth and still count as lit, as a share of the beam's reach. Raise it if surfaces shadow themselves in stripes; lower it if shadows lift off their casters.
+ShadowMapSize = 2048                   # NEEDS A RESTART. [256, 512, 1024, 2048, 4096] The flashlight's own shadow map resolution (it used the lamp shadows' ShadowCubeMapSize before). Higher: sharper shadow shapes, more video memory (2048: 16 MB).
+Falloff = 4.0                          # [0-32] How fast the beam fades with distance: a windowed inverse square, bright close up, about a quarter as bright halfway to the reach (Distance) at 4, nothing at the reach. Higher: a shorter beam. 0: the lamps' falloff.
+DebugView = 0                          # DIAGNOSTIC: 1 the flashlight's light alone, 2 its shadow, 3 the normals it lights by. 0 off.
+TestForceOn = false                    # TEST, for automatic tests: the flashlight on as if the Pip-Boy light were. Leave off.
 
 [_Shaders.Flashlight.Status]
-Enabled = true                          # Replace the pipboy light with a post process flashlight attached to the weapon
-
-[_Shaders.FlashlightBeam.Main]
-FirstPerson = true                     # Show the shaft in first person
-ThirdPerson = true                     # Show the shaft in third person
-Strength = 1.0                         # Amount of light scattered by the air in the beam
-Anisotropy = 0.45                      # Forward scattering. Higher makes the shaft brighter when looking along the beam
-HeightFalloff = 1.0                    # How quickly the airborne dust thins out with height
-MaxDistance = 1500.0                   # Distance in units past which the march stops
-FirstPersonStrength = 0.15             # Strength floor in first person, where the light sits on the camera and there is no parallax
-FirstPersonOffsetRight = 8.0           # Sideways offset of the virtual light the first person march uses, to create that parallax
-FirstPersonOffsetDown = 4.0            # Downward offset of the same virtual light
-
-[_Shaders.FlashlightBeam.Status]
-Enabled = true                         # Volumetric light shaft in the air along the flashlight cone. Requires the Flashlight shader
+Enabled = true                         # NEEDS A RESTART to switch the surfaces' G-buffer on or off. The flashlight (the Pip-Boy light's key): a real spot light, coloured by your Pip-Boy's HUD colour, that lights the world's surfaces with their own colour, roughness and metal and casts shadows. Grass, water, decals and see-through things are not lit by it.
 
 
 [_Shaders.Grass.Main]

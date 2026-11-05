@@ -48,6 +48,5 @@
 #include "../NewVegas/Hooks/ShaderIO.h"
 #include "../NewVegas/Hooks/Shaders.h"
 #include "../NewVegas/Hooks/Render.h"
-#include "../NewVegas/Hooks/MaterialPass.h"
 #include "../NewVegas/Hooks/Shadows.h"
 #include "../NewVegas/Hooks/FlyCam.h"

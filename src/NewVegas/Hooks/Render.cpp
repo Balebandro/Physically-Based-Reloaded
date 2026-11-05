@@ -2,6 +2,7 @@
 #include <cfloat>
 
 #include "../../core/LampScissor.h"
+#include "../../core/FlashlightDeferred.h"	// UNOFFICIAL 2026-11-05 the deferred flashlight and its G-buffer (MainListHook)
 
 // See ReflectionPassScope: the next shader bind re-uploads NVR's constants.
 static bool ForcePixelConstants = false;
@@ -36,12 +37,6 @@ void __fastcall RenderHook(Main* This, UInt32 edx, BSRenderedTexture* RenderedTe
 
 	TheShaderManager->UpdateConstants();
 	TerrainErosion::Update();   // [Shaders.Terrain.Erosion]
-
-	// Reset the material pass queue for the frame. Passing false when the flashlight is
-	// not lit leaves it inactive, so the scene walk in RenderWorldSceneGraphHook costs
-	// nothing while the light is off.
-	FlashlightEffect* Flashlight = TheShaderManager->Effects.Flashlight;
-	MaterialPass::BeginFrame(Flashlight->Enabled && Flashlight->spotLightActive);
 
 	// The skin scattering target is cleared on the frame's first skin draw.
 	if (TheShaderManager->Effects.SkinScattering) TheShaderManager->Effects.SkinScattering->BeginFrame();
@@ -356,15 +351,6 @@ void __fastcall RenderWorldSceneGraphHook(Main* This, UInt32 edx, Sun* SkySun, U
 		SkinScattering->Unbind();
 	}
 
-	// Re-light nearby statics inside the flashlight cone. This has to happen here, before
-	// the viewmodel depth handling below clears the Z buffer: the pass draws with depth
-	// testing on and depth writes off, so with a cleared Z buffer it would draw straight
-	// through world geometry.
-	MaterialPass::CaptureScene(WorldSceneGraph);
-	MaterialPass::RenderWorld();
-
-	// After the material pass, not before: it redraws world geometry over the scene, and must
-	// land on exactly the same jittered pixels the world did.
 	if (TAA) TAA->EndJitter();
 
 	const bool bPipBoyOpen = InterfaceManager->IsPipBoyOpen();
@@ -810,4 +796,26 @@ bool __fastcall NiDX9Renderer__Do_EndFrame(NiDX9Renderer* apThis, void*) {
 	// emittance color is index 27
 	//ScaleColor(GetLightConstant(27), TheShaderManager->ShaderConst.HDR.PointLightMult);
 //}
+
+
+// UNOFFICIAL 2026-11-05 the deferred flashlight (core/GBuffer.h, core/FlashlightDeferred.h; ported from Vegas Shaders' GrassFirst::
+// MainListHook): the game's RenderBatches(1, 0x25B) call (0xB65BED -> 0xB63770), the world's main opaque list. In the world scene's main
+// view (its own depth surface: not a reflection's or cube map's) the G-buffer is bound round it while the flashlight is on, and the
+// light pass draws right after it, before the blended and the rest are drawn over.
+static const UInt32 kRenderBatches = 0x00B63770;
+void __fastcall MainListHook(void* Accumulator, void* edx, UInt32 First, UInt32 Last, UInt32 Arg3, SInt32 Group) {
+	bool main = false;
+	if (InWorldScene && First == 1 && Last == 0x25B && FlashlightDeferred::Wanted()) {
+		IDirect3DSurface9* depth = nullptr;
+		TheRenderManager->device->GetDepthStencilSurface(&depth);
+		main = depth && depth == TheTextureManager->TerrainBlendWorldDepth;
+		if (depth) depth->Release();
+	}
+	if (main) GBuffer::BeginSpan(TheRenderManager->device, true);
+	ThisCall(kRenderBatches, Accumulator, First, Last, Arg3, Group);
+	if (main) {
+		GBuffer::EndSpan(TheRenderManager->device);
+		FlashlightDeferred::Apply(TheRenderManager->device);
+	}
+}
 

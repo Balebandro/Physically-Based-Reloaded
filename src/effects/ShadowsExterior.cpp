@@ -537,10 +537,15 @@ void ShadowsExteriorEffect::RegisterTextures() {
 	ShadowMaps[MapOrtho].ShadowMapInverseResolution = 1.0f / (float)orthoMapRes;
 
 
-	// initialize spot lights maps
+	// initialize spot lights maps. UNOFFICIAL 2026-11-05 (from Vegas Shaders; user: the flashlight's shadows): their own size,
+	// [Shaders.Flashlight.Deferred] ShadowMapSize (restart; was the lamps' ShadowCubeMapSize, 256 for the user: blocky).
+	{
+		const int wanted = TheSettingManager->GetSettingI("Shaders.Flashlight.Deferred", "ShadowMapSize");
+		SpotMapSize = wanted >= 4096 ? 4096 : wanted >= 2048 ? 2048 : wanted >= 1024 ? 1024 : wanted >= 512 ? 512 : wanted > 0 ? 256 : 2048;
+	}
 	for (int i = 0; i < SpotLightsMax; i++) {
 		std::string textureName = "TESR_ShadowSpotlightBuffer" + std::to_string(i);
-		TheTextureManager->InitTexture(textureName.c_str(), &Textures.ShadowSpotlightTexture[i], &Textures.ShadowSpotlightSurface[i], ShadowCubeMapSize, ShadowCubeMapSize, D3DFMT_R32F);
+		TheTextureManager->InitTexture(textureName.c_str(), &Textures.ShadowSpotlightTexture[i], &Textures.ShadowSpotlightSurface[i], SpotMapSize, SpotMapSize, D3DFMT_R32F);
 	}
 
 
@@ -553,8 +558,9 @@ void ShadowsExteriorEffect::RegisterTextures() {
 		std::string textureName = "TESR_ShadowCubeMapBuffer" + std::to_string(i);
 		TheTextureManager->RegisterTexture(textureName.c_str(), (IDirect3DBaseTexture9**)&Textures.ShadowCubeMapTexture[i]);
 	}
-	// Create the stencil surface used for rendering cubemaps
-	TheRenderManager->device->CreateDepthStencilSurface(ShadowCubeMapSize, ShadowCubeMapSize, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &Textures.ShadowCubeMapDepthSurface, NULL);
+	// Create the stencil surface used for rendering cubemaps (UNOFFICIAL 2026-11-05: and the spot maps, so as big as the larger of the two)
+	const ULONG cubeDepthSize = (std::max)(ShadowCubeMapSize, (ULONG)SpotMapSize);
+	TheRenderManager->device->CreateDepthStencilSurface(cubeDepthSize, cubeDepthSize, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, true, &Textures.ShadowCubeMapDepthSurface, NULL);
 
 	//TheShadowManager->ShadowCubeMapViewPort = { 0, 0, ShadowCubeMapSize, ShadowCubeMapSize, 0.0f, 1.0f };
 	//memset(TheShadowManager->ShadowCubeMapLights, NULL, sizeof(ShadowCubeMapLights));

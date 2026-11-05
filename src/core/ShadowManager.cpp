@@ -443,7 +443,9 @@ void ShadowManager::RenderShadowSpotlight(NiSpotLight** Lights, UInt32 LightInde
 
 	TList<TESObjectREFR>::Entry* Entry = &Player->parentCell->objectList.First;
 	while (Entry) {
-		NiNode* RefNode = GetRefNode(Entry->item, &Settings->Forms);
+		// UNOFFICIAL 2026-11-05 (from Vegas Shaders) not the player: the flashlight is held by (or worn on) them, and the hands and gun at
+		// the light cast bars across whatever it lights (third person, AttachToWeapon).
+		NiNode* RefNode = Entry->item == Player ? nullptr : GetRefNode(Entry->item, &Settings->Forms);
 		if (!RefNode) {
 			Entry = Entry->next;
 			continue;
@@ -469,7 +471,8 @@ void ShadowManager::RenderShadowSpotlight(NiSpotLight** Lights, UInt32 LightInde
 	Device->SetRenderTarget(0, Shadows->Textures.ShadowSpotlightSurface[LightIndex]);
 	Device->SetDepthStencilSurface(Shadows->Textures.ShadowCubeMapDepthSurface);
 
-	Device->SetViewport(&ShadowCubeMapViewPort);
+	const D3DVIEWPORT9 spotViewport = { 0, 0, (DWORD)Shadows->SpotMapSize, (DWORD)Shadows->SpotMapSize, 0.0f, 1.0f };	// UNOFFICIAL 2026-11-05 its own size
+	Device->SetViewport(&spotViewport);
 	Device->Clear(0L, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DXCOLOR(1.0f, 1.0f, 1.0f, 1.0f), 1.0f, 0L);
 
 	RenderAccums();
@@ -1037,7 +1040,7 @@ void ShadowManager::RenderShadowMaps() {
 		}
 	}
 
-	if (TheShaderManager->Effects.Flashlight->Enabled && TheShaderManager->Effects.Flashlight->spotLightActive && TheShaderManager->Effects.Flashlight->Settings.renderShadows) {
+	if (TheShaderManager->Effects.Flashlight->Enabled && TheShaderManager->Effects.Flashlight->spotLightActive && TheShaderManager->Effects.Flashlight->Deferred.Shadows) {
 		// render shadow maps for spotlights
 		
 		for (int i = 0; i < SpotLightsMax; i++) {

@@ -189,11 +189,12 @@ public:
 		IDirect3DSurface9* ShadowPassCopySurface;
 		IDirect3DCubeTexture9* ShadowCubeMapTexture[ShadowCubeMapsMax];
 		IDirect3DSurface9* ShadowCubeMapSurface[ShadowCubeMapsMax][6];
-		IDirect3DTexture9* ShadowSpotlightTexture[SpotLightsMax];
+		IDirect3DTexture9* ShadowSpotlightTexture[SpotLightsMax];	// UNOFFICIAL 2026-11-05 SpotMapSize square (the flashlight's own size)
 		IDirect3DSurface9* ShadowSpotlightSurface[SpotLightsMax];
 		IDirect3DSurface9* ShadowCubeMapDepthSurface;
 	};
 	ShadowTextures	Textures;
+	int				SpotMapSize = 2048;	// UNOFFICIAL 2026-11-05 [Shaders.Flashlight.Deferred] ShadowMapSize (restart): the spot maps' size
 
 	// Main shadow atlas, used for cascades.
 	IDirect3DTexture9* ShadowAtlasTexture;

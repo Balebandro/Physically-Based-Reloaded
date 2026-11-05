@@ -61,7 +61,6 @@ void ShaderManager::Initialize() {
 	TheShaderManager->RegisterEffect<DebugEffect>(&TheShaderManager->Effects.Debug);
 	TheShaderManager->RegisterEffect<ExposureEffect>(&TheShaderManager->Effects.Exposure);
 	TheShaderManager->RegisterEffect<FlashlightEffect>(&TheShaderManager->Effects.Flashlight);
-	TheShaderManager->RegisterEffect<FlashlightBeamEffect>(&TheShaderManager->Effects.FlashlightBeam);
 	TheShaderManager->RegisterEffect<GodRaysEffect>(&TheShaderManager->Effects.GodRays);
 	TheShaderManager->RegisterEffect<ImageAdjustEffect>(&TheShaderManager->Effects.ImageAdjust);
 	TheShaderManager->RegisterEffect<LensEffect>(&TheShaderManager->Effects.Lens);
@@ -116,7 +115,6 @@ void ShaderManager::Initialize() {
 	TheShaderManager->RegisterConstant("TESR_SpotLightColor", (D3DXVECTOR4*) &TheShaderManager->SpotLightColor);
 	TheShaderManager->RegisterConstant("TESR_SpotLightDirection", (D3DXVECTOR4*) &TheShaderManager->SpotLightDirection);
 	TheShaderManager->RegisterConstant("TESR_SpotLightToWorldTransform", (D3DXVECTOR4*) &TheShaderManager->SpotLightWorldToLightMatrix[0]);
-	TheShaderManager->RegisterConstant("TESR_VolumetricData", &TheShaderManager->VolumetricData);
 	TheShaderManager->RegisterConstant("TESR_ViewSpaceLightDir", &TheShaderManager->ShaderConst.ViewSpaceLightDir);
 	TheShaderManager->RegisterConstant("TESR_ScreenSpaceLightDir", &TheShaderManager->ShaderConst.ScreenSpaceLightDir);
 	TheShaderManager->RegisterConstant("TESR_ReciprocalResolution", &TheShaderManager->ShaderConst.ReciprocalResolution);
@@ -925,14 +923,7 @@ void ShaderManager::RenderEffectsPreTonemapping(IDirect3DSurface9* RenderTarget)
 	Effects.HudRaindrops->UpdateWetness(Device);
 	Device->SetRenderTarget(0, RenderTarget);
 
-	// Beam march first, into its own half res buffer, so the Flashlight Combine pass can
-	// read it. Control.x already folds the effect toggle, the per view toggle and the
-	// strength together, so this one test gates the whole thing.
-	if (Effects.FlashlightBeam->Constants.Control.x > 0.0f) {
-		RenderEffectToRT(Effects.FlashlightBeam->Textures.VolumetricSurface, Effects.FlashlightBeam, true);
-		Device->SetRenderTarget(0, RenderTarget);
-	}
-	Effects.Flashlight->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, Effects.Flashlight->selectedPass, true, SourceSurface);
+	// (UNOFFICIAL 2026-11-05: the flashlight is no post effect any more, nor its beam: core/FlashlightDeferred.h, in the world's main list.)
 	Effects.Underwater->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 	Effects.VolumetricFog->Render(Device, RenderTarget, TheTextureManager->RenderedSurface, 0, false, SourceSurface);
 	// NVR Optimized's volumetric light, after the fog as there; its buffers first (half res), then the composite (technique 0).

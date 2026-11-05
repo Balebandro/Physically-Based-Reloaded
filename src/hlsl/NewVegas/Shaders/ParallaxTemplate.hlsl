@@ -146,6 +146,7 @@
     #define SHADOW_VIEWMODEL   // the first-person weapon's shadows on itself (Includes/Shadow.hlsl)
 #endif
 #include "includes/Shadow.hlsl"
+#include "includes/GBuffer.hlsl"	// UNOFFICIAL 2026-11-05 the deferred flashlight's G-buffer (COLOR1-3, see there)
 #ifdef MERGED_LIGHTS
     #include "includes/MergedLights.hlsl"
 #endif
@@ -405,8 +406,17 @@ struct PS_INPUT
 #endif
 };
 
+// UNOFFICIAL 2026-11-05 G-buffer writers (Includes/GBuffer.hlsl): the lit base passes.
+#if GBUFFER_ON && !defined(DIFFUSE) && !defined(ONLY_SPECULAR) && !defined(NO_LIGHT)
+    #define GBUFFER_WRITES
+#endif
 struct PS_OUTPUT {
     float4 color : COLOR0;
+#ifdef GBUFFER_WRITES
+    float4 gbAlbedo : COLOR1;	// bound only in the world's main list
+    float4 gbMaterial : COLOR2;
+    float4 gbNormal : COLOR3;
+#endif
 };
 
 #ifdef PS
@@ -706,6 +716,25 @@ PS_OUTPUT main(PS_INPUT IN)
             }
             else
                 lighting += baseColor.rgb * AmbientColor.rgb;
+        #endif
+
+        // UNOFFICIAL 2026-11-05 G-buffer (Includes/GBuffer.hlsl), as in ObjectTemplate.hlsl, at the parallax offset.
+        #ifdef GBUFFER_WRITES
+            #if defined(NO_FOG)
+                const float gbKeep = 1.0f;
+            #elif defined(OPT)
+                const float gbKeep = 1.0f - IN.fogColor.a;
+            #else
+                const float gbKeep = useFog <= 0.0f ? 1.0f : 1.0f - IN.fogColor.a;
+            #endif
+            #if defined(ONLY_LIGHT)
+                OUT.gbAlbedo = GBufferAlbedoOut(adAlbedo * encodeColor(baseColor.rgb), gbKeep);
+            #else
+                OUT.gbAlbedo = GBufferAlbedoOut(encodeColor(baseColor.rgb), gbKeep);
+            #endif
+            OUT.gbMaterial = pbrMaterial ? GBufferMaterialOut(1.0f, pbrMetalness, pbrSpecularWeight, pbrRoughness)
+                                         : GBufferMaterialOut(1.0f, 0.0f, vanillaMask * saturate(ObjectMaterial.y), -vanillaShine);
+            OUT.gbNormal = shadowWorldPosValid > 0.0f ? GBufferNormalOut(reflectionNormal, IN.shadowWorldPos.xyz, 1.0f) : 0.0f;
         #endif
 
         // The water film: the sun's highlight on it and its reflection, over the material.

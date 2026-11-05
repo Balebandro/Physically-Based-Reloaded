@@ -65,6 +65,7 @@ void AttachHooks() {
 
 	WriteRelCall(0xBE0B73, NiD3DVertexShaderEx::Free);
 	WriteRelCall(0xBE0AF3, NiD3DPixelShaderEx::Free);
+	WriteRelCall(0x00B65BED, (UInt32)&MainListHook);	// UNOFFICIAL 2026-11-05 the world's main list: the flashlight's G-buffer and light pass
 	SafeWrite32(0x00E7624D, sizeof(RenderManager));
 	SafeWrite32(0x00466606, sizeof(TESWeatherEx));
 	SafeWrite32(0x0046CF9B, sizeof(TESWeatherEx));

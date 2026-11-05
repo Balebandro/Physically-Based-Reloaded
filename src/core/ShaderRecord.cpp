@@ -1,4 +1,5 @@
 #include "ShaderRecord.h"
+#include "GBuffer.h"	// UNOFFICIAL 2026-11-05 the deferred flashlight's G-buffer writers
 ShaderProgram::ShaderProgram() {
 
 	FloatShaderValues = NULL;
@@ -169,6 +170,9 @@ void ShaderRecord::AppendGlobalDefines(ShaderTemplate& Template) {
 		AppendDefine("CONTACT_HARDENING", forward &&
 			TheSettingManager->GetSettingI("Shaders.ShadowsExteriors.ContactHardening", "Enabled") ? "1" : "0");
 	}
+
+	// UNOFFICIAL 2026-11-05 the deferred flashlight's G-buffer outputs (core/GBuffer.h, Includes/GBuffer.hlsl): with the flashlight on at startup.
+	AppendDefine("GBUFFER_ON", GBuffer::Compiled() ? "1" : "0");
 }
 
 /*
@@ -305,6 +309,9 @@ ShaderRecord* ShaderRecord::LoadShader(const char* Name, const char* SubPath, Sh
 				
 				if (SUCCEEDED(createResult)) {
 					ShaderProg->CreateCT(ShaderSource, ConstantTable);
+					// UNOFFICIAL 2026-11-05 the G-buffer's writers (core/GBuffer.h): the template pixel shaders compiled with its outputs
+					if (ShaderProfile[0] == 'p' && Template.Name && ShaderSource)
+						GBuffer::NoteShader(((ShaderRecordPixel*)ShaderProg)->ShaderHandle, (const char*)ShaderSource->GetBufferPointer(), ShaderSource->GetBufferSize(), !strcmp(Template.Name, "TerrainTemplate"));
 					Logger::Log("Shader loaded: %s", ShaderCompiledPath);
 				}
 				else {

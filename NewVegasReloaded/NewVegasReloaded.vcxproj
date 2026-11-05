@@ -156,7 +156,6 @@
     <ClCompile Include="..\src\effects\DepthOfField.cpp" />
     <ClCompile Include="..\src\effects\Exposure.cpp" />
     <ClCompile Include="..\src\effects\Flashlight.cpp" />
-    <ClCompile Include="..\src\effects\FlashlightBeam.cpp" />
     <ClCompile Include="..\src\effects\GodRays.cpp" />
     <ClCompile Include="..\src\effects\Grass.cpp" />
     <ClCompile Include="..\src\effects\ImageAdjust.cpp" />
@@ -219,7 +218,6 @@
     <ClCompile Include="..\src\NewVegas\Hooks\FlyCam.cpp" />
     <ClCompile Include="..\src\NewVegas\Hooks\Game.cpp" />
     <ClCompile Include="..\src\NewVegas\Hooks\Hooks.cpp" />
-    <ClCompile Include="..\src\NewVegas\Hooks\MaterialPass.cpp" />
     <ClCompile Include="..\src\NewVegas\Hooks\Render.cpp" />
     <ClCompile Include="..\src\NewVegas\Hooks\Settings.cpp" />
     <ClCompile Include="..\src\NewVegas\Hooks\ShaderIO.cpp" />
@@ -275,7 +273,6 @@
     <ClInclude Include="..\src\effects\Effects.h" />
     <ClInclude Include="..\src\effects\Exposure.h" />
     <ClInclude Include="..\src\effects\Flashlight.h" />
-    <ClInclude Include="..\src\effects\FlashlightBeam.h" />
     <ClInclude Include="..\src\effects\GodRays.h" />
     <ClInclude Include="..\src\effects\Grass.h" />
     <ClInclude Include="..\src\effects\ImageAdjust.h" />
@@ -331,7 +328,6 @@
     <ClInclude Include="..\src\NewVegas\Hooks\FlyCam.h" />
     <ClInclude Include="..\src\NewVegas\Hooks\Game.h" />
     <ClInclude Include="..\src\NewVegas\Hooks\Hooks.h" />
-    <ClInclude Include="..\src\NewVegas\Hooks\MaterialPass.h" />
     <ClInclude Include="..\src\NewVegas\Hooks\Render.h" />
     <ClInclude Include="..\src\NewVegas\Hooks\Settings.h" />
     <ClInclude Include="..\src\NewVegas\Hooks\ShaderIO.h" />

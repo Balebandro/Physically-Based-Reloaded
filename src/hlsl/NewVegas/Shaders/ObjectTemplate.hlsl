@@ -182,6 +182,7 @@
     #define SHADOW_VIEWMODEL   // the first-person weapon's shadows on itself (Includes/Shadow.hlsl)
 #endif
 #include "includes/Shadow.hlsl"
+#include "includes/GBuffer.hlsl"	// UNOFFICIAL 2026-11-05 the deferred flashlight's G-buffer (COLOR1-3, see there)
 #ifdef MERGED_LIGHTS
     #include "includes/MergedLights.hlsl"
 #endif
@@ -633,8 +634,17 @@ float3 getMergedPointLights(float4 encodedNormal, float4 encodedTangent, float3 
 }
 #endif
 
+// UNOFFICIAL 2026-11-05 G-buffer writers: the base passes, but not the light-only 3-lamp ones (out of temporaries with it).
+#if GBUFFER_ON && !defined(DIFFUSE) && !defined(ONLY_SPECULAR) && !(defined(ONLY_LIGHT) && LIGHTS > 2)
+    #define GBUFFER_WRITES
+#endif
 struct PS_OUTPUT {
     float4 color : COLOR0;
+#ifdef GBUFFER_WRITES
+    float4 gbAlbedo : COLOR1;	// UNOFFICIAL 2026-11-05 G-buffer (Includes/GBuffer.hlsl; bound only in the world's main list)
+    float4 gbMaterial : COLOR2;
+    float4 gbNormal : COLOR3;
+#endif
 };
 
 #if defined(DIFFUSE) || defined(ONLY_SPECULAR)
@@ -851,6 +861,27 @@ PS_OUTPUT main(PS_INPUT IN) {
         lighting += getAmbientLighting(AmbientColor.rgb, baseColor.rgb, ambientNormal, shadowVSValid);
     #endif
 
+    // UNOFFICIAL 2026-11-05 G-buffer (Includes/GBuffer.hlsl): the colour in the game's gamma space (light-only passes: the texture the
+    // game's texture pass multiplies in, times the rest), the material and the normal-mapped world normal. Here, where the normal is
+    // last used: written at the end, the light-only 2-3 lamp variants ran out of temporaries.
+    #ifdef GBUFFER_WRITES
+        #if defined(NO_FOG)
+            const float gbKeep = 1.0f;
+        #elif defined(OPT)
+            const float gbKeep = 1.0f - IN.fogColor.a;
+        #else
+            const float gbKeep = useFog <= 0.0f ? 1.0f : 1.0f - IN.fogColor.a;
+        #endif
+        #if defined(ONLY_LIGHT)
+            OUT.gbAlbedo = GBufferAlbedoOut(adAlbedo * encodeColor(baseColor.rgb), gbKeep);
+        #else
+            OUT.gbAlbedo = GBufferAlbedoOut(encodeColor(baseColor.rgb), gbKeep);
+        #endif
+        OUT.gbMaterial = pbrMaterial ? GBufferMaterialOut(1.0f, pbrMetalness, pbrSpecularWeight, pbrRoughness)
+                                     : GBufferMaterialOut(1.0f, 0.0f, vanillaMask * saturate(ObjectMaterial.y), -vanillaShine);
+        OUT.gbNormal = shadowVSValid > 0.0f ? GBufferNormalOut(reflectionNormal, IN.shadowWorldPos.xyz, 1.0f) : 0.0f;
+    #endif
+
     // The water film: the sun's highlight on it and its reflection, over the material.
     #ifdef OBJECT_WETNESS
         [branch] if (wet.gloss > 0.001f) {
@@ -996,6 +1027,11 @@ struct PS_INPUT {
 
 struct PS_OUTPUT {
     float4 color : COLOR0;
+#if GBUFFER_ON
+    float4 gbAlbedo : COLOR1;	// UNOFFICIAL 2026-11-05 G-buffer (Includes/GBuffer.hlsl; bound only in the world's main list)
+    float4 gbMaterial : COLOR2;
+    float4 gbNormal : COLOR3;
+#endif
 };
 
 sampler2D BaseMap : register(s0);
@@ -1191,6 +1227,18 @@ PS_OUTPUT main(PS_INPUT IN) {
 
     OUT.color.rgb = finalColor.rgb;
     OUT.color.a = baseColor.a * AmbientColor.a;
+
+    // UNOFFICIAL 2026-11-05 G-buffer (Includes/GBuffer.hlsl), as in the LIGHTS < 4 variant (the ambient normal: no world frame here).
+    #if GBUFFER_ON
+        #ifndef OPT
+            OUT.gbAlbedo = GBufferAlbedoOut(encodeColor(baseColor.rgb), useFog <= 0.0f ? 1.0f : 1.0f - IN.fogColor.a);
+        #else
+            OUT.gbAlbedo = GBufferAlbedoOut(encodeColor(baseColor.rgb), 1.0f - IN.fogColor.a);
+        #endif
+        OUT.gbMaterial = pbrMaterial ? GBufferMaterialOut(1.0f, pbrMetalness, pbrSpecularWeight, pbrRoughness)
+                                     : GBufferMaterialOut(1.0f, 0.0f, vanillaMask * saturate(ObjectMaterial.y), -vanillaShine);
+        OUT.gbNormal = shadowVSValid > 0.0f ? GBufferNormalOut(ambientNormal, SHADOW_WP_LOAD(IN), 1.0f) : 0.0f;
+    #endif
 
     return OUT;
 }
