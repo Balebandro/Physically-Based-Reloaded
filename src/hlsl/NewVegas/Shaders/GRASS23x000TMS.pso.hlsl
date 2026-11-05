@@ -39,6 +39,45 @@ float3 GrassLamps(float3 position, float3 normal) {
     return lamps * TESR_GrassLightData.y;
 }
 
+// UNOFFICIAL 2026-11-05 the deferred flashlight on the grass (ported from Vegas Shaders; Grass.cpp UpdateLights, core/FlashlightDeferred.h):
+// the light pass lights what the G-buffer holds, which is no grass, so the grass lights itself by the same beam. [0] the light,
+// camera-relative, w its reach (0: off); [1] the beam's axis, w cos of the cone's outer edge; [2] rgb the light (linear, times the grass
+// share), w cos of the full-strength edge. The light pass's falloff and cone, a wrapped diffuse (light through the blade), its shadow map.
+float4 TESR_GrassSpot[3] : register(c177);
+float4 TESR_GrassSpotShadow : register(c180);	// x 1 = the map was drawn this frame, y its texel size, z the depth bias (share of the reach), w the PCF radius (texels)
+float4 TESR_GrassSpotFalloff : register(c181);	// x [Shaders.Flashlight.Deferred] Falloff (0: the lamps' 1 - d^2 / r^2)
+row_major float4x4 TESR_SpotLightToWorldTransform : register(c182);	// c182-c185: camera-relative world -> the spot map's clip space
+sampler2D TESR_ShadowSpotlightBuffer0 : register(s7) = sampler_state { ADDRESSU = CLAMP; ADDRESSV = CLAMP; MAGFILTER = POINT; MINFILTER = POINT; MIPFILTER = NONE; };
+float GrassSpotShadow(float3 position, float distShare) {
+    float4 clipPos = mul(float4(position, 1.0f), TESR_SpotLightToWorldTransform);
+    float2 mapUV = clipPos.xy / max(clipPos.w, 1.0e-4f) * float2(0.5f, -0.5f) + 0.5f;
+    [branch] if (clipPos.w <= 0.0f || any(mapUV < 0.0f) || any(mapUV > 1.0f)) return 1.0f;
+    // the light pass's disc (FlashlightDeferred.hlsl FLShadow): 16 taps on a Vogel spiral, point taps here (the grass draws many layers)
+    float radius = TESR_GrassSpotShadow.y * TESR_GrassSpotShadow.w;
+    float bias = TESR_GrassSpotShadow.z * (1.0f + 4.0f * distShare);
+    float2 dir = float2(1.0f, 0.0f);
+    const float2x2 golden = float2x2(-0.7373688f, -0.6754904f, 0.6754904f, -0.7373688f);
+    float lit = 0.0f;
+    [unroll] for (int i = 0; i < 16; i++) {
+        lit += tex2Dlod(TESR_ShadowSpotlightBuffer0, float4(mapUV + dir * (radius * sqrt((i + 0.5f) / 16.0f)), 0.0f, 0.0f)).r + bias > distShare ? 1.0f : 0.0f;
+        dir = mul(golden, dir);
+    }
+    return lit / 16.0f;
+}
+float3 GrassSpot(float3 position, float3 normal) {
+    float3 toLight = TESR_GrassSpot[0].xyz - position;
+    float d2 = dot(toLight, toLight);
+    float share2 = d2 / (TESR_GrassSpot[0].w * TESR_GrassSpot[0].w);
+    float att = saturate(1.0f - share2);
+    [flatten] if (TESR_GrassSpotFalloff.x > 0.0f) att = att * att / (1.0f + TESR_GrassSpotFalloff.x * share2);
+    float3 dir = toLight * rsqrt(max(d2, 1.0f));
+    float cone = smoothstep(TESR_GrassSpot[1].w, TESR_GrassSpot[2].w, dot(-dir, TESR_GrassSpot[1].xyz));
+    float wrap = 0.5f + 0.5f * abs(dot(normal, dir));
+    float shadow = 1.0f;
+    [branch] if (TESR_GrassSpotShadow.x > 0.5f && att * cone > 0.0f) shadow = GrassSpotShadow(position, sqrt(d2) / TESR_GrassSpot[0].w);
+    return TESR_GrassSpot[2].rgb * (att * cone * cone * wrap * shadow);
+}
+
 sampler2D DiffuseMap : register(s0);
 
 // Normal maps and specular (Shaders.Grass.NormalMaps; effects/Grass.cpp OnGrassShape): a grass
@@ -120,6 +159,9 @@ PS_OUTPUT main(PS_INPUT IN) {
     // Lamps: scaled as the object shaders scale their lights (PBRLight). The position is only valid under NVR's VS.
     [branch] if (TESR_GrassLightData.x > 0.0f && SHADOW_VS_PRESENT(IN.shadowWorldPos.w))
         lighting += GrassLamps(IN.shadowWorldPos.xyz, shadowNormal) * TESR_PBRData.z;
+    // UNOFFICIAL 2026-11-05 the flashlight (GrassSpot above), scaled as the lamps
+    [branch] if (TESR_GrassSpot[0].w > 0.0f && SHADOW_VS_PRESENT(IN.shadowWorldPos.w))
+        lighting += GrassSpot(IN.shadowWorldPos.xyz, normal.xyz) * TESR_PBRData.z;
 
     float4 albedo = tex2D(DiffuseMap, IN.uv.xy);
     float3 litColor = (lighting * albedo.rgb + specular) * TESR_GrassBrightness.x;

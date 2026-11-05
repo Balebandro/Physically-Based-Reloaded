@@ -20,6 +20,11 @@ public:
 	static const int MaxGrassLights = 8;
 	D3DXVECTOR4	LightPosition[MaxGrassLights];	// xyz: camera-relative world, as the grass rebuilds positions; w: radius
 	D3DXVECTOR4	LightColor[MaxGrassLights];		// rgb: colour times dimmer
+	// UNOFFICIAL 2026-11-05 the deferred flashlight on the grass (GRASS23x000TMS.pso GrassSpot): FlashlightDeferred::LightParams times the
+	// grass share ([0].w 0: off), its shadow map (x 1 on, y texel size, z bias, w PCF radius in texels) and Falloff (x)
+	D3DXVECTOR4	Spot[3] = {};
+	D3DXVECTOR4	SpotShadow = {};
+	D3DXVECTOR4	SpotFalloff = {};
 	struct LightSettings {
 		bool	Enabled;
 		int		MaxLights;

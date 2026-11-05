@@ -1,6 +1,7 @@
 #include <algorithm>
 
 #include "Grass.h"
+#include "../core/FlashlightDeferred.h"	// UNOFFICIAL 2026-11-05 the deferred flashlight on the grass (UpdateLights)
 
 void GrassShaders::RegisterConstants() {
 	Constants.Brightness = D3DXVECTOR4(1.0f, 1.0f, 0.0f, 0.0f);
@@ -11,6 +12,9 @@ void GrassShaders::RegisterConstants() {
 	TheShaderManager->RegisterConstant("TESR_GrassLightData", &Constants.LightData);
 	TheShaderManager->RegisterConstant("TESR_GrassLightPosition", LightPosition);
 	TheShaderManager->RegisterConstant("TESR_GrassLightColor", LightColor);
+	TheShaderManager->RegisterConstant("TESR_GrassSpot", Spot);	// UNOFFICIAL 2026-11-05 the deferred flashlight on the grass
+	TheShaderManager->RegisterConstant("TESR_GrassSpotShadow", &SpotShadow);
+	TheShaderManager->RegisterConstant("TESR_GrassSpotFalloff", &SpotFalloff);
 	InstallHooks();
 }
 
@@ -58,6 +62,20 @@ void GrassShaders::UpdateSettings() {
 // them). A light's sphere edge counts, not its centre: a big lamp farther off can light more of the grass in view.
 void GrassShaders::UpdateLights() {
 	Constants.LightData = D3DXVECTOR4(0.0f, Lights.Strength, 0.0f, 0.0f);
+	// UNOFFICIAL 2026-11-05 the deferred flashlight (ported from Vegas Shaders): the G-buffer holds no grass, so the grass shader lights it by the
+	// same beam itself, whether or not the lamps are on, at 0.375 of the beam's light (Vegas Shaders 2026-11-04, user: 1 looked twice as bright
+	// as the ground, 0.5 still too bright), with the light pass's falloff and its shadow map
+	static const float FlashlightGrassStrength = 0.375f;
+	if (FlashlightDeferred::LightParams(Spot)) { Spot[2].x *= FlashlightGrassStrength; Spot[2].y *= FlashlightGrassStrength; Spot[2].z *= FlashlightGrassStrength; }
+	else Spot[0].w = 0.0f;
+	SpotFalloff = D3DXVECTOR4(TheShaderManager->Effects.Flashlight ? TheShaderManager->Effects.Flashlight->Deferred.Falloff : 0.0f, 0.0f, 0.0f, 0.0f);
+	SpotShadow = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+	if (Spot[0].w > 0.0f) if (IDirect3DTexture9* map = FlashlightDeferred::ShadowMap()) {
+		D3DSURFACE_DESC desc = {};
+		map->GetLevelDesc(0, &desc);
+		const FlashlightEffect* f = TheShaderManager->Effects.Flashlight;
+		SpotShadow = D3DXVECTOR4(1.0f, desc.Width ? 1.0f / (float)desc.Width : 0.0f, f->Deferred.ShadowBias, f->Deferred.ShadowSoftness * (float)desc.Width / 512.0f);
+	}
 	if (!Lights.Enabled || Lights.MaxLights <= 0 || Lights.Strength <= 0.0f) return;
 
 	struct Candidate { float key; D3DXVECTOR4 pos; D3DXVECTOR4 color; };
