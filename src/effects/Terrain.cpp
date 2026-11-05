@@ -2,6 +2,7 @@
 #include <algorithm>
 
 #include "Terrain.h"
+#include "../core/BlendDepthFix.h"
 
 void TerrainShaders::RegisterConstants() {
 	TheShaderManager->RegisterConstant("TESR_TerrainData", &Constants.Data);
@@ -35,6 +36,7 @@ void TerrainShaders::PrepareBlending() {
 
 	if (TheTextureManager->TerrainBlendDepthState == 1) {
 		TheRenderManager->ResolveDepthBuffer(TheTextureManager->TerrainBlendDepthTexture);
+		BlendDepthFix::Apply(TheRenderManager->device, TheTextureManager->TerrainBlendDepthTexture);	// UNOFFICIAL 2026-11-05 the game's MSAA (core/BlendDepthFix.h)
 		TheTextureManager->TerrainBlendDepthState = 2;
 	}
 	BlendingConstants.Data.x = 1.0f;
