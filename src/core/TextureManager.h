@@ -26,6 +26,7 @@ public:
 	IDirect3DTexture9*		DepthTexture;
 	IDirect3DTexture9*		DepthTextureViewModel;
 	IDirect3DTexture9*		TerrainBlendDepthTexture;	// the world's depth as the land starts drawing (terrain blending)
+	IDirect3DTexture9*		ParticleDepthTexture = nullptr;	// UNOFFICIAL 2026-11-05 soft particles: the world's depth at the first blended NoLighting draw (Particles.h)
 	int						TerrainBlendDepthState;		// 0 outside the world scene, 1 copy still to take, 2 taken this scene
 	IDirect3DSurface9*		TerrainBlendWorldDepth;		// the depth surface bound as the world scene starts (compared only)
 	bool					TerrainBlendLogScene;		// diagnostic: log this world scene's shader order (Hooks/Render.cpp)

@@ -29,6 +29,17 @@ void TextureManager::Initialize() {
 	NvAPI_D3D9_RegisterResource(TheTextureManager->DepthTexture);
 	NvAPI_D3D9_RegisterResource(TheTextureManager->DepthTextureViewModel);
 	NvAPI_D3D9_RegisterResource(TheTextureManager->TerrainBlendDepthTexture);
+	// UNOFFICIAL 2026-11-05 soft particles (Particles.h, from Vegas Shaders): with the particle shaders on at startup (their vertices carry the size, ParticleSize.h)
+	if (TheSettingManager->GetSettingI("Shaders.Particles.Status", "Enabled")) {
+		if (SUCCEEDED(Device->CreateTexture(Width, Height, 1, D3DUSAGE_DEPTHSTENCIL, (D3DFORMAT)MAKEFOURCC('I', 'N', 'T', 'Z'), D3DPOOL_DEFAULT, &TheTextureManager->ParticleDepthTexture, NULL))) {
+			TheTextureManager->RegisterTexture("TESR_ParticleDepth", (IDirect3DBaseTexture9**)&TheTextureManager->ParticleDepthTexture);
+			NvAPI_D3D9_RegisterResource(TheTextureManager->ParticleDepthTexture);
+		}
+		else {
+			TheTextureManager->ParticleDepthTexture = nullptr;
+			Logger::Log("[ERROR] Soft particles: could not create their depth texture; they stay off");
+		}
+	}
 
 	TheTextureManager->RegisterTexture(WordWaterHeightMapBuffer, &TheTextureManager->WaterHeightMapB);
 	TheTextureManager->RegisterTexture(WordWaterReflectionMapBuffer, &TheTextureManager->WaterReflectionMapB);

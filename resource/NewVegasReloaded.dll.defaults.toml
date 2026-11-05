@@ -664,8 +664,9 @@ Enabled = false                      # Blur in direction of the camera when turn
 
 [_Shaders.Particles.Main]
 Strength = 1.0                       # How much blood, smoke, dust and debris particles follow the lighting (0 = as the game draws them, unlit; 1 = fully lit). Ported from NVR UNOFFICIAL Optimized (P81).
-Brightness = 1.0                     # Overall brightness of lit particles.
 SunShare = 0.6                       # How much of the sun a particle catches outdoors (through the sun shadows).
+SoftScale = 0.25                     # Soft particles (after Vanilla Plus Particles): smoke, dust, blood and spark particle systems fade where they meet the ground, walls and objects behind them, over their own size times this, instead of cutting a hard line. 0 = off. Needs Enabled below on at startup.
+MeshSoftScale = 0.25                 # The same for unlit effect meshes (glows, lamp cards, muzzle and impact flashes, the dust storm walls), over the mesh's bounding radius times this. Big meshes such as the dust storm fade over a long way: lower this if they look too faint near the ground. 0 = off.
 
 [_Shaders.Particles.Status]
 Enabled = true                       # Lights blood, smoke, dust and debris particles and blood decals on characters by the ambient, the sun and nearby lamps. Muzzle flashes, fire, sparks and glows stay as the game draws them. Off = the game's own particle shaders.

@@ -335,7 +335,9 @@ void __fastcall RenderWorldSceneGraphHook(Main* This, UInt32 edx, Sun* SkySun, U
 	}
 	LampScissor::BeginFrame();
 	InWorldScene = true;
+	ParticleShaders::BeginWorldScene();	// UNOFFICIAL 2026-11-05 soft particles: the depth copied at the first alpha-blended NoLighting draw
 	(*RenderWorldSceneGraph)(This, SkySun, IsFirstPerson, WireFrame, Arg4);
+	ParticleShaders::EndWorldScene();
 	InWorldScene = false;
 	LampScissor::After();   // never left set past the world scene
 
@@ -819,3 +821,21 @@ void __fastcall MainListHook(void* Accumulator, void* edx, UInt32 First, UInt32 
 	}
 }
 
+// UNOFFICIAL 2026-11-05 soft particles (from Vegas Shaders; effects/Particles.h): BSShaderNoLighting::SetupGeometryConstants (vtable slot
+// 0x10BB2AC -> 0xBC9A50), after the game set a NoLighting geometry's constants, before it draws. Blended NoLighting draws never pass
+// RenderPassStandard / Skinned, so the per-draw setup lives here.
+struct NoLightingPassView { NiGeometry* geometry; UInt16 passEnum; };	// BSShaderProperty::RenderPass: +00 geometry, +04 pass
+static VirtFuncDetour NoLightingConstantsDetour;
+static void __fastcall NoLightingConstantsHook(void* shader, void*, void* properties) {
+	ThisStdCall(NoLightingConstantsDetour.GetOverwrittenAddr(), shader, properties);
+	const NoLightingPassView* pass = *(const NoLightingPassView* const*)0x011F91E0;	// BSShaderManager::pCurrentRenderPass
+	if (pass) ParticleShaders::ForDraw(pass->geometry, pass->passEnum, InWorldScene);
+}
+
+void InstallSoftParticleHook() {
+	if (*(UInt32*)0x010BB2AC != 0x00BC9A50) {
+		Logger::Log("Soft particles: BSShaderNoLighting::SetupGeometryConstants is already replaced (another plugin?); no fade");
+		return;
+	}
+	NoLightingConstantsDetour.ReplaceVirtualFunc(0x010BB2AC, &NoLightingConstantsHook);
+}
