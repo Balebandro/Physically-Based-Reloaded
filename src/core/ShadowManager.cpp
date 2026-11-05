@@ -1142,6 +1142,9 @@ bool ShadowManager::RenderViewModelShadowMap(NiCamera* FirstPersonCamera) {
 	if (Shadows->Constants.ShadowFade.y <= 0.0f || Shadows->Constants.ForwardData.x != 0.0f) return false;
 	if (!Player || !Player->firstPersonNiNode || !Shadows->ViewModelShadowSurface || !Shadows->ViewModelShadowDepthSurface) return false;
 	if (!FirstPersonCamera || !Player->firstPersonNiNode->m_kWorldBound) return false;
+	// UNOFFICIAL 2026-11-05 (from Vegas Shaders; user: in first person the world's shadows drop out once no viewmodel is on screen, the
+	// weapon holstered): no map then; nothing of the viewmodel is drawn for it to shadow.
+	if (!Player->process || !Player->process->IsWeaponOut()) return false;
 
 	IDirect3DDevice9* Device = TheRenderManager->device;
 	NiDX9RenderState* RenderState = TheRenderManager->renderState;
